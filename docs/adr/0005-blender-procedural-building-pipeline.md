@@ -4,6 +4,8 @@
 - 日期：2026-11-16
 - 关联：[ADR 0001](0001-prefractured-graph-and-clusters.md)、[ADR 0002](0002-avian-backend-and-fixed-step.md)、[ADR 0004](0004-authoring-performance-and-delivery.md)
 
+开发进展：后续已按 [ADR 0006](0006-blender-authoring-tool-and-asset-format.md) 实现 Blender 资产工具。本文保留开发前的调研与当时局部验证边界；当前功能、实际验收和使用方法见 ADR 0006 与[工具说明](../../tools/blender/README.md)。
+
 ## 背景
 
 用户明确使用 Blender，并要求调研能否从建筑轮廓依次生成墙体、楼板、门窗、碎块和碰撞体。目标是为 Bevy 0.20 + Avian 0.8 的运行时破坏插件准备资产。
