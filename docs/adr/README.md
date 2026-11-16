@@ -9,7 +9,7 @@
 - **已采用**：已作出的设计决策；实现和验证进度仍需单独说明。
 - **已被取代**：保留历史，并链接替代它的新记录。
 
-截至 2026-11-16，用户已确定使用 Bevy 0.20.x + Avian 0.8.x，并选择 Blender 作为资产制作工具。Blender 工具已实现轮廓生成、Voronoi 预破碎、凸代理、连接和物理数据，以及面板/后台 GLB+JSON 导出，实际验证范围见 ADR 0006。Rust 运行时仍为尚未添加相关依赖的初始工程，具体补丁版本与 features 待接入时锁定；运行时承载、60 Hz 调度等仍为待验证提议。
+截至 2026-11-17，Blender 工具已实现轮廓生成、Voronoi 预破碎、凸代理、连接和物理数据，以及面板/后台 GLB+JSON 导出。Rust 已接入 Bevy 0.20 / Avian 0.8，实现 BSN 导入、固定正视相机、程序化网格、调试边界、局部删块和有预算的烟尘碎屑；具体依赖和验证范围见 ADR 0007。结构承载、刚体簇和动态坍塌仍为待实现提议。
 
 ## 索引
 
@@ -21,6 +21,6 @@
 | [0004](0004-authoring-performance-and-delivery.md) | 资产制作、性能边界与分阶段交付 | 提议（待原型验证） |
 | [0005](0005-blender-procedural-building-pipeline.md) | Blender 建筑轮廓生成、预破碎与碰撞资产流程 | 部分已采用（Blender 已确定，流程提议待验证） |
 | [0006](0006-blender-authoring-tool-and-asset-format.md) | Blender 资产工具实现与导出格式 | 已采用（已实现，验证范围见记录） |
-| [0007](0007-bevy-bsn-fracture-interaction-demo.md) | BSN 建筑导入、网格材质与点击破坏演示 | 提议（尚未实现） |
+| [0007](0007-bevy-bsn-fracture-interaction-demo.md) | BSN 建筑导入、网格材质与点击破坏演示 | 已采用（已实现，验证范围见记录） |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。

@@ -1,0 +1,105 @@
+import bevy_pbr::render::{
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::alpha_discard,
+};
+
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+};
+
+struct SurfaceSettings {
+    building_from_world: mat4x4<f32>,
+    grid: vec4<f32>,
+    fracture: vec4<f32>,
+    fracture_color: vec4<f32>,
+}
+
+@group(constants::MATERIAL_BIND_GROUP) @binding(100)
+var<uniform> surface: SurfaceSettings;
+
+fn hash3(p: vec3<f32>) -> f32 {
+    let q = fract(p * vec3<f32>(0.1031, 0.11369, 0.13787));
+    let r = q + vec3<f32>(dot(q, q.yzx + vec3<f32>(19.19)));
+    return fract((r.x + r.y) * r.z);
+}
+
+fn noise3(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (vec3<f32>(3.0) - 2.0 * f);
+    let a = mix(hash3(i), hash3(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+    let b = mix(hash3(i + vec3<f32>(0.0, 1.0, 0.0)), hash3(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+    let c = mix(hash3(i + vec3<f32>(0.0, 0.0, 1.0)), hash3(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+    let d = mix(hash3(i + vec3<f32>(0.0, 1.0, 1.0)), hash3(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+fn height(p: vec3<f32>) -> f32 {
+    let aggregate = noise3(p * surface.fracture.z);
+    let pores = noise3(p * surface.fracture.w + vec3<f32>(7.3, 1.7, 9.1));
+    return surface.fracture.y * (aggregate + 0.16 * pores);
+}
+
+fn grid_coverage(position: vec2<f32>, spacing: f32, width: f32) -> f32 {
+    let cell = position / spacing;
+    let footprint = max(fwidth(cell), vec2<f32>(0.00001));
+    let distance_pixels = abs(fract(cell + vec2<f32>(0.5)) - vec2<f32>(0.5)) / footprint;
+    let distance_line = min(distance_pixels.x, distance_pixels.y);
+    let line = 1.0 - smoothstep(max(width * 0.5 - 0.5, 0.0), width * 0.5 + 0.5, distance_line);
+    let pixels_per_cell = 1.0 / max(footprint.x, footprint.y);
+    return line * smoothstep(1.5, 3.5, pixels_per_cell);
+}
+
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr = pbr_input_from_standard_material(in, is_front);
+    let position = (surface.building_from_world * in.world_position).xyz;
+    let normal = normalize((surface.building_from_world * vec4<f32>(in.world_normal, 0.0)).xyz);
+
+    if surface.fracture.x < 0.5 {
+        let horizontal = cross(vec3<f32>(0.0, 1.0, 0.0), normal);
+        let wall_tangent = horizontal / max(length(horizontal), 0.00001);
+        let tangent = select(vec3<f32>(1.0, 0.0, 0.0), wall_tangent, abs(normal.y) < 0.999);
+        let bitangent = select(vec3<f32>(0.0, 0.0, 1.0), normalize(cross(normal, tangent)), abs(normal.y) < 0.999);
+        let plane_position = vec2<f32>(dot(position, tangent), dot(position, bitangent));
+        let minor = grid_coverage(plane_position, surface.grid.x, surface.grid.z);
+        let major = grid_coverage(plane_position, surface.grid.y, surface.grid.w);
+        let with_minor = mix(pbr.material.base_color.rgb, vec3<f32>(0.34, 0.39, 0.41), minor * (1.0 - major) * 0.62);
+        pbr.material.base_color = vec4<f32>(mix(with_minor, vec3<f32>(0.065, 0.085, 0.095), major * 0.88), 1.0);
+    } else {
+        let aggregate = noise3(position * surface.fracture.z);
+        let pores = noise3(position * surface.fracture.w + vec3<f32>(7.3, 1.7, 9.1));
+        let variation = 0.72 + 0.40 * aggregate - 0.13 * smoothstep(0.67, 0.91, pores);
+        pbr.material.base_color = vec4<f32>(surface.fracture_color.rgb * variation, 1.0);
+        let e = 0.001;
+        let gradient = vec3<f32>(
+            height(position + vec3<f32>(e, 0.0, 0.0)) - height(position - vec3<f32>(e, 0.0, 0.0)),
+            height(position + vec3<f32>(0.0, e, 0.0)) - height(position - vec3<f32>(0.0, e, 0.0)),
+            height(position + vec3<f32>(0.0, 0.0, e)) - height(position - vec3<f32>(0.0, 0.0, e))
+        ) / (2.0 * e);
+        let tangent_gradient = gradient - normal * dot(gradient, normal);
+        let world_from_building = transpose(mat3x3<f32>(
+            surface.building_from_world[0].xyz,
+            surface.building_from_world[1].xyz,
+            surface.building_from_world[2].xyz
+        ));
+        pbr.N = normalize(pbr.N - world_from_building * tangent_gradient);
+    }
+
+    pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
+    var out: FragmentOutput;
+    @if(PREPASS_PIPELINE) {
+        out = deferred_output(in, pbr);
+    } @else {
+        out.color = apply_pbr_lighting(pbr);
+        out.color = main_pass_post_lighting_processing(pbr, out.color);
+    }
+    return out;
+}
