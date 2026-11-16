@@ -13,10 +13,11 @@ from mathutils import Matrix, Vector
 from .bonds import disconnected_chunks, generate_bonds
 from .fracture import fracture_parts
 from .geometry import generate_building
+from .surfaces import classify_contact_surfaces
 
 
 OWNER = "bevy_destruction_asset_tool"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 ROTATION = Matrix(((1, 0, 0), (0, 0, 1), (0, -1, 0)))
 
 
@@ -52,7 +53,9 @@ def _geometry_digest(obj):
                 nodes.append((node.type, inputs))
             links = [(link.from_node.type, link.from_socket.identifier,
                       link.to_node.type, link.to_socket.identifier) for link in material.node_tree.links]
-        materials.append({"color": list(material.diffuse_color), "nodes": nodes, "links": links})
+        materials.append({"color": list(material.diffuse_color), "nodes": nodes, "links": links,
+                          "surface_role": material.get("bd_surface_role"),
+                          "material_id": material.get("bd_material_id")})
     geometry = {"vertices": [[_number(c) for c in v.co] for v in obj.data.vertices],
                 "faces": [list(p.vertices) for p in obj.data.polygons],
                 "face_materials": [p.material_index for p in obj.data.polygons], "materials": materials,
@@ -170,6 +173,7 @@ def build_asset(spec, *, output_dir=None, preview=True):
         chunks = fracture_parts(parts, seed=spec.seed, target_size=spec.fracture_size, collection=staging)
         _mark_owned(staging)
         bonds = generate_bonds(chunks)
+        classify_contact_surfaces(chunks, parts)
         manifest = _manifest(spec, chunks, bonds)
         displays = {chunk.obj for chunk in chunks}
         colliders = {chunk.collider for chunk in chunks}

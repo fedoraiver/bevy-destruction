@@ -36,6 +36,8 @@
 
 GLB 仅包含显示碎块，不包含代理网格、源轮廓或其他场景物体。显示局部顶点与碰撞局部顶点处于同一坐标系。内部切面可由独立材质原语表示；多个 primitive 仍属于同一 Chunk。
 
+生成器 0.2.0 起，GLB 材质 `extras.bd_surface_role` 明确为 `exterior` 或 `fracture`。`fracture` 同时覆盖 Voronoi 新切面与跨源构件的真实埋藏接触区域；部分接触的面按接触多边形细分，未覆盖部分保留 `exterior`。外表面材质继续携带 `extras.bd_material_id`，物理类别仍应以 Chunk 的 `material` 为准，不能从共享断面材质推断。旧资产可按材质名 `BD_DestructionInterior` 识别 Voronoi 面，但没有完整跨构件语义，需要重新烘焙。
+
 ## Bond
 
 - `id`：由排序后的两个 Chunk ID 生成的稳定连接 ID。

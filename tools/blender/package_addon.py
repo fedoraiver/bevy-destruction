@@ -8,7 +8,7 @@ from pathlib import Path
 def package_addon(destination=None):
     directory = Path(__file__).resolve().parent
     source = directory / "bevy_destruction"
-    destination = Path(destination) if destination else directory.parents[1] / "output" / "blender" / "bevy_destruction-0.1.0.zip"
+    destination = Path(destination) if destination else directory.parents[1] / "output" / "blender" / "bevy_destruction-0.2.0.zip"
     destination = destination.expanduser().resolve()
     files = sorted(source.rglob("*.py"))
     required = {"__init__.py", "ui.py", "spec.py", "pipeline.py"}
@@ -25,7 +25,7 @@ def package_addon(destination=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Package the Bevy Destruction Blender add-on.")
-    parser.add_argument("--output", type=Path, help="ZIP path; default: output/blender/bevy_destruction-0.1.0.zip")
+    parser.add_argument("--output", type=Path, help="ZIP path; default: output/blender/bevy_destruction-0.2.0.zip")
     args = parser.parse_args()
     print(package_addon(args.output))
 

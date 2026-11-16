@@ -72,11 +72,8 @@ def _bounds(obj):
             [max(v[i] for v in points) for i in range(3)])
 
 
-def _contact(faces_a, faces_b, tolerance):
-    total_area = 0.0
-    center_sum = Vector()
-    normal_sum = Vector()
-    patches = []
+def _face_contacts(faces_a, faces_b, tolerance):
+    """Yield real convex overlap polygons in a common oriented face basis."""
     for normal, points_a in faces_a:
         origin = points_a[0]
         axis = Vector((1, 0, 0)) if abs(normal.x) < 0.8 else Vector((0, 1, 0))
@@ -92,19 +89,29 @@ def _contact(faces_a, faces_b, tolerance):
             overlap = _clip(a2, b2, tolerance * tolerance)
             if len(overlap) < 3:
                 continue
-            area, center = _area_centroid(overlap)
+            area, _ = _area_centroid(overlap)
             if area <= tolerance * tolerance:
                 continue
-            total_area += area
-            world_center = origin + tangent * center[0] + bitangent * center[1]
-            center_sum += world_center * area
-            normal_sum += normal * area
-            covariance = _area_covariance(overlap, center)
-            basis = (tangent, bitangent)
-            tensor = Matrix([[sum(basis[a][i] * covariance[a][b] * basis[b][j]
-                                  for a in range(2) for b in range(2))
-                              for j in range(3)] for i in range(3)])
-            patches.append((area, world_center, tensor))
+            yield normal, origin, tangent, bitangent, overlap
+
+
+def _contact(faces_a, faces_b, tolerance):
+    total_area = 0.0
+    center_sum = Vector()
+    normal_sum = Vector()
+    patches = []
+    for normal, origin, tangent, bitangent, overlap in _face_contacts(faces_a, faces_b, tolerance):
+        area, center = _area_centroid(overlap)
+        total_area += area
+        world_center = origin + tangent * center[0] + bitangent * center[1]
+        center_sum += world_center * area
+        normal_sum += normal * area
+        covariance = _area_covariance(overlap, center)
+        basis = (tangent, bitangent)
+        tensor = Matrix([[sum(basis[a][i] * covariance[a][b] * basis[b][j]
+                              for a in range(2) for b in range(2))
+                          for j in range(3)] for i in range(3)])
+        patches.append((area, world_center, tensor))
     if total_area <= tolerance * tolerance:
         return None
     center = center_sum / total_area

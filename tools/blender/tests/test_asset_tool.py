@@ -131,6 +131,10 @@ class AuthoringTests(unittest.TestCase):
             self.assertTrue(objects_hit(objects, (2.8, -1, 1.2), (2.8, 0.5, 1.2)), role)
         self.assertEqual(manifest["mesh_sha256"], hashlib.sha256(Path(result["glb_path"]).read_bytes()).hexdigest())
         document, binary = read_glb(result["glb_path"])
+        self.assertTrue(all(material.get("extras", {}).get("bd_surface_role") in {"exterior", "fracture"}
+                            for material in document["materials"]))
+        self.assertEqual({material["extras"]["bd_surface_role"] for material in document["materials"]},
+                         {"exterior", "fracture"})
         nodes = {node["extras"]["bd_chunk_id"]: node for node in document["nodes"]
                  if "bd_chunk_id" in node.get("extras", {})}
         self.assertEqual(set(nodes), {chunk["id"] for chunk in manifest["chunks"]})
@@ -180,6 +184,12 @@ class AuthoringTests(unittest.TestCase):
         collection = bpy.data.collections[second["collection_name"]]
         self.assertEqual(collection["bd_owner"], OWNER)
         obj = next(o for o in collection.objects if o.get("bd_role") == "chunk")
+        material = obj.data.materials[0]
+        role = material["bd_surface_role"]
+        material["bd_surface_role"] = "fracture" if role == "exterior" else "exterior"
+        with self.assertRaisesRegex(ValueError, "edited"):
+            export_asset(collection, self.directory.name)
+        material["bd_surface_role"] = role
         obj.data.vertices[0].co.x += 0.1
         with self.assertRaisesRegex(ValueError, "edited"):
             export_asset(collection, self.directory.name)

@@ -89,6 +89,15 @@ def _cross(a, b):
     )
 
 
+def _face_normal(face):
+    # Subtract a nearby origin before Newell's sum to avoid cancellation on
+    # small coplanar subdivisions far from the building origin.
+    origin = tuple(face.verts[0].co)
+    points = [tuple(float(v.co[i]) - origin[i] for i in range(3)) for v in face.verts]
+    crosses = [_cross(a, b) for a, b in zip(points, points[1:] + points[:1])]
+    return Vector(tuple(math.fsum(c[i] for c in crosses) for i in range(3))).normalized()
+
+
 def _mass_properties(bm):
     """Integrate signed tetrahedra about a nearby origin using Python doubles."""
     origin = tuple(
@@ -188,7 +197,8 @@ def validate_convex(obj, tolerance=None):
         epsilon = max(scale * 1e-5, 1e-7) if tolerance is None else tolerance
         for face in bm.faces:
             point = face.verts[0].co
-            if any(face.normal.dot(vertex.co - point) > epsilon for vertex in bm.verts):
+            normal = _face_normal(face)
+            if any(normal.dot(vertex.co - point) > epsilon for vertex in bm.verts):
                 raise ValueError(f"{obj.name}: mesh is non-convex or has inconsistent normals")
         if bm.calc_volume(signed=True) <= 0:
             raise ValueError(f"{obj.name}: mesh has non-positive signed volume")
@@ -217,7 +227,11 @@ def _source_bmesh(part):
     materials = list(part.obj.data.materials)
     if not materials:
         materials.append(_material(EXTERIOR_MATERIAL_NAME, (0.55, 0.57, 0.6, 1.0)))
+    for material in materials:
+        if "bd_surface_role" not in material:
+            material["bd_surface_role"] = "exterior"
     interior = _material(INTERIOR_MATERIAL_NAME, (0.3, 0.29, 0.27, 1.0))
+    interior["bd_surface_role"] = "fracture"
     if interior not in materials:
         materials.append(interior)
     return bm, materials, materials.index(interior)

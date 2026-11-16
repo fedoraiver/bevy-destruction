@@ -56,6 +56,7 @@ def generate_building(spec, collection):
             principled = next(n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
             principled.inputs["Base Color"].default_value = data["color"]
         materials[name] = material
+        material["bd_surface_role"] = "exterior"
 
     def prism(identifier, kind, material, polygon, bottom, top):
         poly = _ccw(polygon)

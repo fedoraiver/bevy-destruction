@@ -16,7 +16,7 @@ actual = Path(bpy.utils.user_resource("SCRIPTS", create=True)).resolve()
 if actual != scripts:
     raise RuntimeError(f"Refusing installation outside the test directory: {actual}")
 
-package = root / "output/blender/bevy_destruction-0.1.0.zip"
+package = root / "output/blender/bevy_destruction-0.2.0.zip"
 result = bpy.ops.preferences.addon_install(filepath=str(package))
 assert "FINISHED" in result
 module = addon_utils.enable("bevy_destruction", default_set=False, persistent=False)

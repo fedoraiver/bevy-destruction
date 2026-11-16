@@ -6,7 +6,7 @@
 
 ## 在 Blender 中使用
 
-1. 在仓库根目录执行 `python tools/blender/package_addon.py`，得到 `output/blender/bevy_destruction-0.1.0.zip`。
+1. 在仓库根目录执行 `python tools/blender/package_addon.py`，得到 `output/blender/bevy_destruction-0.2.0.zip`。
 2. 在 Blender 的偏好设置中选择插件的“从磁盘安装”，选择 ZIP 并启用 **Bevy Destruction Authoring**。
 3. 在三维视图按 `N` 打开侧栏，进入 **Destruction**。
 4. 选择无挤出和倒角的闭合水平曲线，或带明确边界的平面网格；点击“使用选中轮廓”。庭院采用同一物体里的内环。
@@ -88,7 +88,9 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 
 ## 生成与导出规则
 
-工具先将构件分区为互不体积重叠的封闭凸实体，再在每个实体内部以固定种子生成真实三维 Voronoi 单元。切面封口并赋内部材质，已有外表面材质保留。碰撞代理是通过封闭性和凸性验证的碎块独立网格副本，避免对凹物体整体包凸包而封住门窗。
+工具先将构件分区为互不体积重叠的封闭凸实体，再在每个实体内部以固定种子生成真实三维 Voronoi 单元。Voronoi 切面赋 `bd_surface_role=fracture`，原始表面赋 `exterior`。跨构件共面接触使用真实重叠多边形细分显示表面，只把被接触覆盖的区域改为 `fracture`；例如楼板上墙底以外的区域仍为 `exterior`。GLB 三角化保留这些材质边界；拆除相邻构件后可以显示对应断面。
+
+此分类只改显示网格的面划分和材质，不重新计算或移动凸碰撞代理、质量、质心和连接。切分后的数值重复点在 0.000001 米内焊接，并检查封闭性、凸性、体积与质心。碰撞代理是通过封闭性和凸性验证的碎块独立网格副本，避免对凹物体整体包凸包而封住门窗。
 
 连接来自实际共面接触区域，不按距离猜测；共边或共点不会形成有面积的连接。接触容差为 0.00002 米。底部接触 Z=0 的碎块导出固定锚点，工具检查所有碎块是否可通过连接到达锚点。
 
@@ -103,9 +105,11 @@ $blenderExecutable = 'C:\Program Files\Blender Foundation\Blender 5.2\blender.ex
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_geometry.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_fracture.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_asset_tool.py
+& $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_surfaces.py
+& $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_bundled_surfaces.py
 ```
 
-测试覆盖几何封闭与凸性、独立重叠检查、门窗通行、解析体积与惯性、碎块重组、种子复现、连接面积和截面矩、GLB/清单坐标一致性、跨场景隔离、UI 曲线生成与导出、用户数据保留，以及失败发布回滚。
+测试覆盖几何封闭与凸性、独立重叠检查、门窗通行、解析体积与惯性、碎块重组、种子复现、连接面积和截面矩、部分接触与斜向接触的内外表面面积、GLB 材质角色及清单坐标一致性、跨场景隔离、UI 曲线生成与导出、用户数据保留，以及失败发布回滚。
 
 `tests/test_install.py` 另用于安装包验收，必须将 `BLENDER_USER_SCRIPTS` 指向独立测试目录后在后台执行；未设置隔离目录时会拒绝运行，避免改动常用插件目录。它检查 ZIP 安装、启用、面板注册及停用。
 
