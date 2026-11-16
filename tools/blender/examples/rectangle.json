@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "rectangle",
+  "seed": 7,
+  "footprint": [[0, 0], [8, 0], [8, 6], [0, 6]],
+  "levels": 2,
+  "floor_height": 3.2,
+  "wall_thickness": 0.2,
+  "slab_thickness": 0.2,
+  "roof_thickness": 0.2,
+  "fracture_size": 1.5,
+  "density": 2400,
+  "openings": [
+    {"wall": 0, "level": 0, "kind": "door", "offset": 1.0, "width": 1.2, "height": 2.2, "frame": true},
+    {"wall": 0, "level": 1, "kind": "window", "offset": 3.0, "width": 1.4, "height": 1.2, "sill": 1.0, "frame": true},
+    {"wall": 1, "level": 0, "kind": "window", "offset": 2.0, "width": 1.5, "height": 1.2, "sill": 1.0}
+  ],
+  "inner_walls": [
+    {"start": [4, 0.2], "end": [4, 5.8], "thickness": 0.16}
+  ]
+}
