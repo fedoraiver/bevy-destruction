@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use avian3d::prelude::*;
-use bevy::{asset::LoadState, camera::ScalingMode, gltf::*, prelude::*};
+use bevy::{asset::LoadState, gltf::*, prelude::*};
 
 use crate::{
     DemoOptions,
     asset::{DestructibleAsset, resolve_building},
+    camera::{Crosshair, FreeCamera},
     debug::fracture_edges,
     material::{BuildingMaterial, building_material},
 };
@@ -14,10 +15,8 @@ pub struct DemoScenePlugin;
 
 impl Plugin for DemoScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup).add_systems(
-            Update,
-            (instantiate_pending, fit_camera, update_hint).chain(),
-        );
+        app.add_systems(Startup, setup)
+            .add_systems(Update, (instantiate_pending, update_hint).chain());
     }
 }
 
@@ -36,10 +35,6 @@ pub struct BuildingBounds {
 impl BuildingBounds {
     pub fn center(self) -> Vec3 {
         (self.min + self.max) * 0.5
-    }
-    pub fn view_height(self, aspect: f32) -> f32 {
-        let size = self.max - self.min;
-        size.y.max(size.x / aspect.max(0.01)).max(1.0) * 1.15
     }
 }
 
@@ -85,12 +80,22 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
         .spawn_scene(bsn! { Name::new("DemoRoot") Transform::IDENTITY Visibility::Visible })
         .id();
     commands.spawn_scene(bsn! {
-        Name::new("Fixed front camera")
+        Name::new("Free flight camera")
         Camera3d::default()
-        Projection::from(OrthographicProjection { scaling_mode: ScalingMode::FixedVertical { viewport_height: 10.0 }, far: 500.0, ..OrthographicProjection::default_3d() })
+        Projection::from(PerspectiveProjection { fov: crate::camera::FIELD_OF_VIEW, near: 0.05, far: 500.0, ..default() })
         Transform::from_xyz(0.0, 3.0, 30.0)
         AmbientLight { brightness: 280.0 }
-    }).insert((DemoCamera, ChildOf(root)));
+    }).insert((DemoCamera, FreeCamera::default(), ChildOf(root)));
+    commands.spawn_scene(bsn! {
+        Name::new("Crosshair")
+        Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center }
+        Visibility::Visible
+        Children [
+            Text::new("+")
+            TextFont { font_size: px(24.0) }
+            TextColor(Color::srgb(0.95, 0.7, 0.3))
+        ]
+    }).insert(Crosshair);
     commands
         .spawn_scene(bsn! {
             Name::new("Key light")
@@ -115,7 +120,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
 }
 
 #[allow(clippy::too_many_arguments)]
-fn instantiate_pending(
+pub(crate) fn instantiate_pending(
     mut commands: Commands,
     server: Res<AssetServer>,
     assets: Res<Assets<DestructibleAsset>>,
@@ -276,29 +281,6 @@ fn instantiate_pending(
     }
 }
 
-fn fit_camera(
-    instances: Query<&BuildingInstance>,
-    windows: Query<&Window>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<DemoCamera>>,
-) {
-    let Some(bounds) = instances.iter().find_map(|instance| instance.bounds) else {
-        return;
-    };
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let center = bounds.center();
-    for (mut transform, mut projection) in &mut cameras {
-        transform.translation = Vec3::new(center.x, center.y, bounds.max.z + 30.0);
-        transform.rotation = Quat::IDENTITY;
-        if let Projection::Orthographic(orthographic) = &mut *projection {
-            orthographic.scaling_mode = ScalingMode::FixedVertical {
-                viewport_height: bounds.view_height(window.width() / window.height()),
-            };
-        }
-    }
-}
-
 fn update_hint(instances: Query<&BuildingInstance>, mut hints: Query<&mut Text, With<Hint>>) {
     let Some(instance) = instances.iter().next() else {
         return;
@@ -307,7 +289,7 @@ fn update_hint(instances: Query<&BuildingInstance>, mut hints: Query<&mut Text, 
         format!("Building error: {error}")
     } else if instance.bounds.is_some() {
         format!(
-            "Left click: break  |  0: fracture edges  |  Esc: exit     {}/{} chunks",
+            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft click: break | 0: edges | Esc: exit     {}/{} chunks",
             instance.chunks.values().filter(|chunk| chunk.alive).count(),
             instance.chunks.len()
         )
@@ -317,23 +299,6 @@ fn update_hint(instances: Query<&BuildingInstance>, mut hints: Query<&mut Text, 
     for mut hint in &mut hints {
         if hint.0 != text {
             hint.0 = text.clone();
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn front_camera_fits_wide_and_tall_windows() {
-        let bounds = BuildingBounds {
-            min: Vec3::ZERO,
-            max: Vec3::new(8.0, 6.4, 6.0),
-        };
-        for aspect in [0.5, 1.0, 16.0 / 9.0, 3.0] {
-            let height = bounds.view_height(aspect);
-            assert!(height >= 6.4 * 1.15 - 0.001);
-            assert!(height * aspect >= 8.0 * 1.15 - 0.001);
         }
     }
 }

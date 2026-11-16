@@ -1,4 +1,5 @@
 mod asset;
+mod camera;
 mod debug;
 mod interaction;
 mod material;
@@ -33,7 +34,7 @@ fn options() -> Result<DemoOptions, String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--asset buildings/rectangle.destruction.json] [--smoke-test output/demo]\nLeft click: remove chunks | 0 / numpad 0: fracture edges | Esc: exit"
+                    "bevy-destruction [--asset buildings/rectangle.destruction.json] [--smoke-test output/demo]\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor | Left click: break | 0: edges | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -74,6 +75,7 @@ fn main() -> AppExit {
             material::BuildingMaterialPlugin,
             debug::FractureDebugPlugin,
             scene::DemoScenePlugin,
+            camera::FreeCameraPlugin,
             interaction::InteractionPlugin,
             vfx::VfxPlugin,
             smoke::SmokePlugin,

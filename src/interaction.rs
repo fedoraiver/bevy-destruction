@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use crate::{
     DemoOptions,
     asset::DestructibleAsset,
+    camera::CameraControl,
     debug::FractureEdges,
     scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
     vfx::BreakBurst,
@@ -36,27 +37,36 @@ pub struct ScriptedClick(pub Option<Vec2>);
 #[derive(Resource, Default)]
 pub(crate) struct PendingColliderRemoval(Vec<Entity>);
 
-fn cursor_damage(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cursor_damage(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), With<DemoCamera>>,
+    cameras: Query<(Entity, &Camera), With<DemoCamera>>,
+    transforms: TransformHelper,
     mut requests: ResMut<DamageRequests>,
     options: Res<DemoOptions>,
     mut scripted: ResMut<ScriptedClick>,
+    control: Res<CameraControl>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let (Ok(window), Ok((camera, transform))) = (windows.single(), cameras.single()) else {
+    let (Ok(window), Ok((entity, camera))) = (windows.single(), cameras.single()) else {
         return;
     };
     let cursor = if options.smoke_output.is_some() {
         scripted.0.take()
     } else {
-        window.cursor_position()
+        if !control.captured || control.suppress_click || !window.focused {
+            return;
+        }
+        Some(window.size() * 0.5)
+    };
+    let Ok(transform) = transforms.compute_global_transform(entity) else {
+        return;
     };
     if let Some(cursor) = cursor
-        && let Ok(ray) = camera.viewport_to_world(transform, cursor)
+        && let Ok(ray) = camera.viewport_to_world(&transform, cursor)
     {
         requests.0.push_back(ray);
     }

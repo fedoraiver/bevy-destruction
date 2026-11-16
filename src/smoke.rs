@@ -6,6 +6,7 @@ use bevy::{
 
 use crate::{
     DemoOptions,
+    camera::{FlightInput, LOOK_SENSITIVITY, ScriptedFlight},
     debug::{DebugOverlay, FractureEdges},
     interaction::{BREAK_LIMIT, DamageRequests, ScriptedClick},
     scene::{BuildingInstance, DemoCamera, RemovedChunk},
@@ -30,6 +31,8 @@ struct SmokeState {
     first_point: Option<Vec3>,
     first_particles: usize,
     stress_time: f32,
+    camera_origin: Option<Transform>,
+    camera_checks: bool,
 }
 
 #[derive(Component)]
@@ -55,9 +58,10 @@ fn drive(
     mut debug: ResMut<DebugOverlay>,
     mut exit: MessageWriter<AppExit>,
     mut windows: Query<(Entity, &mut Window)>,
-    cameras: Query<(&Camera, &GlobalTransform), With<DemoCamera>>,
+    cameras: Query<(&Camera, &GlobalTransform, &Transform), With<DemoCamera>>,
     mut scripted: ResMut<ScriptedClick>,
     assets: Res<Assets<crate::asset::DestructibleAsset>>,
+    mut flight: ResMut<ScriptedFlight>,
 ) {
     let Some(directory) = &options.smoke_output else {
         return;
@@ -84,7 +88,7 @@ fn drive(
     if particles.iter().len() > PARTICLE_LIMIT {
         state.errors.push("Particle budget exceeded".into());
     }
-    let target = (state.frames == 150)
+    let target = matches!(state.frames, 148 | 150)
         .then(|| {
             instance
                 .chunks
@@ -108,6 +112,57 @@ fn drive(
             commands.spawn_scene(bsn! { Name::new("Already-loaded asset probe") Transform::IDENTITY Visibility::Hidden })
                 .insert((BuildingInstance::pending(instance.asset.clone()), LoadedAssetProbe));
         }
+        20 => state.camera_origin = Some(*cameras.single().expect("Smoke camera").2),
+        21 => {
+            flight.0 = Some(FlightInput {
+                movement: Vec3::new(1.0, 1.0, -1.0),
+                ..default()
+            })
+        }
+        23 => {
+            let actual = cameras.single().expect("Smoke camera").2;
+            let expected = state.camera_origin.unwrap().translation
+                + Vec3::new(1.0, 1.0, -1.0).normalize() * 0.1;
+            if actual.translation.distance(expected) > 0.001 {
+                state
+                    .errors
+                    .push("Free flight did not move at normalized 6m/s".into());
+            }
+            flight.0 = Some(FlightInput {
+                movement: Vec3::new(-1.0, -1.0, 1.0),
+                ..default()
+            });
+        }
+        25 => {
+            flight.0 = Some(FlightInput {
+                mouse: Vec2::new(125.0, -75.0),
+                ..default()
+            })
+        }
+        27 => {
+            let actual = cameras.single().expect("Smoke camera").2;
+            let expected = Quat::from_euler(EulerRot::YXZ, -0.25, 0.15, 0.0);
+            if actual.rotation.angle_between(expected) > 0.001 {
+                state
+                    .errors
+                    .push("Mouse look did not apply yaw and pitch".into());
+            }
+            flight.0 = Some(FlightInput {
+                mouse: Vec2::new(-125.0, 75.0),
+                ..default()
+            });
+        }
+        29 => {
+            let actual = cameras.single().expect("Smoke camera").2;
+            let original = state.camera_origin.unwrap();
+            state.camera_checks = actual.translation.distance(original.translation) < 0.001
+                && actual.rotation.angle_between(original.rotation) < 0.001;
+            if !state.camera_checks {
+                state
+                    .errors
+                    .push("Free camera pose was reset or movement failed to reverse".into());
+            }
+        }
         60 => {
             if probes.is_empty() {
                 state
@@ -122,6 +177,12 @@ fn drive(
                 }
                 commands.entity(entity).despawn();
             }
+        }
+        65..=69 => {
+            flight.0 = Some(FlightInput {
+                movement: Vec3::X,
+                ..default()
+            })
         }
         90 => capture(&mut commands, directory, "01-grid.png"),
         100 | 300 => {
@@ -143,14 +204,33 @@ fn drive(
         110 => debug.0 = true,
         130 => capture(&mut commands, directory, "02-fracture-edges.png"),
         145 => debug.0 = false,
+        148 => {
+            if let Some(point) = target {
+                let transform = cameras.single().expect("Smoke camera").2;
+                let aimed =
+                    Transform::from_translation(transform.translation).looking_at(point, Vec3::Y);
+                let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+                let (target_yaw, target_pitch, _) = aimed.rotation.to_euler(EulerRot::YXZ);
+                flight.0 = Some(FlightInput {
+                    mouse: Vec2::new(yaw - target_yaw, pitch - target_pitch) / LOOK_SENSITIVITY,
+                    ..default()
+                });
+            }
+        }
         150 => {
             if let Some(point) = target {
                 state.first_point = Some(point);
-                let (camera, transform) = cameras.single().expect("Smoke camera");
-                let cursor = camera
+                let (camera, transform, _) = cameras.single().expect("Smoke camera");
+                let projected = camera
                     .world_to_viewport(transform, point)
                     .expect("Project test click");
                 let (window, mut data) = windows.single_mut().expect("Smoke window");
+                let cursor = data.size() * 0.5;
+                if projected.distance(cursor) > 0.01 {
+                    state
+                        .errors
+                        .push("Mouse look did not aim the centre ray at the target".into());
+                }
                 data.set_cursor_position(Some(cursor));
                 scripted.0 = Some(cursor);
                 commands.write_message(bevy::input::mouse::MouseButtonInput {
@@ -279,7 +359,7 @@ fn drive(
             }
             let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": instance.chunks.values().map(|c| c.primitives.len()).sum::<usize>(),
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
-                "remaining_particles": particles.iter().len(), "stress_to_end_seconds": time.elapsed_secs() - state.stress_time,
+                "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time,
                 "remaining_particle_ages": particles.iter().take(6).map(|p| [p.age, p.lifetime]).collect::<Vec<_>>(), "errors": state.errors });
             std::fs::write(
                 directory.join("report.json"),

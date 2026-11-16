@@ -6,6 +6,8 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
+use crate::scene::DemoCamera;
+
 pub const PARTICLE_LIMIT: usize = 640;
 const PARTICLES_PER_BURST: usize = 64;
 const FADE_STEPS: usize = 16;
@@ -16,7 +18,14 @@ impl Plugin for VfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BreakBurst>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (spawn_bursts, animate_particles).chain());
+            .add_systems(
+                Update,
+                (
+                    spawn_bursts,
+                    animate_particles.after(crate::camera::move_camera),
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -194,14 +203,21 @@ fn animate_particles(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<VfxAssets>,
-    mut particles: Query<(
-        Entity,
-        &mut Particle,
-        &mut Transform,
-        &mut MeshMaterial3d<StandardMaterial>,
-    )>,
+    cameras: Query<&Transform, With<DemoCamera>>,
+    mut particles: Query<
+        (
+            Entity,
+            &mut Particle,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        Without<DemoCamera>,
+    >,
 ) {
     let dt = time.delta_secs();
+    let billboard_rotation = cameras
+        .single()
+        .map_or(Quat::IDENTITY, |camera| camera.rotation);
     for (entity, mut particle, mut transform, mut material) in &mut particles {
         particle.age += dt;
         if particle.age >= particle.lifetime {
@@ -216,6 +232,7 @@ fn animate_particles(
             transform.rotate_local_y(particle.spin * dt * 0.7);
             transform.scale = Vec3::splat(particle.size * (1.0 - fraction * fraction));
         } else {
+            transform.rotation = billboard_rotation;
             particle.velocity *= (-1.2 * dt).exp();
             particle.velocity.y += 0.45 * dt;
             transform.scale = Vec3::splat(particle.size * (1.0 + fraction * 3.5));
@@ -245,6 +262,11 @@ mod tests {
         ))
         .add_plugins(VfxPlugin);
         app.update();
+        let rotation = Quat::from_euler(EulerRot::YXZ, 0.8, -0.3, 0.0);
+        let camera = app
+            .world_mut()
+            .spawn((DemoCamera, Transform::from_rotation(rotation)))
+            .id();
         let materials = app.world().resource::<Assets<StandardMaterial>>().len();
         for _ in 0..3 {
             for seed in 1..=24 {
@@ -262,11 +284,33 @@ mod tests {
                 .iter(app.world())
                 .count();
             assert_eq!(count, PARTICLE_LIMIT);
+            assert!(
+                app.world_mut()
+                    .query::<(&Particle, &Transform)>()
+                    .iter(app.world())
+                    .filter(|(p, _)| p.kind != 0)
+                    .all(|(_, t)| t
+                        .rotation
+                        .angle_between(app.world().get::<Transform>(camera).unwrap().rotation)
+                        < 0.001)
+            );
             assert_eq!(
                 app.world().resource::<Assets<StandardMaterial>>().len(),
                 materials
             );
         }
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .rotation = Quat::from_rotation_y(-0.6);
+        app.update();
+        assert!(
+            app.world_mut()
+                .query::<(&Particle, &Transform)>()
+                .iter(app.world())
+                .filter(|(p, _)| p.kind != 0)
+                .all(|(_, t)| t.rotation.angle_between(Quat::from_rotation_y(-0.6)) < 0.001)
+        );
         for _ in 0..180 {
             app.update();
         }

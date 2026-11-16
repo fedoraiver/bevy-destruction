@@ -2,7 +2,7 @@
 
 面向 Bevy 0.20 + Avian 0.8 的建筑物理破坏插件项目。
 
-已实现 [Blender 资产工具](tools/blender/README.md)和 [ADR 0007 交互演示](docs/adr/0007-bevy-bsn-fracture-interaction-demo.md)：BSN 建筑导入、固定正视相机、0.2m/1m 程序化网格、预破碎边界、点击删块、粗糙断面与烟尘碎屑。
+已实现 [Blender 资产工具](tools/blender/README.md)和 [ADR 0007 交互演示](docs/adr/0007-bevy-bsn-fracture-interaction-demo.md)：BSN 建筑导入、自由飞行相机、0.2m/1m 程序化网格、预破碎边界、点击删块、粗糙断面与烟尘碎屑。
 
 ## 运行
 
@@ -12,7 +12,9 @@
 cargo run
 ```
 
-左键点击建筑破坏；主键盘 `0` 或数字小键盘 `0` 切换橙色预破碎边界；`Esc` 退出。相机始终正对建筑，窗口变化时自动取景。
+`WASD` 沿相机前后左右移动，鼠标转向，`Space` 沿世界竖直方向上升，左/右 `Ctrl` 下降。视角采用透视投影，加载完成后只取景一次，此后由用户自由移动。
+
+窗口获得控制时隐藏并锁定鼠标，画面中央显示准星；左键破坏准星指向的建筑。`Tab` 释放或重新锁定鼠标；失去窗口焦点时暂停移动并释放鼠标，重新点击窗口恢复控制，这次点击不触发破坏。主键盘 `0` 或数字小键盘 `0` 切换橙色预破碎边界，`Esc` 退出。
 
 仓库包含重新烘焙的矩形、L 形及庭院资产，切换示例：
 
@@ -35,7 +37,7 @@ cargo run -- --asset buildings/l_shape.destruction.json --smoke-test output/acce
 cargo run -- --asset buildings/courtyard.destruction.json --smoke-test output/acceptance/courtyard
 ```
 
-`--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、鼠标点击、连续破坏与特效回收检查，保存普通/调试/破坏/预算压力/消散后五张截图和 `report.json`，然后退出；失败返回非零退出码。正常运行使用实际时间。截图由引擎直接生成，无需桌面自动化。
+`--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、相机控制、鼠标点击、连续破坏与特效回收检查，保存截图和 `report.json`，然后退出；失败返回非零退出码。验证模式只接收预定的控制输入，正常运行使用实际时间和实际输入。截图由引擎直接生成，无需桌面自动化。
 
 Blender 资产测试与插件使用方法见[工具说明](tools/blender/README.md)。
 
