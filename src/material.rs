@@ -87,6 +87,13 @@ pub fn building_material(
     }
 }
 
+pub fn rim_material(material_id: &str) -> BuildingMaterial {
+    let mut material = building_material(None, true, material_id);
+    material.extension.settings.fracture.x = 2.0;
+    material.extension.settings.fracture.y *= 1.25;
+    material
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

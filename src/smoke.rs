@@ -1,5 +1,6 @@
 use avian3d::prelude::Collider;
 use bevy::{
+    ecs::system::SystemParam,
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
 };
@@ -8,9 +9,11 @@ use crate::{
     DemoOptions,
     camera::{FlightInput, LOOK_SENSITIVITY, ScriptedFlight},
     debug::{DebugOverlay, FractureEdges},
+    diagnostics::RunMetrics,
+    dust_material::DustMaterial,
     interaction::{BREAK_LIMIT, DamageRequests, ScriptedClick},
-    scene::{BuildingInstance, DemoCamera, RemovedChunk},
-    vfx::{PARTICLE_LIMIT, Particle},
+    scene::{BuildingInstance, DamageDetail, DemoCamera, DetailStats, RemovedChunk},
+    vfx::{PARTICLE_LIMIT, Particle, VfxStats},
 };
 
 pub struct SmokePlugin;
@@ -33,21 +36,46 @@ struct SmokeState {
     stress_time: f32,
     camera_origin: Option<Transform>,
     camera_checks: bool,
+    replay_frames: u32,
+    rim_focus: Option<Vec3>,
+}
+
+#[derive(SystemParam)]
+struct SmokeResources<'w, 's> {
+    options: Res<'w, DemoOptions>,
+    assets: Res<'w, Assets<crate::asset::DestructibleAsset>>,
+    vfx: Res<'w, VfxStats>,
+    detail: Res<'w, DetailStats>,
+    metrics: ResMut<'w, RunMetrics>,
+    details: Query<'w, 's, &'static DamageDetail>,
+    dust_materials: Res<'w, Assets<DustMaterial>>,
+    meshes: Res<'w, Assets<Mesh>>,
+    adapter: Res<'w, bevy::render::renderer::RenderAdapterInfo>,
 }
 
 #[derive(Component)]
 struct LoadedAssetProbe;
 
-fn capture(commands: &mut Commands, directory: &std::path::Path, name: &str) {
+fn capture(
+    commands: &mut Commands,
+    pending: &mut Option<Entity>,
+    options: &DemoOptions,
+    directory: &std::path::Path,
+    name: &str,
+) {
+    if options.profile {
+        return;
+    }
+    let entity = *pending.get_or_insert_with(|| commands.spawn(Screenshot::primary_window()).id());
     commands
-        .spawn(Screenshot::primary_window())
+        .entity(entity)
         .observe(save_to_disk(directory.join(name)));
 }
 
 #[allow(clippy::too_many_arguments)]
 fn drive(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    resources: SmokeResources,
     time: Res<Time>,
     mut state: ResMut<SmokeState>,
     instances: Query<&BuildingInstance, Without<LoadedAssetProbe>>,
@@ -60,9 +88,19 @@ fn drive(
     mut windows: Query<(Entity, &mut Window)>,
     cameras: Query<(&Camera, &GlobalTransform, &Transform), With<DemoCamera>>,
     mut scripted: ResMut<ScriptedClick>,
-    assets: Res<Assets<crate::asset::DestructibleAsset>>,
     mut flight: ResMut<ScriptedFlight>,
 ) {
+    let SmokeResources {
+        options,
+        assets,
+        vfx,
+        detail,
+        mut metrics,
+        details,
+        dust_materials,
+        meshes,
+        adapter,
+    } = resources;
     let Some(directory) = &options.smoke_output else {
         return;
     };
@@ -84,6 +122,22 @@ fn drive(
         return;
     };
     state.frames += 1;
+    metrics.phase = state.frames;
+    let mut pending_capture = None;
+    if options.capture_replay
+        && (150..=390).contains(&state.frames)
+        && state.frames.is_multiple_of(2)
+    {
+        let name = format!("replay/frame-{:04}.png", state.replay_frames);
+        capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            &name,
+        );
+        state.replay_frames += 1;
+    }
     state.peak_particles = state.peak_particles.max(particles.iter().len());
     if particles.iter().len() > PARTICLE_LIMIT {
         state.errors.push("Particle budget exceeded".into());
@@ -104,9 +158,26 @@ fn drive(
                 })
         })
         .flatten();
+    if (392..=452).contains(&state.frames)
+        && let Some(focus) = state.rim_focus
+    {
+        let transform = cameras.single().expect("Smoke camera").2;
+        let destination = focus + Vec3::new(0.38, 0.18, 1.0);
+        let travel = destination - transform.translation;
+        if travel.length() > 0.11 {
+            let basis = Mat3::from_cols(*transform.right(), Vec3::Y, *transform.back());
+            flight.0 = Some(FlightInput {
+                movement: basis.inverse() * travel.normalize(),
+                ..default()
+            });
+        }
+    }
     match state.frames {
         1 => {
             std::fs::create_dir_all(directory).expect("Create smoke output");
+            if options.capture_replay && !options.profile {
+                std::fs::create_dir_all(directory.join("replay")).expect("Create replay output");
+            }
         }
         10 => {
             commands.spawn_scene(bsn! { Name::new("Already-loaded asset probe") Transform::IDENTITY Visibility::Hidden })
@@ -184,8 +255,21 @@ fn drive(
                 ..default()
             })
         }
-        90 => capture(&mut commands, directory, "01-grid.png"),
-        100 | 300 => {
+        90 => {
+            if !details.is_empty() {
+                state
+                    .errors
+                    .push("Intact building shows damage detail".into());
+            }
+            capture(
+                &mut commands,
+                &mut pending_capture,
+                &options,
+                directory,
+                "01-grid.png",
+            );
+        }
+        100 | 500 => {
             let (window, _) = windows.single().expect("Smoke window");
             commands.write_message(bevy::input::mouse::MouseButtonInput {
                 button: MouseButton::Left,
@@ -193,7 +277,7 @@ fn drive(
                 window,
             });
         }
-        101 | 301 => {
+        101 | 501 => {
             let (window, _) = windows.single().expect("Smoke window");
             commands.write_message(bevy::input::mouse::MouseButtonInput {
                 button: MouseButton::Left,
@@ -202,7 +286,13 @@ fn drive(
             });
         }
         110 => debug.0 = true,
-        130 => capture(&mut commands, directory, "02-fracture-edges.png"),
+        130 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "02-fracture-edges.png",
+        ),
         145 => debug.0 = false,
         148 => {
             if let Some(point) = target {
@@ -257,12 +347,36 @@ fn drive(
                 time.elapsed_secs(),
                 state.first_particles
             );
-            if state.first_particles != 64 {
+            let expected = if options.no_vfx { 0 } else { 64 };
+            if state.first_particles != expected {
                 let count = state.first_particles;
+                state.errors.push(format!(
+                    "Expected {expected} scheduled particles from one click, got {count}"
+                ));
+            }
+            if !options.no_vfx && (vfx.active[0] == 0 || vfx.scheduled[2] == 0) {
                 state
                     .errors
-                    .push(format!("Expected 64 particles from one click, got {count}"));
+                    .push("Impact and delayed smoke stages were not separated".into());
             }
+            if !options.no_detail && details.is_empty() {
+                state
+                    .errors
+                    .push("Exposed break has no geometric rim detail".into());
+            }
+            let hit = state.first_point.unwrap();
+            state.rim_focus = instance
+                .patches
+                .iter()
+                .filter(|patch| {
+                    patch
+                        .exposed_survivor(|id| instance.chunks[id].alive)
+                        .is_some()
+                })
+                .flat_map(|patch| &patch.rims)
+                .map(|rim| (rim.points[0] + rim.points[1]) * 0.5)
+                .filter(|point| point.z >= bounds.max.z - 0.3)
+                .min_by(|a, b| a.distance_squared(hit).total_cmp(&b.distance_squared(hit)));
             let deleted = instance
                 .chunks
                 .values()
@@ -318,8 +432,76 @@ fn drive(
                 }
             }
         }
-        180 => capture(&mut commands, directory, "03-damage-and-dust.png"),
-        200 => {
+        153 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "06-impact-005s.png",
+        ),
+        159 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "07-debris-015s.png",
+        ),
+        174 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "08-dust-040s.png",
+        ),
+        180 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "03-damage-and-dust.png",
+        ),
+        210 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "09-dust-100s.png",
+        ),
+        330 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "10-fallout-300s.png",
+        ),
+        390 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "11-rim-without-dust.png",
+        ),
+        454 => {
+            if let Some(point) = state.rim_focus {
+                let transform = cameras.single().expect("Smoke camera").2;
+                let aimed =
+                    Transform::from_translation(transform.translation).looking_at(point, Vec3::Y);
+                let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+                let (target_yaw, target_pitch, _) = aimed.rotation.to_euler(EulerRot::YXZ);
+                flight.0 = Some(FlightInput {
+                    mouse: Vec2::new(yaw - target_yaw, pitch - target_pitch) / LOOK_SENSITIVITY,
+                    ..default()
+                });
+            }
+        }
+        460 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "12-rim-closeup.png",
+        ),
+        480 => {
             state.stress_time = time.elapsed_secs();
             for point in instance
                 .chunks
@@ -336,31 +518,78 @@ fn drive(
                     .push_back(Ray3d::new(point + Vec3::Z * 20.0, Dir3::NEG_Z));
             }
         }
-        210 => capture(&mut commands, directory, "04-budget-stress.png"),
-        400 => {
+        490 => capture(
+            &mut commands,
+            &mut pending_capture,
+            &options,
+            directory,
+            "04-budget-stress.png",
+        ),
+        760 => {
             if particles.iter().len() != 0 {
                 state
                     .errors
                     .push("Particles outlived their maximum lifetime".into());
             }
-            capture(&mut commands, directory, "05-settled.png");
+            capture(
+                &mut commands,
+                &mut pending_capture,
+                &options,
+                directory,
+                "05-settled.png",
+            );
         }
-        430 => {
+        790 => {
             for name in [
                 "01-grid.png",
                 "02-fracture-edges.png",
                 "03-damage-and-dust.png",
                 "04-budget-stress.png",
                 "05-settled.png",
+                "06-impact-005s.png",
+                "07-debris-015s.png",
+                "08-dust-040s.png",
+                "09-dust-100s.png",
+                "10-fallout-300s.png",
+                "11-rim-without-dust.png",
+                "12-rim-closeup.png",
             ] {
-                if !directory.join(name).is_file() {
+                if !options.profile && !directory.join(name).is_file() {
                     state.errors.push(format!("Missing screenshot {name}"));
                 }
             }
+            if options.capture_replay && !options.profile {
+                for frame in 0..state.replay_frames {
+                    if !directory
+                        .join(format!("replay/frame-{frame:04}.png"))
+                        .is_file()
+                    {
+                        state.errors.push(format!("Missing replay frame {frame}"));
+                    }
+                }
+            }
+            if detail.triangles > crate::scene::DETAIL_TRIANGLE_LIMIT {
+                state.errors.push("Rim triangle budget exceeded".into());
+            }
+            if details.iter().map(|detail| detail.triangles).sum::<usize>() != detail.triangles {
+                state
+                    .errors
+                    .push("Rim geometry count disagrees with instance state".into());
+            }
+            if !options.no_vfx && vfx.feedback_bursts != vfx.received {
+                state
+                    .errors
+                    .push("A new hit lost immediate feedback under saturation".into());
+            }
             let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": instance.chunks.values().map(|c| c.primitives.len()).sum::<usize>(),
+                "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
                 "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time,
-                "remaining_particle_ages": particles.iter().take(6).map(|p| [p.age, p.lifetime]).collect::<Vec<_>>(), "errors": state.errors });
+                "remaining_particle_ages": particles.iter().take(6).map(|p| [p.age, p.lifetime]).collect::<Vec<_>>(),
+                "vfx": {"spawned_by_layer":vfx.spawned,"dropped_by_layer":vfx.dropped,"retired":vfx.retired,"received":vfx.received,"feedback_bursts":vfx.feedback_bursts,"collision_queries":vfx.collision_queries,"collisions":vfx.collisions,"max_update_cpu_ms":vfx.max_update_cpu_ms,"max_emit_cpu_ms":vfx.max_emit_cpu_ms,"estimated_coverage":vfx.estimated_coverage,"peak_estimated_coverage":vfx.peak_estimated_coverage},
+                "detail":{"cached_patches":detail.patches,"cached_meshes":detail.cached_meshes,"cached_triangles":detail.cached_triangles,"active_meshes":detail.active_meshes,"triangles":detail.triangles,"cache_build_ms":detail.cache_build_ms,"max_update_ms":detail.max_update_ms},
+                "asset_counts":{"dust_materials":dust_materials.len(),"meshes":meshes.len()},
+                "metrics":metrics.json(),"replay_frames":state.replay_frames,"no_vfx":options.no_vfx,"no_detail":options.no_detail,"no_soft_particles":options.no_soft_particles,"profile":options.profile,"errors": state.errors });
             std::fs::write(
                 directory.join("report.json"),
                 serde_json::to_string_pretty(&report).unwrap(),

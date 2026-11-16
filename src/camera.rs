@@ -200,6 +200,7 @@ mod tests {
             .insert_resource(DemoOptions {
                 asset: "buildings/rectangle.destruction.json".into(),
                 smoke_output: None,
+                ..default()
             })
             .add_systems(Update, move_camera);
         app.world_mut()

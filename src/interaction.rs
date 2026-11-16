@@ -9,7 +9,7 @@ use crate::{
     camera::CameraControl,
     debug::FractureEdges,
     scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
-    vfx::BreakBurst,
+    vfx::{BreakBurst, EmissionSurface},
 };
 
 pub const BREAK_RADIUS: f32 = 0.4;
@@ -182,6 +182,61 @@ pub fn apply_damage(
                 .take(BREAK_LIMIT - 1)
                 .map(|(id, _)| id),
         );
+        let material = asset
+            .manifest
+            .chunks
+            .iter()
+            .find(|chunk| chunk.id == identity.id)
+            .unwrap()
+            .material
+            .clone();
+        let removed_volume = asset
+            .manifest
+            .chunks
+            .iter()
+            .filter(|chunk| selected.contains(&chunk.id))
+            .map(|chunk| chunk.volume)
+            .sum();
+        let mut surfaces = Vec::new();
+        let mut exposed_area = 0.0;
+        let mut dirty = selected
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        for patch in instance.patches.iter() {
+            if !instance.bonds[&patch.bond_id] {
+                continue;
+            }
+            let removed_a = selected.contains(&patch.a);
+            let removed_b = selected.contains(&patch.b);
+            if removed_a == removed_b {
+                continue;
+            }
+            let survivor = if removed_a { &patch.b } else { &patch.a };
+            if !instance.chunks[survivor].alive {
+                continue;
+            }
+            dirty.insert(survivor.clone());
+            exposed_area += patch.area;
+            let normal = if removed_a {
+                -patch.normal
+            } else {
+                patch.normal
+            };
+            surfaces.extend(patch.triangles.iter().map(|triangle| EmissionSurface {
+                triangle: *triangle,
+                normal,
+            }));
+        }
+        surfaces.sort_by(|a, b| {
+            let center =
+                |s: &EmissionSurface| (s.triangle[0] + s.triangle[1] + s.triangle[2]) / 3.0;
+            center(a)
+                .distance_squared(point)
+                .total_cmp(&center(b).distance_squared(point))
+        });
+        surfaces.truncate(256);
+        instance.detail_dirty.extend(dirty);
         for id in &selected {
             let chunk = instance.chunks.get_mut(id).unwrap();
             chunk.alive = false;
@@ -194,27 +249,27 @@ pub fn apply_damage(
             }
             pending.0.push(chunk.entity);
         }
-        let mut exposed_points = Vec::new();
         for bond in &asset.manifest.bonds {
             if selected.contains(&bond.a) || selected.contains(&bond.b) {
-                if selected.contains(&bond.a) != selected.contains(&bond.b)
-                    && instance.bonds.get(&bond.id).copied().unwrap_or(false)
-                {
-                    exposed_points.push(Vec3::from(bond.center));
-                }
                 instance.bonds.insert(bond.id.clone(), false);
             }
         }
-        exposed_points.sort_by(|a, b| {
-            a.distance_squared(point)
-                .total_cmp(&b.distance_squared(point))
-        });
-        exposed_points.truncate(12);
         bursts.write(BreakBurst {
             point,
             normal,
-            seed: hit.entity.to_bits(),
-            exposed_points,
+            seed: asset
+                .manifest
+                .name
+                .bytes()
+                .chain([0])
+                .chain(identity.id.bytes())
+                .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                    (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+                }),
+            material,
+            removed_volume,
+            exposed_area,
+            surfaces,
         });
         info!("Removed {} chunks at {point:?}", selected.len());
     }

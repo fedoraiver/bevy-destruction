@@ -2,7 +2,7 @@
 
 面向 Bevy 0.20 + Avian 0.8 的建筑物理破坏插件项目。
 
-已实现 [Blender 资产工具](tools/blender/README.md)和 [ADR 0007 交互演示](docs/adr/0007-bevy-bsn-fracture-interaction-demo.md)：BSN 建筑导入、自由飞行相机、0.2m/1m 程序化网格、预破碎边界、点击删块、粗糙断面与烟尘碎屑。
+已实现 [Blender 资产工具](tools/blender/README.md)、[ADR 0007 交互演示](docs/adr/0007-bevy-bsn-fracture-interaction-demo.md)及 [ADR 0008 破坏表现](docs/adr/0008-destruction-vfx-and-exposed-edge-detail.md)：BSN 建筑导入、自由飞行相机、程序化网格、预破碎边界、点击删块、分层烟尘碎屑与真实暴露边带。
 
 ## 运行
 
@@ -27,6 +27,8 @@ cargo run -- --asset buildings/courtyard.destruction.json
 
 本演示按已有碎块删除局部几何，每次最多 6 块；剩余建筑保持静态。结构承载、失支撑坍塌与动态刚体残骸仍属于后续功能。
 
+破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。邻块消失后，存活侧才生成带骨料材质的闭合棱角边带；完整建筑和其他实例不提前显露裂缝。边带仍使用原凸碰撞代理近似，未增加结构坍塌。
+
 ## 验证
 
 ```powershell
@@ -38,6 +40,17 @@ cargo run -- --asset buildings/courtyard.destruction.json --smoke-test output/ac
 ```
 
 `--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、相机控制、鼠标点击、连续破坏与特效回收检查，保存截图和 `report.json`，然后退出；失败返回非零退出码。验证模式只接收预定的控制输入，正常运行使用实际时间和实际输入。截图由引擎直接生成，无需桌面自动化。
+
+验证包含 0.05 / 0.15 / 0.4 / 1 / 3 秒分阶段画面，以及烟尘散尽后的破口近景。可用以下参数做同路径比较：
+
+```powershell
+cargo run -- --smoke-test output/vfx-replay --capture-replay
+cargo run -- --smoke-test output/geometry-only --no-vfx
+cargo run -- --smoke-test output/baseline --no-vfx --no-detail --no-soft-particles
+cargo run --release -- --smoke-test output/profile --profile
+```
+
+`--capture-replay` 另存 30fps 的 PNG 序列到 `replay`。`--profile` 关闭截图，记录实际墙钟帧间隔、VFX 生成/更新、边带缓存/更新及渲染通道 CPU/GPU 时间（GPU 项取决于设备支持）；固定模拟时间不作为帧率测量。`--no-detail` 单独关闭新增边带，`--no-soft-particles` 关闭深度预通道和交界淡出。粒子总量限 640，边带显示几何限 180,000 三角形；这些数量上限不代表 60fps 保证。
 
 Blender 资产测试与插件使用方法见[工具说明](tools/blender/README.md)。
 

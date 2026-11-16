@@ -77,7 +77,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let aggregate = noise3(position * surface.fracture.z);
         let pores = noise3(position * surface.fracture.w + vec3<f32>(7.3, 1.7, 9.1));
         let variation = 0.72 + 0.40 * aggregate - 0.13 * smoothstep(0.67, 0.91, pores);
-        pbr.material.base_color = vec4<f32>(surface.fracture_color.rgb * variation, 1.0);
+        var fracture_color = surface.fracture_color.rgb * variation;
+        @if(VERTEX_COLORS) {
+            if surface.fracture.x > 1.5 {
+                let depth = clamp(in.color.r, 0.0, 1.0);
+                let fresh = mix(1.22, 0.66, smoothstep(0.1, 1.0, depth));
+                let aggregate_tint = mix(0.9, 1.12, in.color.g);
+                fracture_color = fracture_color * fresh * aggregate_tint;
+                pbr.material.perceptual_roughness = max(pbr.material.perceptual_roughness, 0.94);
+            }
+        }
+        pbr.material.base_color = vec4<f32>(fracture_color, 1.0);
         let e = 0.001;
         let gradient = vec3<f32>(
             height(position + vec3<f32>(e, 0.0, 0.0)) - height(position - vec3<f32>(e, 0.0, 0.0)),

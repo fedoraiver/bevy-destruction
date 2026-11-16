@@ -1,118 +1,163 @@
+use std::time::Instant;
+
+use avian3d::prelude::*;
 use bevy::{
-    asset::RenderAssetUsages,
-    image::Image,
-    light::NotShadowCaster,
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling, light::NotShadowCaster,
+    mesh::PrimitiveTopology, prelude::*,
 };
 
-use crate::scene::DemoCamera;
+use crate::{
+    dust_material::{DustMaterial, dust_atlas, dust_material},
+    scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
+};
 
 pub const PARTICLE_LIMIT: usize = 640;
-const PARTICLES_PER_BURST: usize = 64;
-const FADE_STEPS: usize = 16;
+const LAYER_LIMITS: [usize; 4] = [96, 96, 320, 128];
+const BURST_COUNTS: [usize; 4] = [8, 8, 24, 24];
+const DUST_POOL_SIZE: usize = PARTICLE_LIMIT - LAYER_LIMITS[1];
+const MAX_COLLISION_QUERIES: usize = 48;
+const DEBRIS_FADE_STEPS: usize = 16;
 
 pub struct VfxPlugin;
 
 impl Plugin for VfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BreakBurst>()
+            .init_resource::<VfxStats>()
+            .init_resource::<VfxSettings>()
             .add_systems(Startup, setup)
             .add_systems(
                 Update,
                 (
-                    spawn_bursts,
+                    spawn_bursts.after(crate::interaction::apply_damage),
                     animate_particles.after(crate::camera::move_camera),
+                    prewarm_pipelines,
                 )
                     .chain(),
             );
     }
 }
 
-#[derive(Message)]
+#[derive(Clone, Debug)]
+pub struct EmissionSurface {
+    pub triangle: [Vec3; 3],
+    pub normal: Vec3,
+}
+
+#[derive(Message, Clone)]
 pub struct BreakBurst {
     pub point: Vec3,
     pub normal: Vec3,
     pub seed: u64,
-    pub exposed_points: Vec<Vec3>,
+    pub material: String,
+    pub removed_volume: f32,
+    pub exposed_area: f32,
+    pub surfaces: Vec<EmissionSurface>,
+}
+
+#[derive(Resource)]
+pub struct VfxSettings {
+    pub enabled: bool,
+    pub density: f32,
+}
+
+impl Default for VfxSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            density: 1.0,
+        }
+    }
+}
+
+#[derive(Resource, Default, Debug)]
+pub struct VfxStats {
+    pub active: [usize; 4],
+    pub scheduled: [usize; 4],
+    pub peak: usize,
+    pub received: u64,
+    pub spawned: [u64; 4],
+    pub dropped: [u64; 4],
+    pub retired: u64,
+    pub first_feedbacks: u64,
+    pub feedback_bursts: u64,
+    pub collision_queries: u64,
+    pub collisions: u64,
+    pub update_cpu_ms: f32,
+    pub max_update_cpu_ms: f32,
+    pub emit_cpu_ms: f32,
+    pub max_emit_cpu_ms: f32,
+    pub estimated_coverage: f32,
+    pub peak_estimated_coverage: f32,
+    collision_cursor: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layer {
+    Impact,
+    Debris,
+    Smoke,
+    Fallout,
+}
+
+impl Layer {
+    fn index(self) -> usize {
+        self as usize
+    }
+    fn from_index(index: usize) -> Self {
+        [Self::Impact, Self::Debris, Self::Smoke, Self::Fallout][index]
+    }
 }
 
 #[derive(Component)]
 pub struct Particle {
     pub age: f32,
     pub lifetime: f32,
+    layer: Layer,
     velocity: Vec3,
     size: f32,
-    kind: usize,
-    spin: f32,
+    spin: Vec3,
+    roll: f32,
+    variant: u32,
+    opacity: f32,
+    palette: usize,
+    dust_slot: Option<usize>,
+    bounces: u8,
+    settled: bool,
+    sweep_origin: Vec3,
+    support: Option<Entity>,
 }
 
 #[derive(Resource)]
 struct VfxAssets {
     root: Entity,
     billboard: Handle<Mesh>,
-    debris: Handle<Mesh>,
-    fades: Vec<Handle<StandardMaterial>>,
-    solid: Handle<StandardMaterial>,
+    debris: Vec<Handle<Mesh>>,
+    solids: Vec<Vec<Handle<StandardMaterial>>>,
+    dust: Vec<Handle<DustMaterial>>,
+    free_dust: Vec<usize>,
+    _prewarm_material: Handle<DustMaterial>,
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-) {
-    let root = commands
-        .spawn_scene(bsn! { Name::new("VfxRoot") Transform::IDENTITY Visibility::Visible })
-        .id();
-    let mut pixels = Vec::new();
-    for y in 0..64 {
-        for x in 0..64 {
-            let radius =
-                Vec2::new((x as f32 + 0.5) / 32.0 - 1.0, (y as f32 + 0.5) / 32.0 - 1.0).length();
-            let alpha = (1.0 - radius).max(0.0).powf(1.8);
-            pixels.extend_from_slice(&[255, 255, 255, (alpha * 255.0) as u8]);
-        }
+#[derive(Component)]
+struct PipelineWarmup(u16);
+
+fn material_palette(material: &str) -> usize {
+    match material {
+        "steel" => 1,
+        "wood" | "timber" => 2,
+        "brick" | "masonry" => 3,
+        _ => 0,
     }
-    let texture = images.add(Image::new(
-        Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        pixels,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    ));
-    let fades = (0..FADE_STEPS)
-        .map(|step| {
-            materials.add(StandardMaterial {
-                base_color: Color::srgba(
-                    0.63,
-                    0.59,
-                    0.52,
-                    (1.0 - step as f32 / FADE_STEPS as f32) * 0.48,
-                ),
-                base_color_texture: Some(texture.clone()),
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                cull_mode: None,
-                ..default()
-            })
-        })
-        .collect();
-    commands.insert_resource(VfxAssets {
-        root,
-        billboard: meshes.add(Rectangle::new(1.0, 1.0)),
-        debris: meshes.add(Cuboid::new(1.0, 0.7, 0.6)),
-        fades,
-        solid: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.39, 0.36, 0.31),
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
-    });
+}
+
+fn palette_color(index: usize) -> [f32; 3] {
+    [
+        [0.43, 0.40, 0.34],
+        [0.28, 0.31, 0.34],
+        [0.42, 0.26, 0.12],
+        [0.51, 0.25, 0.15],
+    ][index]
 }
 
 fn random(state: &mut u64) -> f32 {
@@ -122,132 +167,693 @@ fn random(state: &mut u64) -> f32 {
     (*state >> 40) as f32 / (1_u32 << 24) as f32
 }
 
-fn spawn_bursts(
+fn debris_mesh(seed: u64) -> Mesh {
+    let mut rng = seed;
+    let mut vertices = [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::NEG_Y,
+        Vec3::Z,
+        Vec3::NEG_Z,
+    ];
+    for vertex in &mut vertices {
+        *vertex *= 0.38 + random(&mut rng) * 0.25;
+        *vertex += Vec3::new(
+            random(&mut rng) - 0.5,
+            random(&mut rng) - 0.5,
+            random(&mut rng) - 0.5,
+        ) * 0.12;
+        vertex.y *= 0.65;
+    }
+    let min = vertices.iter().copied().reduce(Vec3::min).unwrap();
+    let max = vertices.iter().copied().reduce(Vec3::max).unwrap();
+    let extent = (max - min).max_element();
+    for vertex in &mut vertices {
+        *vertex /= extent;
+    }
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    for face in [
+        [2, 0, 4],
+        [2, 4, 1],
+        [2, 1, 5],
+        [2, 5, 0],
+        [3, 4, 0],
+        [3, 1, 4],
+        [3, 5, 1],
+        [3, 0, 5],
+    ] {
+        let mut triangle = face.map(|i| vertices[i]);
+        let mut normal = (triangle[1] - triangle[0])
+            .cross(triangle[2] - triangle[0])
+            .normalize();
+        if normal.dot(triangle.iter().copied().sum::<Vec3>()) < 0.0 {
+            triangle.swap(1, 2);
+            normal = -normal;
+        }
+        positions.extend(triangle.map(|point| point.to_array()));
+        normals.extend([normal.to_array(); 3]);
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+}
+
+fn setup(
     mut commands: Commands,
-    mut bursts: MessageReader<BreakBurst>,
-    assets: Res<VfxAssets>,
-    particles: Query<(), With<Particle>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut dust_materials: ResMut<Assets<DustMaterial>>,
 ) {
-    let mut available = PARTICLE_LIMIT.saturating_sub(particles.iter().len());
-    for burst in bursts.read() {
-        let count = available.min(PARTICLES_PER_BURST);
-        available -= count;
-        let mut seed = burst.seed.max(1);
-        for i in 0..count {
-            let kind = if i < 16 {
-                0
-            } else if i < 44 {
-                1
-            } else {
-                2
-            };
-            let jitter = Vec3::new(
-                random(&mut seed) * 2.0 - 1.0,
-                random(&mut seed) * 2.0 - 1.0,
-                random(&mut seed) * 2.0 - 1.0,
-            );
-            let (speed, size, lifetime) = match kind {
-                0 => (
-                    2.7,
-                    0.035 + random(&mut seed) * 0.055,
-                    0.7 + random(&mut seed) * 0.6,
-                ),
-                1 => (
-                    0.55,
-                    0.22 + random(&mut seed) * 0.35,
-                    1.8 + random(&mut seed) * 0.7,
-                ),
-                _ => (
-                    1.4,
-                    0.06 + random(&mut seed) * 0.11,
-                    0.35 + random(&mut seed) * 0.45,
-                ),
-            };
-            let velocity =
-                (burst.normal * (0.35 + random(&mut seed)) + jitter * 0.7 + Vec3::Y * 0.4) * speed;
-            let origin = if kind == 1 && i % 2 == 0 && !burst.exposed_points.is_empty() {
-                burst.exposed_points[(i / 2) % burst.exposed_points.len()]
-            } else {
-                burst.point
-            };
-            commands.spawn((
-                Name::new("Transient fracture particle"),
-                ChildOf(assets.root),
-                NotShadowCaster,
-                Mesh3d(if kind == 0 {
-                    assets.debris.clone()
-                } else {
-                    assets.billboard.clone()
-                }),
-                MeshMaterial3d(if kind == 0 {
-                    assets.solid.clone()
-                } else {
-                    assets.fades[0].clone()
-                }),
-                Transform::from_translation(origin + burst.normal * 0.035 + jitter * 0.08)
-                    .with_scale(Vec3::splat(size)),
-                Particle {
-                    age: 0.0,
-                    lifetime,
-                    velocity,
-                    size,
-                    kind,
-                    spin: random(&mut seed) * 8.0 - 4.0,
-                },
-            ));
+    let root = commands
+        .spawn_scene(bsn! { Name::new("VfxRoot") Transform::IDENTITY Visibility::Visible })
+        .id();
+    let atlas = images.add(dust_atlas());
+    let dust = (0..DUST_POOL_SIZE)
+        .map(|_| dust_materials.add(dust_material(atlas.clone(), "concrete")))
+        .collect();
+    let solids: Vec<Vec<Handle<StandardMaterial>>> = (0..4)
+        .map(|palette| {
+            let [r, g, b] = palette_color(palette);
+            (0..DEBRIS_FADE_STEPS)
+                .map(|step| {
+                    materials.add(StandardMaterial {
+                        base_color: Color::srgba(
+                            r,
+                            g,
+                            b,
+                            1.0 - step as f32 / DEBRIS_FADE_STEPS as f32,
+                        ),
+                        metallic: if palette == 1 { 0.65 } else { 0.0 },
+                        perceptual_roughness: if palette == 1 { 0.72 } else { 0.98 },
+                        alpha_mode: if step == 0 {
+                            AlphaMode::Opaque
+                        } else {
+                            AlphaMode::Blend
+                        },
+                        ..default()
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let billboard = meshes.add(Rectangle::new(1.0, 1.0));
+    let debris = (1..=8)
+        .map(|seed| meshes.add(debris_mesh(seed * 104729)))
+        .collect::<Vec<_>>();
+    let mut material = dust_material(atlas, "concrete");
+    material.update(0.0, 1.0, 0, 0.0, 0.0);
+    let prewarm_material = dust_materials.add(material);
+    commands.spawn((
+        Name::new("Dust pipeline warmup"),
+        PipelineWarmup(90),
+        NoFrustumCulling,
+        NotShadowCaster,
+        Mesh3d(billboard.clone()),
+        MeshMaterial3d(prewarm_material.clone()),
+        Transform::from_xyz(0.0, 0.0, -1.0).with_scale(Vec3::splat(0.00001)),
+        Visibility::Visible,
+    ));
+    for material in solids[0].iter().take(2) {
+        commands.spawn((
+            Name::new("Debris pipeline warmup"),
+            PipelineWarmup(90),
+            NoFrustumCulling,
+            NotShadowCaster,
+            Mesh3d(debris[0].clone()),
+            MeshMaterial3d(material.clone()),
+            Transform::from_xyz(0.0, 0.0, -1.0).with_scale(Vec3::splat(0.00001)),
+            Visibility::Visible,
+        ));
+    }
+    commands.insert_resource(VfxAssets {
+        root,
+        billboard,
+        debris,
+        solids,
+        dust,
+        free_dust: (0..DUST_POOL_SIZE).rev().collect(),
+        _prewarm_material: prewarm_material,
+    });
+}
+
+fn prewarm_pipelines(
+    mut commands: Commands,
+    cameras: Query<&Transform, With<DemoCamera>>,
+    mut warmups: Query<(Entity, &mut PipelineWarmup, &mut Transform), Without<DemoCamera>>,
+) {
+    for (entity, mut warmup, mut transform) in &mut warmups {
+        warmup.0 -= 1;
+        if warmup.0 == 0 {
+            commands.entity(entity).despawn();
+        } else if let Ok(camera) = cameras.single() {
+            transform.translation =
+                camera.translation + camera.rotation * Vec3::new(0.35, -0.2, -1.0);
         }
     }
 }
 
+struct Resident {
+    entity: Entity,
+    layer: Layer,
+    age: f32,
+    dust_slot: Option<usize>,
+    retired: bool,
+}
+
+fn retire(
+    resident: &mut Resident,
+    commands: &mut Commands,
+    assets: &mut VfxAssets,
+    counts: &mut [usize; 4],
+    stats: &mut VfxStats,
+) {
+    resident.retired = true;
+    commands.entity(resident.entity).despawn();
+    counts[resident.layer.index()] -= 1;
+    if let Some(slot) = resident.dust_slot {
+        assets.free_dust.push(slot);
+    }
+    stats.retired += 1;
+}
+
+fn sample_surface(surfaces: &[EmissionSurface], rng: &mut u64) -> Option<(Vec3, Vec3)> {
+    let area = |s: &EmissionSurface| {
+        (s.triangle[1] - s.triangle[0])
+            .cross(s.triangle[2] - s.triangle[0])
+            .length()
+            * 0.5
+    };
+    let mut target = random(rng) * surfaces.iter().map(area).sum::<f32>();
+    for surface in surfaces {
+        let area = area(surface);
+        target -= area;
+        if target <= 0.0 && area > 0.0 {
+            let u = random(rng).sqrt();
+            let v = random(rng);
+            return Some((
+                surface.triangle[0] * (1.0 - u)
+                    + surface.triangle[1] * (u * (1.0 - v))
+                    + surface.triangle[2] * (u * v),
+                surface.normal,
+            ));
+        }
+    }
+    None
+}
+
+fn spawn_particle(burst: &BreakBurst, layer: Layer, rng: &mut u64) -> (Particle, Transform) {
+    let surface = if matches!(layer, Layer::Smoke | Layer::Fallout) {
+        sample_surface(&burst.surfaces, rng)
+    } else {
+        None
+    };
+    let (point, normal) = surface.unwrap_or((burst.point, burst.normal));
+    let normal = normal.normalize_or(Vec3::Y);
+    let tangent = normal.any_orthonormal_vector();
+    let bitangent = normal.cross(tangent);
+    let jitter = tangent * (random(rng) * 2.0 - 1.0) + bitangent * (random(rng) * 2.0 - 1.0);
+    let strength = (burst.removed_volume.max(0.0).cbrt() * 0.6
+        + burst.exposed_area.max(0.0).sqrt() * 0.12)
+        .clamp(0.7, 1.5);
+    let (delay, lifetime, size, speed, opacity) = match layer {
+        Layer::Impact => (
+            0.0,
+            0.16 + random(rng) * 0.12,
+            0.10 + random(rng) * 0.16,
+            1.6 + random(rng) * 2.0,
+            0.8,
+        ),
+        Layer::Debris => (
+            0.04 + random(rng) * 0.12,
+            2.0 + random(rng) * 0.7,
+            0.05 + random(rng) * 0.20,
+            1.5 + random(rng) * 2.7,
+            1.0,
+        ),
+        Layer::Smoke => (
+            0.08 + random(rng) * 0.18,
+            1.4 + random(rng) * 1.1,
+            0.20 + random(rng) * 0.35,
+            0.25 + random(rng) * 0.55,
+            0.40,
+        ),
+        Layer::Fallout => (
+            0.3 + random(rng) * 0.7,
+            0.7 + random(rng) * 0.8,
+            0.025 + random(rng) * 0.06,
+            0.15 + random(rng) * 0.4,
+            0.26,
+        ),
+    };
+    let velocity = match layer {
+        Layer::Debris => {
+            (normal * (0.6 + random(rng) * 0.5) + jitter * 0.65 + Vec3::Y * 0.35) * speed
+        }
+        Layer::Fallout => normal * speed + jitter * 0.18 - Vec3::Y * 0.25,
+        _ => normal * speed + jitter * speed * 0.45 + Vec3::Y * 0.12,
+    };
+    let particle = Particle {
+        age: -delay,
+        lifetime,
+        layer,
+        velocity,
+        size: if layer == Layer::Debris {
+            (size * strength).clamp(0.05, 0.25)
+        } else {
+            size * strength
+        },
+        spin: Vec3::new(
+            random(rng) * 8.0 - 4.0,
+            random(rng) * 8.0 - 4.0,
+            random(rng) * 8.0 - 4.0,
+        ),
+        roll: random(rng) * std::f32::consts::TAU,
+        variant: (random(rng) * 4.0) as u32,
+        opacity,
+        palette: material_palette(&burst.material),
+        dust_slot: None,
+        bounces: 0,
+        settled: false,
+        sweep_origin: point + normal * 0.045 + jitter * 0.025,
+        support: None,
+    };
+    let transform = Transform::from_translation(point + normal * 0.045 + jitter * 0.025)
+        .with_scale(Vec3::splat(particle.size));
+    (particle, transform)
+}
+
+fn screen_footprint(
+    camera: &Transform,
+    projection: Option<&Projection>,
+    position: Vec3,
+    size: f32,
+) -> f32 {
+    let view = camera.rotation.inverse() * (position - camera.translation);
+    if view.z >= 0.0 {
+        return 0.0;
+    }
+    let (scale_x, scale_y) = match projection {
+        Some(Projection::Orthographic(p)) => (1.0 / p.area.width(), 1.0 / p.area.height()),
+        _ => {
+            let (fov, aspect, near) = match projection {
+                Some(Projection::Perspective(p)) => (p.fov, p.aspect_ratio, p.near),
+                _ => (crate::camera::FIELD_OF_VIEW, 16.0 / 9.0, 0.05),
+            };
+            let scale_y = 1.0 / (2.0 * (fov * 0.5).tan() * (-view.z).max(near));
+            (scale_y / aspect, scale_y)
+        }
+    };
+    let half_size = size * 0.5;
+    if (view.x.abs() - half_size) * scale_x > 0.5 || (view.y.abs() - half_size) * scale_y > 0.5 {
+        return 0.0;
+    }
+    (size * size * scale_x * scale_y).min(1.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_bursts(
+    mut commands: Commands,
+    mut bursts: MessageReader<BreakBurst>,
+    mut assets: ResMut<VfxAssets>,
+    mut dust_materials: ResMut<Assets<DustMaterial>>,
+    settings: Res<VfxSettings>,
+    mut stats: ResMut<VfxStats>,
+    particles: Query<(Entity, &Particle, &Transform), Without<DemoCamera>>,
+    cameras: Query<(&Transform, Option<&Projection>), With<DemoCamera>>,
+) {
+    let started = Instant::now();
+    let mut residents = particles
+        .iter()
+        .map(|(entity, p, _)| Resident {
+            entity,
+            layer: p.layer,
+            age: p.age,
+            dust_slot: p.dust_slot,
+            retired: false,
+        })
+        .collect::<Vec<_>>();
+    let mut counts = [0; 4];
+    for resident in &residents {
+        counts[resident.layer.index()] += 1;
+    }
+    let fallback_camera = Transform::from_xyz(0.0, 0.0, 8.0);
+    let (camera, projection) = cameras.single().unwrap_or((&fallback_camera, None));
+    let camera_position = camera.translation;
+    let coverage = particles
+        .iter()
+        .filter(|(_, p, _)| p.layer == Layer::Smoke && p.age >= 0.0)
+        .map(|(_, _, t)| screen_footprint(camera, projection, t.translation, t.scale.max_element()))
+        .sum::<f32>();
+    stats.estimated_coverage = coverage;
+    stats.peak_estimated_coverage = stats.peak_estimated_coverage.max(coverage);
+    let incoming = bursts.read().collect::<Vec<_>>();
+    let feedback_share = (LAYER_LIMITS[0] / incoming.len().max(1)).max(1);
+    for burst in incoming {
+        stats.received += 1;
+        if !settings.enabled {
+            continue;
+        }
+        let distance = camera_position.distance(burst.point);
+        let distance_lod: f32 = if distance > 45.0 {
+            0.25
+        } else if distance > 24.0 {
+            0.5
+        } else {
+            1.0
+        };
+        let smoke_lod = if coverage > 0.45 {
+            0.35
+        } else if coverage > 0.25 {
+            0.65
+        } else {
+            1.0
+        };
+        let mut seed = burst.seed.max(1);
+        let mut has_feedback = false;
+        for (index, base_count) in BURST_COUNTS.into_iter().enumerate() {
+            let layer = Layer::from_index(index);
+            let lod = if layer == Layer::Impact {
+                distance_lod.max(0.5)
+            } else {
+                distance_lod
+            } * settings.density.clamp(0.1, 1.0);
+            let requested = (base_count as f32
+                * lod
+                * if layer == Layer::Smoke {
+                    smoke_lod
+                } else {
+                    1.0
+                })
+            .round()
+            .max(1.0) as usize;
+            let requested = if layer == Layer::Impact {
+                requested.min(feedback_share)
+            } else {
+                requested
+            };
+            for _ in 0..requested {
+                if layer == Layer::Impact {
+                    while counts[0] >= LAYER_LIMITS[0]
+                        || counts.iter().sum::<usize>() >= PARTICLE_LIMIT
+                        || assets.free_dust.is_empty()
+                    {
+                        let same_layer_full = counts[0] >= LAYER_LIMITS[0];
+                        let candidate = residents
+                            .iter_mut()
+                            .filter(|r| {
+                                !r.retired && (!same_layer_full || r.layer == Layer::Impact)
+                            })
+                            .max_by(|a, b| {
+                                let rank = |layer| match layer {
+                                    Layer::Smoke => 3,
+                                    Layer::Fallout => 2,
+                                    Layer::Impact => 1,
+                                    Layer::Debris => 0,
+                                };
+                                rank(a.layer)
+                                    .cmp(&rank(b.layer))
+                                    .then(a.age.total_cmp(&b.age))
+                                    .then(a.entity.to_bits().cmp(&b.entity.to_bits()))
+                            });
+                        let Some(candidate) = candidate else {
+                            break;
+                        };
+                        retire(
+                            candidate,
+                            &mut commands,
+                            &mut assets,
+                            &mut counts,
+                            &mut stats,
+                        );
+                    }
+                }
+                if counts[index] >= LAYER_LIMITS[index]
+                    || counts.iter().sum::<usize>() >= PARTICLE_LIMIT
+                    || (layer != Layer::Debris && assets.free_dust.is_empty())
+                {
+                    stats.dropped[index] += 1;
+                    continue;
+                }
+                let (mut particle, transform) = spawn_particle(burst, layer, &mut seed);
+                let mut entity = commands.spawn((
+                    Name::new("Transient fracture particle"),
+                    ChildOf(assets.root),
+                    NotShadowCaster,
+                    transform,
+                    if particle.age < 0.0 {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Visible
+                    },
+                ));
+                if layer == Layer::Debris {
+                    let mesh_index = (random(&mut seed) * assets.debris.len() as f32) as usize;
+                    entity.insert((
+                        Mesh3d(assets.debris[mesh_index].clone()),
+                        MeshMaterial3d(assets.solids[particle.palette][0].clone()),
+                    ));
+                } else {
+                    let slot = assets.free_dust.pop().unwrap();
+                    particle.dust_slot = Some(slot);
+                    let material = assets.dust[slot].clone();
+                    if let Some(mut dust) = dust_materials.get_mut(&material) {
+                        *dust = dust_material(dust.atlas.clone(), &burst.material);
+                        dust.update(
+                            0.0,
+                            particle.lifetime,
+                            particle.variant,
+                            particle.opacity,
+                            particle.roll,
+                        );
+                    }
+                    entity.insert((Mesh3d(assets.billboard.clone()), MeshMaterial3d(material)));
+                }
+                let resident = Resident {
+                    entity: entity.id(),
+                    layer,
+                    age: particle.age,
+                    dust_slot: particle.dust_slot,
+                    retired: false,
+                };
+                entity.insert(particle);
+                residents.push(resident);
+                counts[index] += 1;
+                stats.spawned[index] += 1;
+                if layer == Layer::Impact {
+                    stats.first_feedbacks += 1;
+                    has_feedback = true;
+                }
+            }
+        }
+        if has_feedback {
+            stats.feedback_bursts += 1;
+        }
+    }
+    stats.peak = stats.peak.max(counts.iter().sum());
+    stats.emit_cpu_ms = started.elapsed().as_secs_f32() * 1000.0;
+    stats.max_emit_cpu_ms = stats.max_emit_cpu_ms.max(stats.emit_cpu_ms);
+}
+
+fn curl(position: Vec3, age: f32) -> Vec3 {
+    let p = position * 1.7 + Vec3::new(age * 0.3, age * 0.2, -age * 0.25);
+    Vec3::new(
+        p.y.cos() - p.z.sin(),
+        p.z.cos() - p.x.sin(),
+        p.x.cos() - p.y.sin(),
+    ) * 0.12
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn animate_particles(
     mut commands: Commands,
     time: Res<Time>,
-    assets: Res<VfxAssets>,
+    settings: Res<VfxSettings>,
+    mut assets: ResMut<VfxAssets>,
+    mut dust_materials: ResMut<Assets<DustMaterial>>,
+    mut stats: ResMut<VfxStats>,
+    spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
+    identities: Query<(&ChunkIdentity, Has<RemovedChunk>)>,
+    instances: Query<&BuildingInstance>,
     mut particles: Query<
         (
             Entity,
             &mut Particle,
             &mut Transform,
-            &mut MeshMaterial3d<StandardMaterial>,
+            &mut Visibility,
+            Option<&mut MeshMaterial3d<StandardMaterial>>,
         ),
         Without<DemoCamera>,
     >,
 ) {
+    let started = Instant::now();
     let dt = time.delta_secs();
     let billboard_rotation = cameras
         .single()
         .map_or(Quat::IDENTITY, |camera| camera.rotation);
-    for (entity, mut particle, mut transform, mut material) in &mut particles {
+    let mut active = [0; 4];
+    let mut scheduled = [0; 4];
+    let mut collision_queries = 0;
+    let mut collision_candidates = particles
+        .iter()
+        .filter(|(_, p, _, _, _)| p.layer == Layer::Debris && !p.settled && p.age + dt >= 0.0)
+        .map(|(entity, _, _, _, _)| entity)
+        .collect::<Vec<_>>();
+    collision_candidates.sort_by_key(|entity| entity.to_bits());
+    if !collision_candidates.is_empty() {
+        let start = stats.collision_cursor % collision_candidates.len();
+        collision_candidates.rotate_left(start);
+        stats.collision_cursor = start + MAX_COLLISION_QUERIES;
+        collision_candidates.truncate(MAX_COLLISION_QUERIES);
+    }
+    let live_collider = |entity| {
+        let Ok((identity, removed)) = identities.get(entity) else {
+            return false;
+        };
+        !removed
+            && instances
+                .get(identity.building)
+                .ok()
+                .and_then(|instance| instance.chunks.get(&identity.id))
+                .is_some_and(|chunk| chunk.alive)
+    };
+    for (entity, mut particle, mut transform, mut visibility, solid) in &mut particles {
+        let old_age = particle.age;
         particle.age += dt;
-        if particle.age >= particle.lifetime {
+        if !settings.enabled || particle.age >= particle.lifetime {
+            if let Some(slot) = particle.dust_slot {
+                assets.free_dust.push(slot);
+            }
             commands.entity(entity).despawn();
             continue;
         }
+        if particle.age < 0.0 {
+            scheduled[particle.layer.index()] += 1;
+            continue;
+        }
+        active[particle.layer.index()] += 1;
+        *visibility = Visibility::Visible;
+        let step = if old_age < 0.0 {
+            particle.age.min(dt)
+        } else {
+            dt
+        };
         let fraction = particle.age / particle.lifetime;
-        transform.translation += particle.velocity * dt;
-        if particle.kind == 0 {
-            particle.velocity.y -= 5.0 * dt;
-            transform.rotate_local_x(particle.spin * dt);
-            transform.rotate_local_y(particle.spin * dt * 0.7);
-            transform.scale = Vec3::splat(particle.size * (1.0 - fraction * fraction));
+        if particle.layer == Layer::Debris {
+            if particle.settled
+                && particle
+                    .support
+                    .is_some_and(|entity| !live_collider(entity))
+            {
+                particle.settled = false;
+                particle.sweep_origin = transform.translation;
+            }
+            if !particle.settled {
+                let displacement = particle.velocity * step - Vec3::Y * (4.905 * step * step);
+                particle.velocity.y -= 9.81 * step;
+                transform.translation += displacement;
+                let swept_displacement = transform.translation - particle.sweep_origin;
+                if collision_candidates.contains(&entity)
+                    && swept_displacement.length_squared() > 1e-10
+                {
+                    collision_queries += 1;
+                    let direction = Dir3::new(swept_displacement).unwrap();
+                    let config = ShapeCastConfig {
+                        max_distance: swept_displacement.length(),
+                        ignore_origin_penetration: true,
+                        ..default()
+                    };
+                    let shape = Collider::sphere(particle.size * 0.45);
+                    let hit = spatial.cast_shape_predicate(
+                        &shape,
+                        particle.sweep_origin,
+                        Quat::IDENTITY,
+                        direction,
+                        &config,
+                        &SpatialQueryFilter::default(),
+                        &live_collider,
+                    );
+                    if let Some(hit) = hit {
+                        let normal = hit.normal1;
+                        let speed = particle.velocity.dot(normal);
+                        if speed < 0.0 {
+                            transform.translation =
+                                particle.sweep_origin + *direction * hit.distance + normal * 0.003;
+                            let tangent = particle.velocity - normal * speed;
+                            particle.velocity = tangent * 0.58 - normal * speed * 0.28;
+                            particle.bounces += 1;
+                            stats.collisions += 1;
+                            if normal.y > 0.5
+                                && (particle.velocity.length_squared() < 0.25
+                                    || particle.bounces >= 2)
+                            {
+                                particle.settled = true;
+                                particle.velocity = Vec3::ZERO;
+                                particle.support = Some(hit.entity);
+                            }
+                        }
+                    }
+                    particle.sweep_origin = transform.translation;
+                }
+                transform.rotate(Quat::from_scaled_axis(particle.spin * step));
+            }
+            if let Some(mut solid) = solid {
+                let fade = ((fraction - 0.82) / 0.18).clamp(0.0, 0.999);
+                solid.0 = assets.solids[particle.palette]
+                    [(fade * DEBRIS_FADE_STEPS as f32) as usize]
+                    .clone();
+            }
         } else {
             transform.rotation = billboard_rotation;
-            particle.velocity *= (-1.2 * dt).exp();
-            particle.velocity.y += 0.45 * dt;
-            transform.scale = Vec3::splat(particle.size * (1.0 + fraction * 3.5));
-            material.0 =
-                assets.fades[((fraction * FADE_STEPS as f32) as usize).min(FADE_STEPS - 1)].clone();
+            if particle.layer == Layer::Fallout {
+                particle.velocity.y -= 1.8 * step;
+            } else {
+                particle.velocity *= (-1.4 * step).exp();
+                let flow = curl(transform.translation, particle.age);
+                particle.velocity += (flow + Vec3::Y * 0.18) * step;
+            }
+            transform.translation += particle.velocity * step;
+            let growth = match particle.layer {
+                Layer::Impact => 1.0 + fraction * 3.0,
+                Layer::Smoke => 1.0 + (1.0 - (-fraction * 5.0).exp()) * 2.5,
+                _ => 1.0 + fraction * 1.4,
+            };
+            transform.scale = Vec3::splat(particle.size * growth);
+            if let Some(slot) = particle.dust_slot
+                && let Some(mut material) = dust_materials.get_mut(&assets.dust[slot])
+            {
+                material.update(
+                    particle.age,
+                    particle.lifetime,
+                    particle.variant,
+                    particle.opacity,
+                    particle.roll,
+                );
+            }
         }
     }
+    stats.active = active;
+    stats.scheduled = scheduled;
+    stats.collision_queries += collision_queries as u64;
+    stats.peak = stats
+        .peak
+        .max(active.iter().sum::<usize>() + scheduled.iter().sum::<usize>());
+    stats.update_cpu_ms = started.elapsed().as_secs_f32() * 1000.0;
+    stats.max_update_cpu_ms = stats.max_update_cpu_ms.max(stats.update_cpu_ms);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use avian3d::collider_tree::ColliderTrees;
 
-    #[test]
-    fn repeated_bursts_share_assets_respect_budget_and_expire() {
+    fn app() -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -257,61 +863,98 @@ mod tests {
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<Image>>()
         .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Assets<DustMaterial>>()
+        .init_resource::<ColliderTrees>()
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_secs_f64(1.0 / 60.0),
         ))
         .add_plugins(VfxPlugin);
         app.update();
-        let rotation = Quat::from_euler(EulerRot::YXZ, 0.8, -0.3, 0.0);
-        let camera = app
-            .world_mut()
-            .spawn((DemoCamera, Transform::from_rotation(rotation)))
-            .id();
-        let materials = app.world().resource::<Assets<StandardMaterial>>().len();
-        for _ in 0..3 {
-            for seed in 1..=24 {
-                app.world_mut().write_message(BreakBurst {
-                    point: Vec3::ZERO,
-                    normal: Vec3::Z,
-                    seed,
-                    exposed_points: vec![Vec3::X],
-                });
-            }
-            app.update();
-            let count = app
-                .world_mut()
-                .query::<&Particle>()
-                .iter(app.world())
-                .count();
-            assert_eq!(count, PARTICLE_LIMIT);
-            assert!(
-                app.world_mut()
-                    .query::<(&Particle, &Transform)>()
-                    .iter(app.world())
-                    .filter(|(p, _)| p.kind != 0)
-                    .all(|(_, t)| t
-                        .rotation
-                        .angle_between(app.world().get::<Transform>(camera).unwrap().rotation)
-                        < 0.001)
-            );
-            assert_eq!(
-                app.world().resource::<Assets<StandardMaterial>>().len(),
-                materials
-            );
+        app
+    }
+
+    fn burst(seed: u64) -> BreakBurst {
+        BreakBurst {
+            point: Vec3::ZERO,
+            normal: Vec3::Z,
+            seed,
+            material: "concrete".into(),
+            removed_volume: 0.8,
+            exposed_area: 1.5,
+            surfaces: vec![EmissionSurface {
+                triangle: [Vec3::ZERO, Vec3::X, Vec3::Y],
+                normal: Vec3::Z,
+            }],
         }
-        app.world_mut()
-            .get_mut::<Transform>(camera)
-            .unwrap()
-            .rotation = Quat::from_rotation_y(-0.6);
+    }
+
+    #[test]
+    fn sequenced_layers_emit_with_deterministic_outward_surface_motion() {
+        let mut a = 67;
+        let mut b = 67;
+        for layer in [Layer::Impact, Layer::Debris, Layer::Smoke, Layer::Fallout] {
+            let (one, pose_one) = spawn_particle(&burst(1), layer, &mut a);
+            let (two, pose_two) = spawn_particle(&burst(1), layer, &mut b);
+            assert_eq!(one.age, two.age);
+            assert_eq!(one.velocity, two.velocity);
+            assert_eq!(pose_one, pose_two);
+            assert!(one.velocity.z > 0.0);
+            if layer == Layer::Impact {
+                assert_eq!(one.age, 0.0);
+            } else {
+                assert!(one.age < 0.0);
+            }
+        }
+        let mut app = app();
+        app.world_mut().write_message(burst(1));
         app.update();
-        assert!(
-            app.world_mut()
-                .query::<(&Particle, &Transform)>()
-                .iter(app.world())
-                .filter(|(p, _)| p.kind != 0)
-                .all(|(_, t)| t.rotation.angle_between(Quat::from_rotation_y(-0.6)) < 0.001)
-        );
-        for _ in 0..180 {
+        let stats = app.world().resource::<VfxStats>();
+        assert_eq!(stats.active[0], 8);
+        assert_eq!(stats.scheduled, [0, 8, 24, 24]);
+        assert_eq!(stats.peak, 64);
+        for _ in 0..20 {
+            app.update();
+        }
+        assert!(app.world().resource::<VfxStats>().active[2] > 0);
+    }
+
+    #[test]
+    fn saturated_bursts_keep_feedback_share_assets_and_eventually_expire() {
+        let mut app = app();
+        let material_count = app.world().resource::<Assets<DustMaterial>>().len();
+        let mesh_count = app.world().resource::<Assets<Mesh>>().len();
+        for seed in 1..=16 {
+            app.world_mut().write_message(burst(seed));
+        }
+        app.update();
+        assert_eq!(app.world().resource::<VfxStats>().peak, PARTICLE_LIMIT);
+        for seed in 1..=40 {
+            let mut event = burst(seed);
+            event.point.x = seed as f32 * 0.2;
+            app.world_mut().write_message(event);
+        }
+        app.update();
+        let count = app
+            .world_mut()
+            .query::<&Particle>()
+            .iter(app.world())
+            .count();
+        assert!(count <= PARTICLE_LIMIT);
+        let stats = app.world().resource::<VfxStats>();
+        assert_eq!(stats.received, 56);
+        assert_eq!(stats.first_feedbacks, 96 + 40 * 2);
+        assert_eq!(stats.feedback_bursts, 56);
+        assert!(stats.retired > 0);
+        assert!(stats.dropped.iter().sum::<u64>() > 0);
+        let feedback_positions = app
+            .world_mut()
+            .query::<(&Particle, &Transform)>()
+            .iter(app.world())
+            .filter(|(particle, _)| particle.layer == Layer::Impact)
+            .map(|(_, transform)| (transform.translation.x * 5.0).round() as usize)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!((1..=40).all(|position| feedback_positions.contains(&position)));
+        for _ in 0..300 {
             app.update();
         }
         assert_eq!(
@@ -322,8 +965,174 @@ mod tests {
             0
         );
         assert_eq!(
-            app.world().resource::<Assets<StandardMaterial>>().len(),
-            materials
+            app.world().resource::<Assets<DustMaterial>>().len(),
+            material_count
         );
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), mesh_count);
+        assert_eq!(
+            app.world().resource::<VfxAssets>().free_dust.len(),
+            DUST_POOL_SIZE
+        );
+    }
+
+    #[test]
+    fn billboards_follow_camera_and_disabling_vfx_releases_the_pool() {
+        let mut app = app();
+        let rotation = Quat::from_euler(EulerRot::YXZ, 0.8, -0.3, 0.0);
+        app.world_mut()
+            .spawn((DemoCamera, Transform::from_rotation(rotation)));
+        app.world_mut().write_message(burst(1));
+        app.update();
+        assert!(
+            app.world_mut()
+                .query::<(&Particle, &Transform)>()
+                .iter(app.world())
+                .filter(|(p, _)| p.layer != Layer::Debris && p.age >= 0.0)
+                .all(|(_, t)| t.rotation.angle_between(rotation) < 0.001)
+        );
+        app.world_mut().resource_mut::<VfxSettings>().enabled = false;
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&Particle>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            app.world().resource::<VfxAssets>().free_dust.len(),
+            DUST_POOL_SIZE
+        );
+        assert_eq!(app.world().resource::<VfxStats>().peak, 64);
+        for _ in 0..90 {
+            app.update();
+        }
+        assert_eq!(
+            app.world_mut()
+                .query::<&PipelineWarmup>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            app.world().resource::<VfxAssets>().free_dust.len(),
+            DUST_POOL_SIZE
+        );
+    }
+
+    #[test]
+    fn screen_footprint_and_distance_drive_lod() {
+        let camera = Transform::IDENTITY;
+        let projection = Projection::Perspective(PerspectiveProjection {
+            fov: crate::camera::FIELD_OF_VIEW,
+            aspect_ratio: 16.0 / 9.0,
+            ..default()
+        });
+        let footprint = |position| screen_footprint(&camera, Some(&projection), position, 1.0);
+        let close = footprint(Vec3::new(0.0, 0.0, -5.0));
+        let far = footprint(Vec3::new(0.0, 0.0, -10.0));
+        assert!((close / far - 4.0).abs() < 0.001);
+        assert_eq!(footprint(Vec3::new(0.0, 0.0, 5.0)), 0.0);
+        assert_eq!(footprint(Vec3::new(100.0, 0.0, -5.0)), 0.0);
+
+        let mut near_app = app();
+        near_app.world_mut().write_message(burst(1));
+        near_app.update();
+        let mut far_app = app();
+        far_app
+            .world_mut()
+            .spawn((DemoCamera, Transform::from_xyz(0.0, 0.0, 60.0)));
+        far_app.world_mut().write_message(burst(1));
+        far_app.update();
+        assert_eq!(
+            near_app.world().resource::<VfxStats>().spawned,
+            [8, 8, 24, 24]
+        );
+        assert_eq!(far_app.world().resource::<VfxStats>().spawned, [4, 2, 6, 6]);
+
+        let mut saturated_app = app();
+        let (mut smoke, mut transform) = spawn_particle(&burst(1), Layer::Smoke, &mut 89);
+        smoke.age = 0.2;
+        transform.scale = Vec3::splat(12.0);
+        saturated_app
+            .world_mut()
+            .spawn((smoke, transform, Visibility::Visible));
+        saturated_app.world_mut().write_message(burst(1));
+        saturated_app.update();
+        let stats = saturated_app.world().resource::<VfxStats>();
+        assert!(stats.estimated_coverage > 0.45);
+        assert_eq!(stats.spawned[2], 8);
+    }
+
+    #[test]
+    fn heavy_debris_bounces_on_live_building_and_falls_when_support_is_removed() {
+        let mut app = app();
+        app.add_plugins((TransformPlugin, PhysicsPlugins::default()));
+        app.finish();
+        app.cleanup();
+        let building = app
+            .world_mut()
+            .spawn(BuildingInstance::pending(Handle::default()))
+            .id();
+        let floor_transform = Transform::from_xyz(0.0, 0.5, 0.0);
+        let floor = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::cuboid(3.0, 0.2, 3.0),
+                floor_transform,
+                ChunkIdentity {
+                    building,
+                    id: "floor".into(),
+                },
+            ))
+            .id();
+        app.world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap()
+            .chunks
+            .insert(
+                "floor".into(),
+                crate::scene::ChunkInstance {
+                    entity: floor,
+                    primitives: Vec::new(),
+                    alive: true,
+                    triangles: Vec::new(),
+                    transform: floor_transform,
+                    material: "concrete".into(),
+                    detail: None,
+                },
+            );
+        let mut seed = 71;
+        let (mut particle, mut transform) = spawn_particle(&burst(1), Layer::Debris, &mut seed);
+        particle.age = 0.0;
+        particle.lifetime = 3.0;
+        particle.velocity = Vec3::new(0.0, -2.0, 0.0);
+        transform.translation = Vec3::new(0.0, 1.5, 0.0);
+        particle.sweep_origin = transform.translation;
+        let entity = app
+            .world_mut()
+            .spawn((particle, transform, Visibility::Visible))
+            .id();
+        for _ in 0..60 {
+            app.update();
+        }
+        assert!(app.world().resource::<VfxStats>().collisions >= 2);
+        assert!(app.world().get::<Particle>(entity).unwrap().settled);
+        assert!(app.world().get::<Transform>(entity).unwrap().translation.y > 0.6);
+        let collisions = app.world().resource::<VfxStats>().collisions;
+        app.world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap()
+            .chunks
+            .get_mut("floor")
+            .unwrap()
+            .alive = false;
+        app.world_mut().entity_mut(floor).insert(RemovedChunk);
+        for _ in 0..40 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<VfxStats>().collisions, collisions);
+        assert!(app.world().get::<Transform>(entity).unwrap().translation.y < 0.0);
     }
 }

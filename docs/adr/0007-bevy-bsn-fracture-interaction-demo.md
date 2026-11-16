@@ -209,7 +209,7 @@ BSN 组合、glTF 新材质类型、WESL 绑定与深度线绘制已完成编译
 
 ## 参考资料
 
-后续 VFX 表现与破口轮廓细节调研见 [ADR 0008](0008-destruction-vfx-and-exposed-edge-detail.md)。该记录为提议，不改变本 ADR 已实现功能的验证结论。
+分层 VFX、真实接触补丁与暴露破口边带由 [ADR 0008](0008-destruction-vfx-and-exposed-edge-detail.md) 继续实现。上方旧 VFX 参数与验证作为历史保留；当前默认值和新增功能验证以 ADR 0008 为准。
 
 - [Bevy 0.20 BSN 宏文档](https://docs.rs/bevy/0.20.0/bevy/scene/prelude/macro.bsn.html)、[BSN 场景与 .bsn 边界](https://docs.rs/bevy/0.20.0/bevy/scene/index.html)
 - [Bevy v0.20.0 glTF 资产类型](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_gltf/src/assets.rs)、[glTF 到 PBR 材质转换](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_pbr/src/gltf.rs)
