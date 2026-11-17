@@ -144,7 +144,7 @@ def _face_records(cells):
     return records
 
 
-def _face_contacts(cells, tolerance):
+def _face_contacts(cells, tolerance, *, geometry=False):
     records = _face_records(cells)
     if not records:
         return
@@ -192,8 +192,8 @@ def _face_contacts(cells, tolerance):
             )
             if (
                 len(polygon) >= 3
-                and abs(_area(polygon)) > tolerance**2
-                and _width(polygon) > tolerance
+                and abs(_area(polygon)) > (1e-18 if geometry else tolerance**2)
+                and _width(polygon) > (0.0 if geometry else tolerance)
             ):
                 yield other, index, [_unproject(p, frame) for p in polygon], records
         for key in keys:
@@ -211,7 +211,7 @@ def cell_contacts(cells, tolerance=2e-6):
 def boundary_faces(cells, tolerance=2e-6):
     """Remove even partial interior subfaces, preserving all exterior material."""
     contacts = collections.defaultdict(list)
-    for a, b, polygon, records in _face_contacts(cells, tolerance):
+    for a, b, polygon, records in _face_contacts(cells, tolerance, geometry=True):
         contacts[(records[a][0], records[a][1])].append(polygon)
         contacts[(records[b][0], records[b][1])].append(polygon)
     result = []
@@ -379,10 +379,19 @@ def _hull(cells):
         )
         # Hull topology selects input vertices; retain their canonical double coordinates.
         faces = [[originals[v] for v in face.verts] for face in bm.faces]
-        if any(
-            any(_dot(_normal(face), _sub(p, face[0])) > scale * 1e-10 for p in points)
-            for face in faces
-        ):
+        try:
+            unsupported = any(
+                any(
+                    _dot(_normal(face), _sub(p, face[0])) > scale * 1e-10
+                    for p in points
+                )
+                for face in faces
+            )
+        except ValueError:
+            # A float32 hull face can collapse on the retained canonical points.
+            # Rebuild its topology with the same precise fallback as bad supports.
+            return _precise_hull(points)
+        if unsupported:
             return _precise_hull(points)
         return faces
     finally:

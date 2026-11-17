@@ -224,6 +224,34 @@ class NaturalUnionTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["inertia"][1][1], 0.0814006325, places=6)
         self.assertAlmostEqual(metrics["inertia"][2][2], 0.1227606885, places=6)
 
+    def test_geometric_union_cancels_thin_faces_without_creating_load_contacts(self):
+        cells = [box((0, 0, 0), (1, 1, 1)), box((1, 0, 0), (2, 1e-6, 1))]
+        self.assertEqual(cell_contacts(cells), [])
+        metrics = mesh_metrics(self.object(boundary_mesh(cells)))
+        self.assertAlmostEqual(metrics["volume"], 1.000001, places=11)
+        self.assertAlmostEqual(
+            metrics["center"][0], (0.5 + 1.5e-6) / 1.000001, places=10
+        )
+        self.assertEqual(metrics["bounds"][1][0], 2.0)
+
+    def test_collinear_float32_hull_facet_uses_canonical_double_fallback(self):
+        path = Path(__file__).parent / "fixtures" / "collinear-hull-cells.json"
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        hull = convex_hull(cells)
+        expected = sum(volume(cell) for cell in cells)
+        self.assertAlmostEqual(volume(hull), expected, delta=expected * 3e-6)
+        original_points = {
+            tuple(point) for cell in cells for face in cell for point in face
+        }
+        self.assertTrue(
+            all(tuple(point) in original_points for face in hull for point in face)
+        )
+        obj = self.object(mesh_data(hull))
+        self.assertTrue(validate_convex(obj))
+        self.assertAlmostEqual(
+            mesh_metrics(obj)["volume"], expected, delta=expected * 3e-6
+        )
+
 
 if __name__ == "__main__":
     if not bpy.app.background:
