@@ -32,5 +32,6 @@
 | [0015](0015-structural-and-collision-runtime-performance.md) | 结构缓存、求解与碎片碰撞性能 | 已采用（已实现，测量范围见记录） |
 | [0016](0016-damaged-structure-solver-and-support-release.md) | 受损结构稳健求解与窄支撑释放 | 已采用（已实现，验证范围见记录） |
 | [0017](0017-progressive-impact-unloading.md) | 逐连接撞击断裂与分离卸载 | 已采用（已实现，验证范围见记录） |
+| [0018](0018-natural-irregular-prefracture.md) | 自然不规则预破碎与碎块尺度 | 调研及隔离原型已验证，正式资产接入为提议 |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。
