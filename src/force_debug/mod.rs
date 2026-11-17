@@ -1,7 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::prelude::*;
-use bevy::{gizmos::config::GizmoConfigGroup, prelude::*};
+use bevy::{
+    camera::{CameraProjection, visibility::VisibilitySystems},
+    gizmos::config::GizmoConfigGroup,
+    prelude::*,
+};
 
 use crate::{
     asset::DestructibleAsset,
@@ -9,8 +13,11 @@ use crate::{
         DynamicForceSample, FORCE_SAMPLE_SECONDS, ForceCapture, ForceSamples,
         IMPULSE_SAMPLE_SECONDS, bond_signature,
     },
+    force_visibility::{
+        ForceVisibilityCache, VisibilityCamera, VisibilityChunk, VisibilityOccluder,
+    },
     physics::Cluster,
-    scene::BuildingInstance,
+    scene::{BuildingInstance, ChunkIdentity, DemoCamera},
     stress::BondStress,
     stress_runtime::{StressSettings, StressState, StructuralLoads},
 };
@@ -32,6 +39,7 @@ pub struct ForceViewStats {
     pub static_bonds: usize,
     pub dynamic_bonds: usize,
     pub force_pairs: usize,
+    pub force_arrows: usize,
     pub impulses: usize,
     pub stale_components: usize,
     pub max_force_n: f64,
@@ -39,6 +47,10 @@ pub struct ForceViewStats {
     pub max_impulse_ns: f64,
     pub max_utilization: f64,
     pub drawn_bonds: Vec<(Entity, String)>,
+    pub drawn_graph_bonds: Vec<(Entity, String)>,
+    pub visible_chunks: Vec<(Entity, String)>,
+    pub visibility_rays: usize,
+    pub visibility_untested: usize,
 }
 
 pub struct ForceDebugPlugin;
@@ -48,16 +60,28 @@ impl Plugin for ForceDebugPlugin {
         app.init_resource::<ForceCapture>()
             .init_resource::<ForceSamples>()
             .init_resource::<ForceViewStats>()
+            .init_resource::<ForceVisibilityCache>()
             .init_gizmo_group::<ForceGizmos>()
             .add_systems(Startup, setup)
-            .add_systems(Update, toggle)
+            .add_systems(Update, (toggle, invalidate_visibility_cache))
             .add_systems(
                 PostUpdate,
                 (
-                    draw.after(TransformSystems::Propagate),
+                    draw.after(VisibilitySystems::CheckVisibility),
                     update_hud.after(draw),
                 ),
             );
+    }
+}
+
+fn invalidate_visibility_cache(
+    mut events: MessageReader<AssetEvent<DestructibleAsset>>,
+    mut cache: ResMut<ForceVisibilityCache>,
+) {
+    for event in events.read() {
+        if let AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
+            cache.invalidate(*id);
+        }
     }
 }
 
@@ -148,6 +172,7 @@ struct Glyph {
     moment_nm: f64,
     utilization: f64,
     age: Option<f64>,
+    visible_ends: [bool; 2],
 }
 
 fn glyph(
@@ -157,6 +182,7 @@ fn glyph(
     normal: [f32; 3],
     stress: &BondStress,
     age: Option<f64>,
+    visible_ends: [bool; 2],
 ) -> Option<Glyph> {
     let force_n = bevy::math::DVec3::from_array(stress.force).length();
     let moment_nm = bevy::math::DVec3::from_array(stress.moment).length();
@@ -171,6 +197,7 @@ fn glyph(
             moment_nm,
             utilization: stress.utilization,
             age,
+            visible_ends,
         },
     )
 }
@@ -238,6 +265,18 @@ fn draw(
         &GlobalTransform,
     )>,
     bodies: Query<(&GlobalTransform, &RigidBody, &Cluster)>,
+    cameras: Query<(&Camera, &Projection, &GlobalTransform), With<DemoCamera>>,
+    inherited: Query<&InheritedVisibility>,
+    occluders: Query<
+        (
+            Entity,
+            Ref<Collider>,
+            &GlobalTransform,
+            &InheritedVisibility,
+        ),
+        (Without<ChunkIdentity>, With<Mesh3d>),
+    >,
+    mut visibility_cache: ResMut<ForceVisibilityCache>,
     mut gizmos: Gizmos<ForceGizmos>,
 ) {
     *stats = ForceViewStats::default();
@@ -269,11 +308,71 @@ fn draw(
                 })
         },
     );
+    let Ok((camera, Projection::Perspective(projection), camera_pose)) = cameras.single() else {
+        return;
+    };
+    if !camera.is_active {
+        return;
+    }
+    let view = camera_pose.affine().inverse();
+    let camera = VisibilityCamera {
+        clip_from_world: projection.get_clip_from_view() * camera_pose.to_matrix().inverse(),
+        view_from_world: view,
+        near: projection.near,
+        far: projection.far,
+    };
+    let mut source_chunks = Vec::new();
+    for (building, instance, _, _) in &instances {
+        let instance = instance.into_inner();
+        for (id, chunk) in &instance.chunks {
+            if !chunk.alive {
+                continue;
+            }
+            let Some((pose, _, _)) = chunk.cluster.and_then(|body| bodies.get(body).ok()) else {
+                continue;
+            };
+            source_chunks.push(VisibilityChunk {
+                key: (building, id.clone()),
+                asset: instance.asset.id(),
+                triangles: &chunk.triangles,
+                world_from_rest: pose.affine(),
+                visible: inherited
+                    .get(chunk.entity)
+                    .is_ok_and(|visible| visible.get()),
+            });
+        }
+    }
+    let extras = occluders
+        .iter()
+        .filter(|(_, _, _, visible)| visible.get())
+        .map(|(entity, collider, pose, _)| {
+            let revision = u64::from(collider.last_changed().get());
+            let pose = pose.compute_transform();
+            VisibilityOccluder {
+                entity,
+                collider: collider.into_inner(),
+                world_from_local: Transform::from_translation(pose.translation)
+                    .with_rotation(pose.rotation)
+                    .compute_affine(),
+                revision,
+            }
+        })
+        .collect::<Vec<_>>();
+    let visible = visibility_cache.update(true, &camera, &source_chunks, &extras);
+    stats.visible_chunks = visible.visible.iter().cloned().collect();
+    stats.visibility_rays = visible.stats.rays;
+    stats.visibility_untested = visible.stats.pending_chunks;
     let mut glyphs = Vec::new();
     for (building, instance, state, root) in &instances {
         let Some(asset) = assets.get(&instance.asset) else {
             continue;
         };
+        let visible_ids = visible
+            .visible
+            .iter()
+            .filter(|(owner, _)| *owner == building)
+            .map(|(_, id)| id.as_str())
+            .collect::<BTreeSet<_>>();
         let centers = asset
             .manifest
             .chunks
@@ -302,7 +401,7 @@ fn draw(
             stats.stale_components += state.reports.iter().filter(|report| !report.valid).count();
         }
         for (id, chunk) in &instance.chunks {
-            if !chunk.alive {
+            if !chunk.alive || !visible_ids.contains(id.as_str()) {
                 continue;
             }
             let Some((transform, _, _)) = chunk.cluster.and_then(|body| bodies.get(body).ok())
@@ -326,6 +425,13 @@ fn draw(
             if !instance.bonds.get(&bond.id).copied().unwrap_or(false) {
                 continue;
             }
+            let visible_ends = [
+                visible_ids.contains(bond.a.as_str()),
+                visible_ids.contains(bond.b.as_str()),
+            ];
+            if !visible_ends.iter().any(|&visible| visible) {
+                continue;
+            }
             let Some(a) = instance.chunks.get(&bond.a).filter(|chunk| chunk.alive) else {
                 continue;
             };
@@ -345,17 +451,22 @@ fn draw(
                     .zip(centers.get(bond.b.as_str()))
             {
                 let center = pose.transform_point(bond.center.into());
-                gizmos.line(
-                    pose.transform_point(*a),
-                    center,
-                    Color::srgba(0.86, 0.90, 0.96, 0.28),
-                );
-                gizmos.line(
-                    center,
-                    pose.transform_point(*b),
-                    Color::srgba(0.86, 0.90, 0.96, 0.28),
-                );
+                if visible_ends[0] {
+                    gizmos.line(
+                        pose.transform_point(*a),
+                        center,
+                        Color::srgba(0.86, 0.90, 0.96, 0.28),
+                    );
+                }
+                if visible_ends[1] {
+                    gizmos.line(
+                        center,
+                        pose.transform_point(*b),
+                        Color::srgba(0.86, 0.90, 0.96, 0.28),
+                    );
+                }
                 stats.graph_bonds += 1;
+                stats.drawn_graph_bonds.push((building, bond.id.clone()));
             }
             let value = if *kind == RigidBody::Static && current_static {
                 state
@@ -384,6 +495,7 @@ fn draw(
                     bond.normal,
                     stress,
                     age,
+                    visible_ends,
                 )
             {
                 if age.is_some() {
@@ -423,32 +535,52 @@ fn draw(
         }
         if let Some((a, b, magnitude)) = world_force_pair(glyph.pose, glyph.force) {
             let length = scaled_length(magnitude, stats.max_force_n);
-            arrow(
-                &mut gizmos,
-                glyph.center - glyph.normal * 0.025,
-                a,
-                length,
-                color,
-            );
-            arrow(
-                &mut gizmos,
-                glyph.center + glyph.normal * 0.025,
-                b,
-                length,
-                color,
-            );
+            if glyph.visible_ends[0] {
+                arrow(
+                    &mut gizmos,
+                    glyph.center - glyph.normal * 0.025,
+                    a,
+                    length,
+                    color,
+                );
+            }
+            if glyph.visible_ends[1] {
+                arrow(
+                    &mut gizmos,
+                    glyph.center + glyph.normal * 0.025,
+                    b,
+                    length,
+                    color,
+                );
+            }
             if length > 0.0001 {
-                stats.force_pairs += 1;
+                stats.force_arrows += glyph
+                    .visible_ends
+                    .into_iter()
+                    .filter(|&visible| visible)
+                    .count();
+                stats.force_pairs += usize::from(glyph.visible_ends == [true, true]);
             }
         }
     }
     stats.max_impulse_ns = samples
         .impulses
         .iter()
+        .filter(|sample| {
+            visible
+                .visible
+                .contains(&(sample.building, sample.chunk.clone()))
+        })
         .map(|sample| sample.impulse.as_dvec3().length())
         .filter(|value| value.is_finite())
         .fold(0.0, f64::max);
     for sample in &samples.impulses {
+        if !visible
+            .visible
+            .contains(&(sample.building, sample.chunk.clone()))
+        {
+            continue;
+        }
         let magnitude = sample.impulse.as_dvec3().length();
         if magnitude > 0.0 && magnitude.is_finite() {
             let alpha = (1.0 - (now - sample.captured_at) / IMPULSE_SAMPLE_SECONDS) as f32;
@@ -508,16 +640,20 @@ fn update_hud(
             "unavailable".into()
         };
         let updated = format!(
-            "9: FORCE GRAPH | {} static + {} impact bonds | {} force pairs shown\nWhite: connection | cyan: impact equivalent J/10ms, graph current, <=0.7s | purple: normal contact J <=1s\nU = stress/strength: green <0.5, yellow <1, red >=1 | equal/opposite force arrows\nLinear F scale: 0.75 m = {} | separate J scale: 0.75 m = {}\nPeak F: {} | M: {} | U: {} | {} stale/unavailable components",
+            "9: VISIBLE CHUNK FORCES | {} static + {} impact bonds | {} arrows ({} pairs)\nWhite: connection | cyan: impact equivalent J/10ms <=0.7s | purple: normal contact J <=1s\nU = stress/strength: green <0.5, yellow <1, red >=1 | visible ends of equal/opposite forces\nLinear F scale: 0.75 m = {} | separate J scale: 0.75 m = {}\nPeak visible F: {} | M: {} | U: {} | {} stale/unavailable components\nVisible chunks: {} | visibility rays: {} | conservatively hidden pending: {}",
             stats.static_bonds,
             stats.dynamic_bonds,
+            stats.force_arrows,
             stats.force_pairs,
             force,
             quantity(stats.max_impulse_ns, "N*s"),
             force,
             moment,
             utilization,
-            stats.stale_components
+            stats.stale_components,
+            stats.visible_chunks.len(),
+            stats.visibility_rays,
+            stats.visibility_untested,
         );
         if text.0 != updated {
             text.0 = updated;

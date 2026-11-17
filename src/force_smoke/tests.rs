@@ -89,3 +89,113 @@ fn rejected_asset_writes_its_failure_report_without_waiting_for_geometry() {
     std::fs::remove_file(directory.join("report.json")).unwrap();
     std::fs::remove_dir(directory).unwrap();
 }
+
+fn first_fixture_hit(point: Vec3) -> String {
+    let origin = Vec3::Z * FIXTURE_DISTANCE;
+    let direction = (point - origin).normalize();
+    visibility_shapes()
+        .into_iter()
+        .flat_map(|shape| {
+            shape
+                .boxes
+                .into_iter()
+                .flat_map(|(center, size)| box_triangles(center, size))
+                .filter_map(move |[a, b, c]| {
+                    let edge1 = b - a;
+                    let edge2 = c - a;
+                    let cross = direction.cross(edge2);
+                    let det = edge1.dot(cross);
+                    if det.abs() < 1e-7 {
+                        return None;
+                    }
+                    let relative = origin - a;
+                    let u = relative.dot(cross) / det;
+                    let v = direction.dot(relative.cross(edge1)) / det;
+                    let t = edge2.dot(relative.cross(edge1)) / det;
+                    (u >= -1e-6 && v >= -1e-6 && u + v <= 1.0 + 1e-6 && t > 0.0)
+                        .then_some((t, shape.id.clone()))
+                })
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .unwrap()
+        .1
+}
+
+#[test]
+fn visibility_fixture_has_real_window_and_partial_edge_with_both_centers_hidden() {
+    assert_eq!(first_fixture_hit(Vec3::new(-8.6, 0.0, 0.0)), "front-a");
+    assert_eq!(
+        first_fixture_hit(Vec3::new(-3.6, 0.0, 0.0)),
+        "rear-occluder"
+    );
+    assert_eq!(first_fixture_hit(Vec3::new(1.4, 0.0, 0.0)), "window-a");
+    assert_eq!(first_fixture_hit(Vec3::new(2.6, 0.0, 0.0)), "window-b");
+    assert_eq!(
+        first_fixture_hit(Vec3::new(6.4, 0.0, 0.0)),
+        "partial-occluder"
+    );
+    assert_eq!(
+        first_fixture_hit(Vec3::new(7.6, 0.0, 0.0)),
+        "partial-occluder"
+    );
+    assert_eq!(first_fixture_hit(Vec3::new(8.1, 0.0, 0.0)), "partial-b");
+}
+
+#[test]
+fn fixture_source_triangles_are_closed_boxes_with_the_declared_volume() {
+    for shape in visibility_shapes() {
+        for (center, size) in shape.boxes {
+            let volume = box_triangles(center, size)
+                .into_iter()
+                .map(|[a, b, c]| {
+                    (a - center)
+                        .as_dvec3()
+                        .dot((b - center).as_dvec3().cross((c - center).as_dvec3()))
+                        / 6.0
+                })
+                .sum::<f64>();
+            assert!((volume - f64::from(size.element_product())).abs() < 1e-5);
+        }
+    }
+}
+
+#[test]
+fn visibility_readback_requires_all_five_actually_visible_source_ids() {
+    let mut state = ForceSmokeState {
+        phase: 5,
+        ..default()
+    };
+    let mut capture = readback_fixture();
+    assert!(!accept_readback(&mut state, 5, readback_fixture()));
+    for (row, index) in [0, 1, 4, 5, 7].into_iter().enumerate() {
+        for x in 30..50 {
+            let [r, g, b] = TARGET_COLORS[index];
+            paint(&mut capture, x, 30 + row, [r, g, b, 255]);
+        }
+    }
+    assert!(accept_readback(&mut state, 5, capture));
+    assert_eq!(state.phase, 6);
+    assert_eq!(source_id_pixels(&state.captures[&5], 2), 0);
+}
+
+#[test]
+fn hidden_rear_pixel_gate_excludes_only_foreground_com_and_detects_leaked_arrows() {
+    let baseline = Capture {
+        width: 1280,
+        height: 720,
+        pixels: [112, 115, 119, 255].repeat(1280 * 720),
+    };
+    let mut leaked = Capture {
+        width: 1280,
+        height: 720,
+        pixels: baseline.pixels.clone(),
+    };
+    let scale = 720.0 / (2.0 * std::f32::consts::FRAC_PI_6.tan() * FIXTURE_DISTANCE);
+    let center = (640.0 + TARGETS[1].1 * scale) as usize;
+    paint(&mut leaked, center, 360, [250, 250, 250, 255]);
+    assert_eq!(fixture_changed_pixels(&baseline, &leaked, 1, true), 0);
+    for x in center + 12..center + 22 {
+        paint(&mut leaked, x, 360, [250, 250, 250, 255]);
+    }
+    assert_eq!(fixture_changed_pixels(&baseline, &leaked, 1, true), 10);
+}

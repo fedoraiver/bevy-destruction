@@ -10,6 +10,7 @@ mod dust_material;
 mod force_debug;
 mod force_samples;
 mod force_smoke;
+mod force_visibility;
 mod fracture_detail;
 mod interaction;
 mod landing_smoke;

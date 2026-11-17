@@ -1,30 +1,43 @@
 use std::collections::BTreeMap;
 
-use avian3d::prelude::RigidBody;
+use avian3d::prelude::{
+    AngularInertia, CenterOfMass, GravityScale, Mass, NoAutoAngularInertia, NoAutoCenterOfMass,
+    NoAutoMass, Position, RigidBody, Rotation,
+};
 use bevy::{
+    asset::RenderAssetUsages,
+    mesh::PrimitiveTopology,
     prelude::*,
-    render::view::screenshot::{Screenshot, ScreenshotCaptured},
+    render::view::{
+        DebandDither, Tonemapping,
+        screenshot::{Screenshot, ScreenshotCaptured},
+    },
 };
 
 use crate::{
     DemoOptions,
-    asset::DestructibleAsset,
+    asset::{BondPatchRecord, ColliderRecord, DestructibleAsset},
     force_debug::ForceViewStats,
-    force_samples::{ForceCapture, ForceSamples},
+    force_samples::{DynamicForceSample, ForceCapture, ForceSamples, bond_signature},
+    physics::Cluster,
     projectiles::{ImpactStats, LaunchRequest, LaunchRequests, ProjectileShape},
-    scene::{BuildingInstance, DemoCamera},
+    scene::{BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera},
+    stress::BondStress,
     stress_runtime::StressState,
 };
 
 #[cfg(test)]
 mod tests;
 
-const NAMES: [&str; 5] = [
+const NAMES: [&str; 8] = [
     "01-overlay-off.png",
     "02-structural-forces.png",
     "03-broken-connection-hidden.png",
     "04-contact-impulse.png",
     "05-overlay-cleared.png",
+    "06-visibility-source-ids.png",
+    "07-visibility-filtered-forces.png",
+    "08-visibility-cleared-repeat.png",
 ];
 
 pub struct ForceSmokePlugin;
@@ -63,14 +76,428 @@ struct ForceSmokeState {
     broken: Option<(Entity, String)>,
     captures: BTreeMap<usize, Capture>,
     scene_pixels: BTreeMap<usize, usize>,
-    rejected_readbacks: [u32; 5],
+    rejected_readbacks: [u32; 8],
     peak_static_bonds: usize,
     peak_force_pairs: usize,
     peak_force_n: f64,
     peak_impulse_ns: f64,
     saw_broken_hidden: bool,
     saw_cleared: bool,
+    fixture: Option<VisibilityFixture>,
+    visibility_stats: Option<ForceViewStats>,
+    visibility_peak_rays: usize,
     errors: Vec<String>,
+}
+
+const FIXTURE_ORIGIN: Vec3 = Vec3::new(100.0, 40.0, 0.0);
+const FIXTURE_DISTANCE: f32 = 16.0;
+const TARGETS: [(&str, f32); 5] = [
+    ("front", -8.0),
+    ("rear", -3.0),
+    ("window", 2.0),
+    ("partial", 7.0),
+    ("offscreen", 30.0),
+];
+const TARGET_COLORS: [[u8; 3]; 10] = [
+    [190, 65, 65],
+    [160, 40, 40],
+    [65, 190, 65],
+    [40, 160, 40],
+    [65, 65, 190],
+    [40, 40, 160],
+    [190, 190, 65],
+    [160, 160, 40],
+    [190, 65, 190],
+    [160, 40, 160],
+];
+
+struct VisibilityFixture {
+    building: Entity,
+    body: Entity,
+    chunks: Vec<String>,
+    bonds: BTreeMap<String, BondStress>,
+    signature: u64,
+}
+
+struct FixtureShape {
+    id: String,
+    boxes: Vec<(Vec3, Vec3)>,
+    color: [u8; 3],
+}
+
+fn target_id(index: usize) -> String {
+    format!(
+        "{}-{}",
+        TARGETS[index / 2].0,
+        if index.is_multiple_of(2) { "a" } else { "b" }
+    )
+}
+
+fn expected_target_visible(index: usize) -> bool {
+    matches!(index, 0 | 1 | 4 | 5 | 7)
+}
+
+fn visibility_shapes() -> Vec<FixtureShape> {
+    let mut shapes = Vec::new();
+    for (tile, &(_, x)) in TARGETS.iter().enumerate() {
+        for side in 0..2 {
+            shapes.push(FixtureShape {
+                id: target_id(tile * 2 + side),
+                boxes: vec![(
+                    Vec3::new(x + if side == 0 { -0.6 } else { 0.6 }, 0.0, 0.0),
+                    Vec3::new(1.2, 3.2, 0.16),
+                )],
+                color: TARGET_COLORS[tile * 2 + side],
+            });
+        }
+    }
+    // Foreground rectangles are specified in the target plane, then projected
+    // onto z=2 along the same perspective rays. The partial mask covers BOTH COMs.
+    let foreground = |x: f32, y: f32, width: f32, height: f32| {
+        let k = (FIXTURE_DISTANCE - 2.0) / FIXTURE_DISTANCE;
+        (
+            Vec3::new(x * k, y * k, 2.0),
+            Vec3::new(width * k, height * k, 0.08),
+        )
+    };
+    for (id, boxes) in [
+        ("rear-occluder", vec![foreground(-3.0, 0.0, 3.2, 4.0)]),
+        (
+            "window-frame",
+            vec![
+                foreground(2.0 - 1.2, 0.0, 0.7, 4.0),
+                foreground(2.0 + 1.2, 0.0, 0.7, 4.0),
+                foreground(2.0, -1.55, 1.7, 0.9),
+                foreground(2.0, 1.55, 1.7, 0.9),
+            ],
+        ),
+        (
+            "partial-occluder",
+            vec![foreground(7.0 - 0.275, 0.0, 2.25, 4.0)],
+        ),
+    ] {
+        shapes.push(FixtureShape {
+            id: id.into(),
+            boxes,
+            color: [112, 115, 119],
+        });
+    }
+    shapes
+}
+
+fn box_triangles(center: Vec3, size: Vec3) -> Vec<[Vec3; 3]> {
+    let half = size * 0.5;
+    let corners = [
+        Vec3::new(-1.0, -1.0, -1.0),
+        Vec3::new(1.0, -1.0, -1.0),
+        Vec3::new(1.0, 1.0, -1.0),
+        Vec3::new(-1.0, 1.0, -1.0),
+        Vec3::new(-1.0, -1.0, 1.0),
+        Vec3::new(1.0, -1.0, 1.0),
+        Vec3::new(1.0, 1.0, 1.0),
+        Vec3::new(-1.0, 1.0, 1.0),
+    ]
+    .map(|v| center + v * half);
+    [
+        [0, 3, 2, 1],
+        [4, 5, 6, 7],
+        [0, 1, 5, 4],
+        [3, 7, 6, 2],
+        [0, 4, 7, 3],
+        [1, 2, 6, 5],
+    ]
+    .into_iter()
+    .flat_map(|[a, b, c, d]| {
+        [
+            [corners[a], corners[b], corners[c]],
+            [corners[a], corners[c], corners[d]],
+        ]
+    })
+    .collect()
+}
+
+fn triangle_mesh(triangles: &[[Vec3; 3]]) -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        triangles
+            .iter()
+            .flatten()
+            .map(|v| v.to_array())
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        triangles
+            .iter()
+            .flat_map(|t| {
+                let normal = (t[1] - t[0]).cross(t[2] - t[0]).normalize().to_array();
+                [normal; 3]
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
+    world
+        .resource_mut::<crate::camera::CameraControl>()
+        .captured = false;
+    let previous = world
+        .query::<(Entity, &BuildingInstance)>()
+        .iter(world)
+        .map(|(entity, _)| entity)
+        .collect::<Vec<_>>();
+    for entity in previous {
+        world.entity_mut(entity).insert(Visibility::Hidden);
+    }
+    let building = world
+        .spawn((
+            Name::new("Force visibility fixture"),
+            Transform::IDENTITY,
+            Visibility::Visible,
+        ))
+        .id();
+    let body = world
+        .spawn((
+            Name::new("Frozen diagnostic force body"),
+            RigidBody::Dynamic,
+            Position(FIXTURE_ORIGIN),
+            Rotation::IDENTITY,
+            GravityScale(0.0),
+            Mass(100.0),
+            CenterOfMass(Vec3::ZERO),
+            AngularInertia::from_mat3_unchecked(Mat3::IDENTITY),
+            Transform::from_translation(FIXTURE_ORIGIN),
+            Visibility::Visible,
+            ChildOf(building),
+            NoAutoMass,
+            NoAutoAngularInertia,
+            NoAutoCenterOfMass,
+        ))
+        .id();
+    let mut manifest = crate::stress_smoke::beam_manifest();
+    manifest.asset_id = "f".repeat(64);
+    manifest.name = "Frozen source-triangle force visibility fixture".into();
+    manifest.anchors.clear();
+    let chunk_template = manifest.chunks[0].clone();
+    let bond_template = manifest.bonds[0].clone();
+    manifest.chunks.clear();
+    manifest.bonds.clear();
+    let mut instance = BuildingInstance::pending(Handle::default());
+    instance.bounds = Some(BuildingBounds {
+        min: Vec3::new(-10.0, -2.0, -0.08),
+        max: Vec3::new(32.0, 2.0, 2.08),
+    });
+    for shape in visibility_shapes() {
+        let triangles = shape
+            .boxes
+            .iter()
+            .flat_map(|&(center, size)| box_triangles(center, size))
+            .collect::<Vec<_>>();
+        let volume = shape
+            .boxes
+            .iter()
+            .map(|(_, size)| size.element_product())
+            .sum::<f32>();
+        let center = shape
+            .boxes
+            .iter()
+            .map(|(center, size)| *center * size.element_product())
+            .sum::<Vec3>()
+            / volume;
+        let mut record = chunk_template.clone();
+        record.id = shape.id.clone();
+        record.node = shape.id.clone();
+        record.part_id = shape.id.clone();
+        record.position = center.to_array();
+        record.rotation = Quat::IDENTITY.to_array();
+        record.center_of_mass = [0.0; 3];
+        record.volume = volume;
+        record.mass = volume * 2400.0;
+        let mut inertia = Mat3::ZERO;
+        for &(box_center, size) in &shape.boxes {
+            let mass = size.element_product() * 2400.0;
+            let offset = box_center - center;
+            inertia += Mat3::from_diagonal(
+                Vec3::new(
+                    size.y * size.y + size.z * size.z,
+                    size.x * size.x + size.z * size.z,
+                    size.x * size.x + size.y * size.y,
+                ) * (mass / 12.0),
+            ) + (Mat3::IDENTITY * offset.length_squared()
+                - Mat3::from_cols(offset * offset.x, offset * offset.y, offset * offset.z))
+                * mass;
+        }
+        record.inertia = inertia.to_cols_array_2d();
+        record.colliders = shape
+            .boxes
+            .iter()
+            .map(|&(box_center, size)| ColliderRecord {
+                kind: "convex_hull".into(),
+                vertices: box_triangles(box_center - center, size)
+                    .into_iter()
+                    .flatten()
+                    .map(|point| point.to_array())
+                    .collect(),
+            })
+            .collect();
+        let entity = world
+            .spawn((
+                Name::new(shape.id.clone()),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(body),
+                ChunkIdentity {
+                    building,
+                    id: shape.id.clone(),
+                },
+            ))
+            .id();
+        let mesh = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(triangle_mesh(&triangles));
+        let color = shape.color.map(|value| f32::from(value) / 255.0);
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: Color::srgb(color[0], color[1], color[2]),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            });
+        let primitive = world
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(entity),
+            ))
+            .id();
+        instance.chunks.insert(
+            shape.id,
+            ChunkInstance {
+                entity,
+                primitives: vec![primitive],
+                alive: true,
+                triangles,
+                transform: record.transform(),
+                material: "concrete".into(),
+                detail: None,
+                cluster: Some(body),
+            },
+        );
+        manifest.chunks.push(record);
+    }
+    let mut force_bonds = BTreeMap::new();
+    for (index, &(name, x)) in TARGETS.iter().enumerate() {
+        let mut bond = bond_template.clone();
+        bond.id = format!("visibility-{name}");
+        bond.a = target_id(index * 2);
+        bond.b = target_id(index * 2 + 1);
+        bond.center = [x, 0.0, 0.0];
+        bond.normal = Vec3::X.to_array();
+        bond.area = 0.01;
+        bond.area_covariance =
+            Mat3::from_diagonal(Vec3::new(0.0, 1e-4 / 12.0, 1e-4 / 12.0)).to_cols_array_2d();
+        bond.patches = vec![BondPatchRecord {
+            area: bond.area,
+            center: bond.center,
+            normal: bond.normal,
+            area_covariance: bond.area_covariance,
+            vertices: vec![
+                [x, -0.05, -0.05],
+                [x, 0.05, -0.05],
+                [x, 0.05, 0.05],
+                [x, -0.05, 0.05],
+            ],
+        }];
+        instance.bonds.insert(bond.id.clone(), true);
+        // These deterministic diagnostic forces test visibility only. The first
+        // five phases still require the authored selfweight and a real contact J.
+        force_bonds.insert(
+            bond.id.clone(),
+            BondStress {
+                force: [2000.0, 0.0, 0.0],
+                moment: [0.0; 3],
+                tension: 0.0,
+                compression: 0.0,
+                shear: 0.0,
+                utilization: 0.7,
+                section_exact: true,
+            },
+        );
+        manifest.bonds.push(bond);
+    }
+    let asset = world
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .add(DestructibleAsset {
+            manifest,
+            gltf: Handle::default(),
+        });
+    instance.asset = asset;
+    instance.clusters = vec![body];
+    let chunks = instance.chunks.keys().cloned().collect::<Vec<_>>();
+    let signature = bond_signature(&instance.bonds);
+    world.entity_mut(body).insert(Cluster {
+        building,
+        chunks: chunks.clone(),
+        anchored: false,
+    });
+    world.entity_mut(building).insert(instance);
+    VisibilityFixture {
+        building,
+        body,
+        chunks,
+        bonds: force_bonds,
+        signature,
+    }
+}
+
+fn hold_visibility_fixture(world: &mut World, fixture: &VisibilityFixture, enabled: bool) {
+    let camera = world
+        .query_filtered::<Entity, With<DemoCamera>>()
+        .single(world)
+        .unwrap();
+    world.entity_mut(camera).insert((
+        Transform::from_translation(FIXTURE_ORIGIN + Vec3::Z * FIXTURE_DISTANCE),
+        Projection::Perspective(PerspectiveProjection {
+            fov: std::f32::consts::FRAC_PI_3,
+            near: 0.05,
+            far: 100.0,
+            ..default()
+        }),
+        Tonemapping::None,
+        DebandDither::Disabled,
+    ));
+    if enabled {
+        let now = world.resource::<Time<Fixed>>().elapsed_secs_f64();
+        world
+            .resource_mut::<ForceSamples>()
+            .record_force(DynamicForceSample {
+                building: fixture.building,
+                body: fixture.body,
+                chunks: fixture.chunks.clone(),
+                bonds: fixture.bonds.clone(),
+                bond_signature: fixture.signature,
+                captured_at: now,
+            });
+    }
+}
+
+fn source_id_pixels(capture: &Capture, index: usize) -> usize {
+    let color = TARGET_COLORS[index];
+    capture
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| (0..3).all(|c| pixel[c].abs_diff(color[c]) <= 2))
+        .count()
 }
 
 fn drive(world: &mut World) {
@@ -143,7 +570,10 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         return;
     }
     if state.applied != Some(state.phase) {
-        world.resource_mut::<ForceCapture>().enabled = matches!(state.phase, 1..=3);
+        world.resource_mut::<ForceCapture>().enabled = matches!(state.phase, 1..=3 | 6);
+        if state.phase == 5 {
+            state.fixture = Some(spawn_visibility_fixture(world));
+        }
         if state.phase == 3 {
             state.before_contacts = world.resource::<ImpactStats>().contacts;
             let eye = world
@@ -214,7 +644,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                 state
                     .errors
                     .push("No live convex target for actual impulse sample".into());
-                state.phase = 5;
+                state.phase = NAMES.len();
                 return;
             }
         }
@@ -236,6 +666,9 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         }
         state.applied = Some(state.phase);
         state.hold = 0;
+    }
+    if let Some(fixture) = &state.fixture {
+        hold_visibility_fixture(world, fixture, state.phase == 6);
     }
     state.hold += 1;
     let stats = world.resource::<ForceViewStats>().clone();
@@ -263,6 +696,10 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
             && stats.impulses == 0
             && samples.dynamic.is_empty()
             && samples.impulses.is_empty();
+    }
+    if state.phase == 6 {
+        state.visibility_peak_rays = state.visibility_peak_rays.max(stats.visibility_rays);
+        state.visibility_stats = Some(stats.clone());
     }
     let wait = if state.phase == 0 {
         140
@@ -302,7 +739,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                     state
                         .errors
                         .push(format!("Force screenshot readback: {error}"));
-                    state.phase = 5;
+                    state.phase = NAMES.len();
                 }
             }
         },
@@ -359,8 +796,23 @@ fn scene_surface_pixels(capture: &Capture) -> usize {
 }
 
 fn accept_readback(state: &mut ForceSmokeState, phase: usize, candidate: Capture) -> bool {
-    let scene_pixels = scene_surface_pixels(&candidate);
-    if scene_pixels < (candidate.width * candidate.height / 500).max(256) {
+    let scene_pixels = if phase >= 5 {
+        let counts = (0..10)
+            .map(|index| source_id_pixels(&candidate, index))
+            .collect::<Vec<_>>();
+        if counts
+            .iter()
+            .enumerate()
+            .any(|(index, &pixels)| expected_target_visible(index) && pixels < 16)
+        {
+            state.rejected_readbacks[phase] += 1;
+            return false;
+        }
+        counts.iter().sum()
+    } else {
+        scene_surface_pixels(&candidate)
+    };
+    if phase < 5 && scene_pixels < (candidate.width * candidate.height / 500).max(256) {
         state.rejected_readbacks[phase] += 1;
         return false;
     }
@@ -368,6 +820,131 @@ fn accept_readback(state: &mut ForceSmokeState, phase: usize, candidate: Capture
     state.captures.insert(phase, candidate);
     state.phase = phase + 1;
     true
+}
+
+fn fixture_changed_pixels(a: &Capture, b: &Capture, tile: usize, exclude_center: bool) -> usize {
+    if a.width != b.width || a.height != b.height {
+        return usize::MAX;
+    }
+    let scale = a.height as f32 / (2.0 * (std::f32::consts::FRAC_PI_6).tan() * FIXTURE_DISTANCE);
+    let center = Vec2::new(
+        a.width as f32 * 0.5 + TARGETS[tile].1 * scale,
+        a.height as f32 * 0.5,
+    );
+    let half = Vec2::new(scale, scale * 0.6);
+    let mut count = 0;
+    for y in 0..a.height {
+        for x in 0..a.width {
+            let delta = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - center;
+            if delta.x.abs() > half.x
+                || delta.y.abs() > half.y
+                || (exclude_center && delta.length_squared() < 64.0)
+            {
+                continue;
+            }
+            let i = (y * a.width + x) * 4;
+            let difference = (0..3)
+                .map(|c| u32::from(a.pixels[i + c].abs_diff(b.pixels[i + c])))
+                .sum::<u32>();
+            count += usize::from(difference > 24);
+        }
+    }
+    count
+}
+
+fn visibility_report(state: &mut ForceSmokeState) -> serde_json::Value {
+    let Some(fixture) = &state.fixture else {
+        state
+            .errors
+            .push("Missing source-triangle visibility fixture".into());
+        return serde_json::Value::Null;
+    };
+    let Some(stats) = &state.visibility_stats else {
+        state
+            .errors
+            .push("Missing actual force visibility draw statistics".into());
+        return serde_json::Value::Null;
+    };
+    let visible = stats
+        .visible_chunks
+        .iter()
+        .filter(|(building, _)| *building == fixture.building)
+        .map(|(_, id)| id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let drawn = stats
+        .drawn_bonds
+        .iter()
+        .filter(|(building, _)| *building == fixture.building)
+        .map(|(_, id)| id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let graph = stats
+        .drawn_graph_bonds
+        .iter()
+        .filter(|(building, _)| *building == fixture.building)
+        .map(|(_, id)| id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut targets = Vec::new();
+    if let (Some(off), Some(on), Some(repeat)) = (
+        state.captures.get(&5),
+        state.captures.get(&6),
+        state.captures.get(&7),
+    ) {
+        for index in 0..10 {
+            let id = target_id(index);
+            let pixels = source_id_pixels(off, index);
+            let expected = expected_target_visible(index);
+            let minimum = if index == 7 { 16 } else { 64 };
+            if (expected && pixels < minimum) || (!expected && pixels != 0) {
+                state.errors.push(format!("Visibility source-ID reference {id}: {pixels} pixels, expected visible={expected}"));
+            }
+            if visible.contains(&id) != expected {
+                state.errors.push(format!(
+                    "Actual visibility set disagrees for {id}: expected visible={expected}"
+                ));
+            }
+            targets.push(serde_json::json!({"chunk":id,"source_id_pixels":pixels,"expected_visible":expected,"actual_visible":visible.contains(&id)}));
+        }
+        for (tile, &(name, _)) in TARGETS.iter().enumerate() {
+            let id = format!("visibility-{name}");
+            let expected = matches!(tile, 0 | 2 | 3);
+            if drawn.contains(&id) != expected || graph.contains(&id) != expected {
+                state.errors.push(format!(
+                    "Hidden/visible target {name} has incorrect force/graph bond submission"
+                ));
+            }
+            if tile == 4 {
+                continue;
+            }
+            let changed = fixture_changed_pixels(off, on, tile, tile == 1);
+            let repeat_changed = fixture_changed_pixels(off, repeat, tile, tile == 1);
+            if (expected && changed < 8) || (!expected && changed != 0) {
+                state.errors.push(format!("Visibility target {name}: {changed} changed force pixels, expected visible={expected}"));
+            }
+            if repeat_changed != 0 {
+                state.errors.push(format!(
+                    "Visibility cleared target {name}: {repeat_changed} residual force pixels"
+                ));
+            }
+            targets.push(serde_json::json!({"bond":id,"expected_drawn":expected,"force_pixels":changed,"cleared_repeat_pixels":repeat_changed}));
+        }
+    } else {
+        state
+            .errors
+            .push("Missing off/on/repeat visibility GPU captures".into());
+    }
+    if stats.force_pairs != 2 || stats.force_arrows != 5 {
+        state.errors.push(format!(
+            "Visible endpoint force counts disagree: {} pairs, {} arrows; expected 2/5",
+            stats.force_pairs, stats.force_arrows
+        ));
+    }
+    if state.visibility_peak_rays == 0 || stats.visibility_untested != 0 {
+        state.errors.push(format!(
+            "Visibility fixture was not fully tested: {} rays, {} untested",
+            state.visibility_peak_rays, stats.visibility_untested
+        ));
+    }
+    serde_json::json!({"source_triangles_match_render_mesh":true,"partial_centers_are_occluded":true,"synthetic_forces_only_in_fixture":true,"visible_chunks":visible,"drawn_force_bonds":drawn,"drawn_graph_bonds":graph,"force_pairs":stats.force_pairs,"force_arrows":stats.force_arrows,"visibility_peak_actual_rays":state.visibility_peak_rays,"visibility_capture_frame_rays":stats.visibility_rays,"visibility_untested":stats.visibility_untested,"targets":targets})
 }
 
 fn center_pixels(capture: &Capture) -> impl Iterator<Item = (usize, &[u8])> {
@@ -441,7 +1018,8 @@ fn finish(world: &mut World, state: &mut ForceSmokeState, directory: &std::path:
             state.errors.push(format!("Missing screenshot {name}"));
         }
     }
-    let report = serde_json::json!({"asset":world.resource::<DemoOptions>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"force_pairs":state.peak_force_pairs,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"force_overlay_changed_non_hud_pixels":changed,"contact_impulse_purple_pixels":purple,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"errors":state.errors});
+    let visibility = visibility_report(state);
+    let report = serde_json::json!({"asset":world.resource::<DemoOptions>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"force_pairs":state.peak_force_pairs,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"force_overlay_changed_non_hud_pixels":changed,"contact_impulse_purple_pixels":purple,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"visibility":visibility,"errors":state.errors});
     std::fs::write(
         directory.join("report.json"),
         serde_json::to_string_pretty(&report).unwrap(),
