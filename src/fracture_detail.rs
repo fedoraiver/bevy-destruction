@@ -314,8 +314,21 @@ fn baked_contact_patches(
     let mut result = Vec::new();
     for plane in planes {
         // Merge convex coplanar unions; retain valid per-facet polygons for concave unions.
-        let polygons =
-            connected_polygons(&plane.polygons).unwrap_or_else(|_| plane.polygons.clone());
+        let original_area = plane
+            .polygons
+            .iter()
+            .map(|polygon| polygon_area(polygon).abs())
+            .sum::<f64>();
+        let polygons = connected_polygons(&plane.polygons)
+            .ok()
+            .filter(|polygons| {
+                let merged_area = polygons
+                    .iter()
+                    .map(|polygon| polygon_area(polygon).abs())
+                    .sum::<f64>();
+                (merged_area - original_area).abs() <= (original_area * 1e-6).max(1e-12)
+            })
+            .unwrap_or_else(|| plane.polygons.clone());
         for polygon in polygons {
             let points = polygon
                 .iter()
@@ -990,6 +1003,64 @@ mod tests {
             ("b".into(), SurfaceGeometry::default()),
         ]);
         assert!(build_patches(&manifest, &geometry).is_err());
+    }
+
+    #[test]
+    fn baked_coplanar_merge_does_not_fill_a_resolvable_small_notch() {
+        let mut manifest = manifest(1.0);
+        manifest.schema_version = 2;
+        manifest.bonds[0].patches = vec![
+            rectangular_patch([
+                [0.0, 0.0, 0.0],
+                [0.0, 0.5, 0.0],
+                [0.0, 0.5, 1.0],
+                [0.0, 0.0, 1.0],
+            ]),
+            rectangular_patch([
+                [0.0, 0.5, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 0.99999],
+                [0.0, 0.5, 0.99999],
+            ]),
+        ];
+        let triangles = manifest.bonds[0]
+            .patches
+            .iter()
+            .flat_map(|patch| {
+                let p = patch
+                    .vertices
+                    .iter()
+                    .copied()
+                    .map(Vec3::from_array)
+                    .collect::<Vec<_>>();
+                [[p[0], p[1], p[2]], [p[0], p[2], p[3]]]
+            })
+            .collect::<Vec<_>>();
+        let geometry = BTreeMap::from([
+            (
+                "a".into(),
+                SurfaceGeometry {
+                    triangles: triangles.clone(),
+                    exterior: Vec::new(),
+                },
+            ),
+            (
+                "b".into(),
+                SurfaceGeometry {
+                    triangles: triangles.iter().map(|p| [p[0], p[2], p[1]]).collect(),
+                    exterior: Vec::new(),
+                },
+            ),
+        ]);
+        let patches = build_patches(&manifest, &geometry).unwrap();
+        assert_eq!(patches.len(), 2);
+        let actual = patches.iter().map(|patch| patch.area).sum::<f32>();
+        let expected = manifest.bonds[0]
+            .patches
+            .iter()
+            .map(|patch| patch.area)
+            .sum::<f32>();
+        assert!((actual - expected).abs() < 1e-7);
     }
 
     #[test]
