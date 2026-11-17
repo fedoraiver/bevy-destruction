@@ -1,8 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-#[cfg(test)]
-mod tests;
-
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{
     math::{DMat3, DVec3},
@@ -13,10 +10,17 @@ use crate::{
     DemoOptions,
     asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
+    force_samples::{
+        DynamicForceSample, ForceCapture, ForceSamples, ImpulseSample, MAX_IMPULSE_SAMPLES,
+        bond_signature,
+    },
     physics::Cluster,
     scene::{BuildingInstance, ChunkIdentity, DemoCamera},
     stress::{self, NodeLoad, SolverSettings},
 };
+
+#[cfg(test)]
+mod tests;
 
 pub struct ProjectilePlugin;
 
@@ -215,6 +219,11 @@ fn retire_projectiles(
 
 fn impact_damage(world: &mut World) {
     let mut state = world.remove_resource::<ImpactState>().unwrap();
+    let capture = world
+        .get_resource::<ForceCapture>()
+        .is_some_and(|capture| capture.enabled);
+    let captured_at = world.resource::<Time<Fixed>>().elapsed_secs_f64();
+    let mut impulse_samples = Vec::new();
     let mut touching = BTreeSet::new();
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
     let mut shocks = BTreeMap::<Entity, ClusterImpact>::new();
@@ -261,6 +270,23 @@ fn impact_damage(world: &mut World) {
                     continue;
                 };
                 let cluster = world.get::<Cluster>(body).unwrap();
+                if capture {
+                    for manifold in &pair.manifolds {
+                        for point in &manifold.points {
+                            if impulse_samples.len() < MAX_IMPULSE_SAMPLES
+                                && point.normal_impulse > 0.0
+                            {
+                                impulse_samples.push(ImpulseSample {
+                                    building: identity.building,
+                                    chunk: identity.id.clone(),
+                                    point: point.point,
+                                    impulse: manifold.normal * (point.normal_impulse * sign),
+                                    captured_at,
+                                });
+                            }
+                        }
+                    }
+                }
                 if world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
                     && cluster.chunks.len() > 1
                 {
@@ -314,6 +340,11 @@ fn impact_damage(world: &mut World) {
     }
     state.touching = touching;
     state.shocks.extend(shocks.into_values());
+    if let Some(mut samples) = world.get_resource_mut::<ForceSamples>() {
+        for sample in impulse_samples {
+            samples.record_impulse(sample);
+        }
+    }
     for ((building, id), impulse) in hits {
         let Some(instance) = world.get::<BuildingInstance>(building) else {
             continue;
@@ -385,6 +416,13 @@ fn impact_damage(world: &mut World) {
     }
     for (building, ids) in &broken {
         crate::interaction::bond_feedback(world, *building, ids);
+    }
+    if let Some(sample) = structural
+        .as_mut()
+        .and_then(|report| report.force_sample.take())
+        && let Some(mut samples) = world.get_resource_mut::<ForceSamples>()
+    {
+        samples.record_force(sample);
     }
     let mut stats = world.resource_mut::<ImpactStats>();
     stats.contacts += contact_count;
@@ -569,6 +607,7 @@ struct DynamicImpactReport {
     max_utilization: f64,
     fracture: Option<(Entity, String)>,
     continuation: Option<ClusterImpact>,
+    force_sample: Option<DynamicForceSample>,
 }
 
 fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
@@ -621,6 +660,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             max_utilization: 0.0,
             fracture: None,
             continuation: None,
+            force_sample: None,
         };
         let result = if case.force_balance_ratio <= 1e-6 && case.moment_balance_ratio <= 1e-6 {
             stress::solve_with_gauge(
@@ -653,6 +693,19 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                         if bond.utilization >= 1.0 {
                             report.fracture = Some((shock.building, id.clone()));
                         }
+                    }
+                    if world
+                        .get_resource::<ForceCapture>()
+                        .is_some_and(|capture| capture.enabled)
+                    {
+                        report.force_sample = Some(DynamicForceSample {
+                            building: shock.building,
+                            body: *groups.keys().next().unwrap(),
+                            chunks: shock.chunks.clone(),
+                            bonds: solution.bonds,
+                            bond_signature: bond_signature(&instance.bonds),
+                            captured_at: world.resource::<Time<Fixed>>().elapsed_secs_f64(),
+                        });
                     }
                 }
             }

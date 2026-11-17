@@ -839,3 +839,49 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
         assert!((value - second[&key]).abs() < 1e-6);
     }
 }
+
+#[test]
+fn force_capture_preserves_the_solved_impact_and_fracture_choice() {
+    let mut app = app();
+    let (building, upper) = spawn_dropped_tower(&mut app);
+    app.update();
+    let state_for = || {
+        let mut state = ImpactState::default();
+        state.shocks.push_back(ClusterImpact {
+            building,
+            chunks: upper.clone(),
+            loads: BTreeMap::from([(
+                upper[0].clone(),
+                ImpulseLoad {
+                    linear: DVec3::Y * 1e7,
+                    angular: DVec3::ZERO,
+                },
+            )]),
+            prepared: None,
+        });
+        state
+    };
+    let baseline = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    assert!(baseline.valid);
+    assert!(baseline.force_sample.is_none());
+    app.insert_resource(ForceCapture { enabled: true });
+    let captured = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    assert_eq!(captured.fracture, baseline.fracture);
+    assert_eq!(captured.max_utilization, baseline.max_utilization);
+    assert_eq!(captured.gauge_reaction_ratio, baseline.gauge_reaction_ratio);
+    let sample = captured.force_sample.unwrap();
+    assert_eq!(sample.chunks, upper);
+    assert!(!sample.bonds.is_empty());
+    assert!(
+        sample
+            .bonds
+            .values()
+            .any(|bond| DVec3::from_array(bond.force).length() > 0.0)
+    );
+    assert!(sample.bonds.values().all(|bond| {
+        bond.force
+            .into_iter()
+            .chain(bond.moment)
+            .all(f64::is_finite)
+    }));
+}

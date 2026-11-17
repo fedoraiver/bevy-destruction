@@ -562,7 +562,7 @@ fn update_hint(
         format!("Building error: {error}")
     } else if instance.bounds.is_some() {
         format!(
-            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | Esc: exit     {}/{} chunks",
+            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | 9: forces | Esc: exit     {}/{} chunks",
             instance.chunks.values().filter(|chunk| chunk.alive).count(),
             instance.chunks.len()
         )

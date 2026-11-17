@@ -5,6 +5,9 @@ mod collapse_smoke;
 mod debug;
 mod diagnostics;
 mod dust_material;
+mod force_debug;
+mod force_samples;
+mod force_smoke;
 mod fracture_detail;
 mod interaction;
 mod landing_smoke;
@@ -32,6 +35,7 @@ pub struct DemoOptions {
     pub physics_smoke_output: Option<std::path::PathBuf>,
     pub stress_smoke_output: Option<std::path::PathBuf>,
     pub material_smoke_output: Option<std::path::PathBuf>,
+    pub force_smoke_output: Option<std::path::PathBuf>,
     pub landing_smoke_output: Option<std::path::PathBuf>,
     pub collapse_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
@@ -50,6 +54,7 @@ impl Default for DemoOptions {
             physics_smoke_output: None,
             stress_smoke_output: None,
             material_smoke_output: None,
+            force_smoke_output: None,
             landing_smoke_output: None,
             collapse_smoke_output: None,
             no_vfx: false,
@@ -68,6 +73,7 @@ impl DemoOptions {
             || self.physics_smoke_output.is_some()
             || self.stress_smoke_output.is_some()
             || self.material_smoke_output.is_some()
+            || self.force_smoke_output.is_some()
             || self.landing_smoke_output.is_some()
             || self.collapse_smoke_output.is_some()
     }
@@ -116,6 +122,13 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 );
             }
+            "--force-smoke-test" => {
+                options.force_smoke_output = Some(
+                    args.next()
+                        .ok_or("--force-smoke-test requires an output directory")?
+                        .into(),
+                );
+            }
             "--landing-smoke-test" => {
                 options.landing_smoke_output = Some(
                     args.next()
@@ -132,7 +145,7 @@ fn options() -> Result<DemoOptions, String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: forces | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -150,6 +163,7 @@ fn options() -> Result<DemoOptions, String> {
         options.physics_smoke_output.is_some(),
         options.stress_smoke_output.is_some(),
         options.material_smoke_output.is_some(),
+        options.force_smoke_output.is_some(),
         options.landing_smoke_output.is_some(),
         options.collapse_smoke_output.is_some(),
     ]
@@ -211,6 +225,7 @@ fn main() -> AppExit {
             dust_material::DustMaterialPlugin,
             diagnostics::MetricsPlugin,
             debug::FractureDebugPlugin,
+            force_debug::ForceDebugPlugin,
             scene::DemoScenePlugin,
             physics::DestructionPhysicsPlugin,
             camera::FreeCameraPlugin,
@@ -227,6 +242,7 @@ fn main() -> AppExit {
             material_smoke::MaterialSmokePlugin,
             landing_smoke::LandingSmokePlugin,
             collapse_smoke::CollapseSmokePlugin,
+            force_smoke::ForceSmokePlugin,
         ))
         .add_systems(Update, close_on_escape);
     if smoke_test {

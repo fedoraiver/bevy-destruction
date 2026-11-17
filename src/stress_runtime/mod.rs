@@ -3,9 +3,6 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-#[cfg(test)]
-mod tests;
-
 use avian3d::prelude::*;
 use bevy::{math::DVec3, prelude::*};
 
@@ -16,6 +13,9 @@ use crate::{
     stress::{self, BondStress, NodeLoad, SolverSettings},
     structure,
 };
+
+#[cfg(test)]
+mod tests;
 
 pub struct StressRuntimePlugin;
 
@@ -105,6 +105,23 @@ struct StressCache {
     settings_tick: u32,
     gravity: Vec3,
     retry_at: f64,
+}
+
+impl StressState {
+    pub fn inputs_current(
+        &self,
+        source_tick: u32,
+        loads_tick: u32,
+        settings_tick: u32,
+        gravity: Vec3,
+    ) -> bool {
+        self.cache.is_some_and(|cache| {
+            cache.source_tick == source_tick
+                && cache.loads_tick == loads_tick
+                && cache.settings_tick == settings_tick
+                && cache.gravity == gravity
+        })
+    }
 }
 
 pub(crate) fn update_stress(world: &mut World) {
