@@ -335,9 +335,15 @@ def _hull(cells):
     bm = bmesh.new()
     try:
         points = sorted(set(tuple(p) for cell in cells for face in cell for p in face))
+        origin = tuple(math.fsum(p[i] for p in points) / len(points) for i in range(3))
+        scale = max(
+            max(p[i] for p in points) - min(p[i] for p in points) for i in range(3)
+        )
+        if scale <= 0:
+            raise ValueError("Convex hull has zero extent")
         originals = {}
         for point in points:
-            originals[bm.verts.new(point)] = point
+            originals[bm.verts.new(_scale(_sub(point, origin), 1 / scale))] = point
         result = bmesh.ops.convex_hull(
             bm, input=list(bm.verts), use_existing_faces=False
         )
@@ -358,9 +364,75 @@ def _hull(cells):
             use_dissolve_boundaries=False,
         )
         # Hull topology selects input vertices; retain their canonical double coordinates.
-        return [[originals[v] for v in face.verts] for face in bm.faces]
+        faces = [[originals[v] for v in face.verts] for face in bm.faces]
+        if any(
+            any(_dot(_normal(face), _sub(p, face[0])) > scale * 1e-10 for p in points)
+            for face in faces
+        ):
+            return _precise_hull(points)
+        return faces
     finally:
         bm.free()
+
+
+def convex_hull(cells):
+    """Compute hull topology near the origin, preserving supplied vertex coordinates."""
+    return _hull(cells)
+
+
+def _precise_hull(originals):
+    """Incremental double-precision hull for near-coplanar float32 hull failures."""
+    origin = originals[0]
+    scale = max(math.dist(p, origin) for p in originals)
+    points = [_scale(_sub(p, origin), 1 / scale) for p in originals]
+    first = 0
+    second = max(range(len(points)), key=lambda i: _dot(points[i], points[i]))
+    line = points[second]
+    third = max(
+        range(len(points)),
+        key=lambda i: _dot(_cross(line, points[i]), _cross(line, points[i])),
+    )
+    normal = _cross(line, points[third])
+    fourth = max(range(len(points)), key=lambda i: abs(_dot(normal, points[i])))
+    if abs(_dot(normal, points[fourth])) < 1e-15:
+        raise ValueError("Convex hull is not a resolvable three-dimensional solid")
+    tetra = (first, second, third, fourth)
+    interior = tuple(math.fsum(points[i][axis] for i in tetra) / 4 for axis in range(3))
+
+    def face(a, b, c):
+        cross = _cross(_sub(points[b], points[a]), _sub(points[c], points[a]))
+        length = math.sqrt(_dot(cross, cross))
+        if length < 1e-14:
+            return None
+        normal = _scale(cross, 1 / length)
+        if _dot(normal, _sub(interior, points[a])) > 0:
+            b, c = c, b
+            normal = _scale(normal, -1)
+        return a, b, c, normal
+
+    hull = [face(*indices) for indices in itertools.combinations(tetra, 3)]
+    for index, point in enumerate(points):
+        if index in tetra:
+            continue
+        visible = [f for f in hull if _dot(f[3], _sub(point, points[f[0]])) > 1e-12]
+        if not visible:
+            continue
+        horizon = set()
+        for a, b, c, _ in visible:
+            for edge in ((a, b), (b, c), (c, a)):
+                reverse = tuple(reversed(edge))
+                if reverse in horizon:
+                    horizon.remove(reverse)
+                else:
+                    horizon.add(edge)
+        hull = [f for f in hull if f not in visible]
+        hull.extend(
+            f for a, b in sorted(horizon) if (f := face(a, b, index)) is not None
+        )
+    result = [[originals[i] for i in f[:3]] for f in hull]
+    if any(any(_dot(f[3], _sub(p, points[f[0]])) > 1e-9 for p in points) for f in hull):
+        raise ValueError("Double-precision convex hull has an unsupported face")
+    return result
 
 
 def merge_convex_cells(cells, tolerance=2e-6):

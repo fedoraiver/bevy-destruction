@@ -13,6 +13,7 @@ from bevy_destruction.fracture import mesh_metrics, validate_convex
 from bevy_destruction.natural_union import (
     boundary_mesh,
     cell_contacts,
+    convex_hull,
     merge_convex_cells,
     mesh_data,
     volume,
@@ -196,6 +197,19 @@ class NaturalUnionTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["inertia"][1][1], 0.34966558, places=6)
         self.assertAlmostEqual(metrics["inertia"][2][2], 0.63468414, places=6)
         self.assertAlmostEqual(metrics["inertia"][0][1], -0.06299143, places=6)
+
+    def test_small_rounded_proxy_rebuilds_actual_supporting_facets(self):
+        path = Path(__file__).parent / "fixtures" / "rounded-small-proxy.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        faces = [[tuple(data["vertices"][i]) for i in face] for face in data["faces"]]
+        with self.assertRaises(ValueError):
+            validate_convex(self.object(mesh_data(faces)))
+        hull = convex_hull([faces])
+        obj = self.object(mesh_data(hull))
+        self.assertTrue(validate_convex(obj))
+        self.assertLess(abs(mesh_metrics(obj)["volume"] - volume(faces)), 5e-12)
+        points = {tuple(point) for point in data["vertices"]}
+        self.assertTrue(all(point in points for face in hull for point in face))
 
 
 if __name__ == "__main__":
