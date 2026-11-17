@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(test)]
-mod tests;
-
 use bevy::prelude::Vec3;
 
 use crate::asset::{Manifest, PhysicalMaterial};
+
+#[cfg(test)]
+mod tests;
 
 type V3 = [f64; 3];
 type V6 = [f64; 6];
@@ -86,14 +86,13 @@ struct Element {
     b: usize,
     center: V3,
     bond_center: V3,
-    vertices: Option<Vec<V3>>,
+    vertices: Vec<V3>,
     normal: V3,
     area: f64,
     q: M3,
     tangent: V3,
     bitangent: V3,
     inverse_q: [[f64; 2]; 2],
-    max_radius: f64,
     stiffness: M6,
     ja: M6,
     jb: M6,
@@ -125,12 +124,10 @@ pub fn solve(
     gravity: Vec3,
     external_loads: &BTreeMap<String, NodeLoad>,
     settings: &SolverSettings,
-    section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
 ) -> Result<StressSolution, SolveError> {
-    validate_sections(section_vertices)?;
     let model = assemble(manifest, chunks, active_bonds, gravity, external_loads)?;
     let (x, iterations, relative_residual) = pcg(&model, settings)?;
-    Ok(model.recover(&x, iterations, relative_residual, section_vertices))
+    Ok(model.recover(&x, iterations, relative_residual))
 }
 
 /// Solves balanced free-body loads; the gauge removes rigid modes, not a physical support.
@@ -141,10 +138,8 @@ pub fn solve_with_gauge(
     active_bonds: &BTreeMap<String, bool>,
     external_loads: &BTreeMap<String, NodeLoad>,
     settings: &SolverSettings,
-    section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
     gauge: &str,
 ) -> Result<StressSolution, SolveError> {
-    validate_sections(section_vertices)?;
     let model = assemble_with_gauge(
         manifest,
         chunks,
@@ -178,22 +173,7 @@ pub fn solve_with_gauge(
         return invalid("Numerical gauge loads must balance force and moment");
     }
     let (x, iterations, relative_residual) = pcg(&model, settings)?;
-    Ok(model.recover(&x, iterations, relative_residual, section_vertices))
-}
-
-fn validate_sections(
-    section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
-) -> Result<(), SolveError> {
-    if section_vertices.is_some_and(|sections| {
-        sections
-            .values()
-            .flatten()
-            .flatten()
-            .any(|value| !value.is_finite())
-    }) {
-        return invalid("Non-finite interface section vertices");
-    }
-    Ok(())
+    Ok(model.recover(&x, iterations, relative_residual))
 }
 
 fn assemble(
@@ -360,29 +340,21 @@ fn assemble_with_gauge(
         );
         let shear = harmonic(shear_modulus(material_a), shear_modulus(material_b));
         // A shared equivalent length makes a planar interface invariant under subdivision.
-        let sections = if bond.patches.is_empty() {
-            vec![(
-                bond.area,
-                bond.center,
-                bond.normal,
-                bond.area_covariance,
-                None,
-            )]
-        } else {
-            bond.patches
-                .iter()
-                .map(|patch| {
-                    (
-                        patch.area,
-                        patch.center,
-                        patch.normal,
-                        patch.area_covariance,
-                        Some(patch.vertices.iter().map(|p| p.map(f64::from)).collect()),
-                    )
-                })
-                .collect()
-        };
-        for (area, center, normal, area_covariance, vertices) in sections {
+        if bond.patches.is_empty() {
+            return invalid(&format!("Missing v2 interface patches for {}", bond.id));
+        }
+        for patch in &bond.patches {
+            let area = patch.area;
+            let center = patch.center;
+            let normal = patch.normal;
+            let area_covariance = patch.area_covariance;
+            if patch.vertices.len() < 3
+                || !patch.vertices.iter().flatten().all(|v| v.is_finite())
+                || !center.into_iter().all(f32::is_finite)
+            {
+                return invalid(&format!("Invalid v2 interface polygon for {}", bond.id));
+            }
+            let vertices = patch.vertices.iter().map(|p| p.map(f64::from)).collect();
             let normal_length = norm3(normal.map(f64::from));
             if !normal_length.is_finite()
                 || (normal_length - 1.0).abs() > 1e-3
@@ -423,9 +395,7 @@ fn assemble_with_gauge(
                 [-qtb / determinant, qt / determinant],
             ];
             let trace = qt + qb;
-            let lambda_max = 0.5 * (trace + ((qt - qb).powi(2) + 4.0 * qtb * qtb).sqrt());
             let area = area as f64;
-            let max_radius = 2.0 * (lambda_max / area).sqrt();
             let translation = addm3(
                 scale_m3(normal_outer, young * area / length),
                 scale_m3(projection, shear * area / length),
@@ -457,7 +427,6 @@ fn assemble_with_gauge(
                 tangent,
                 bitangent,
                 inverse_q,
-                max_radius,
                 stiffness,
                 ja: jacobian(sub3(center, nodes[a].center), -1.0, length_scale),
                 jb: jacobian(sub3(center, nodes[b].center), 1.0, length_scale),
@@ -540,7 +509,6 @@ impl Model {
         x: &Displacements,
         iterations: usize,
         relative_residual: f64,
-        section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
     ) -> StressSolution {
         let q = self
             .nodes
@@ -562,19 +530,11 @@ impl Model {
                     internal[node][axis] += gradient[axis];
                 }
             }
-            let mut stress = element.stress(
-                traction,
-                element
-                    .vertices
-                    .as_ref()
-                    .or_else(|| section_vertices.and_then(|vertices| vertices.get(&element.id))),
+            let mut stress = element.stress(traction);
+            stress.moment = add3(
+                stress.moment,
+                cross3(sub3(element.center, element.bond_center), stress.force),
             );
-            if element.vertices.is_some() {
-                stress.moment = add3(
-                    stress.moment,
-                    cross3(sub3(element.center, element.bond_center), stress.force),
-                );
-            }
             bonds
                 .entry(element.id.clone())
                 .and_modify(|total: &mut BondStress| {
@@ -629,7 +589,7 @@ impl Model {
 }
 
 impl Element {
-    fn stress(&self, traction: V6, vertices: Option<&Vec<V3>>) -> BondStress {
+    fn stress(&self, traction: V6) -> BondStress {
         let force = [traction[0], traction[1], traction[2]];
         let moment = [traction[3], traction[4], traction[5]];
         let axial = dot3(force, self.normal) / self.area;
@@ -653,34 +613,19 @@ impl Element {
             sub3(force, scale3(self.normal, dot3(force, self.normal))),
             1.0 / self.area,
         );
-        let (tension, compression, shear, section_exact) =
-            if let Some(vertices) = vertices.filter(|vertices| !vertices.is_empty()) {
-                let mut tension = 0.0_f64;
-                let mut compression = 0.0_f64;
-                let mut shear = 0.0_f64;
-                for &point in vertices {
-                    let r = sub3(point, self.center);
-                    let normal_stress = axial + dot3(gradient, r);
-                    tension = tension.max(normal_stress);
-                    compression = compression.max(-normal_stress);
-                    shear = shear.max(norm3(add3(
-                        direct_shear,
-                        scale3(cross3(self.normal, r), twist),
-                    )));
-                }
-                (tension, compression, shear, true)
-            } else {
-                let bending = 2.0
-                    * (dot3(gradient, mul3(self.q, gradient)) / self.area)
-                        .max(0.0)
-                        .sqrt();
-                (
-                    (axial + bending).max(0.0),
-                    (-axial + bending).max(0.0),
-                    norm3(direct_shear) + twist.abs() * self.max_radius,
-                    false,
-                )
-            };
+        let mut tension = 0.0_f64;
+        let mut compression = 0.0_f64;
+        let mut shear = 0.0_f64;
+        for &point in &self.vertices {
+            let r = sub3(point, self.center);
+            let normal_stress = axial + dot3(gradient, r);
+            tension = tension.max(normal_stress);
+            compression = compression.max(-normal_stress);
+            shear = shear.max(norm3(add3(
+                direct_shear,
+                scale3(cross3(self.normal, r), twist),
+            )));
+        }
         BondStress {
             force,
             moment,
@@ -690,7 +635,7 @@ impl Element {
             utilization: (tension / self.tension_strength)
                 .max(compression / self.compression_strength)
                 .max(shear / self.shear_strength),
-            section_exact,
+            section_exact: true,
         }
     }
 }
@@ -1180,7 +1125,6 @@ fn transpose3(a: M3) -> M3 {
 fn mulm3(a: M3, b: M3) -> M3 {
     std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
 }
-
 fn mul6(a: M6, b: V6) -> V6 {
     a.map(|row| dot(&row, &b))
 }

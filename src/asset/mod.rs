@@ -99,7 +99,6 @@ pub struct BondRecord {
     pub center: [f32; 3],
     pub normal: [f32; 3],
     pub area_covariance: [[f32; 3]; 3],
-    #[serde(default)]
     pub patches: Vec<BondPatchRecord>,
     pub state: String,
 }
@@ -179,8 +178,8 @@ fn validate_mesh_hash(bytes: &[u8], expected: &str) -> Result<(), String> {
 
 impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema != "bevy_destruction_asset" || !matches!(self.schema_version, 1 | 2) {
-            return Err("只支持 bevy_destruction_asset 格式 v1/v2".into());
+        if self.schema != "bevy_destruction_asset" || self.schema_version != 2 {
+            return Err("只支持 bevy_destruction_asset 格式 v2".into());
         }
         if self.coordinates.units != "meters"
             || self.coordinates.up != "+Y"
@@ -292,13 +291,11 @@ impl Manifest {
             {
                 return Err(format!("连接 {} 的端点或接触数据无效", bond.id));
             }
-            if self.schema_version == 2 && bond.patches.is_empty() {
+            if bond.patches.is_empty() {
                 return Err(format!("v2 连接 {} 缺少真实接触面片", bond.id));
             }
-            if !bond.patches.is_empty() {
-                validate_bond_patches(bond, bounds[&*bond.a], bounds[&*bond.b])
-                    .map_err(|error| format!("连接 {}: {error}", bond.id))?;
-            }
+            validate_bond_patches(bond, bounds[&*bond.a], bounds[&*bond.b])
+                .map_err(|error| format!("连接 {}: {error}", bond.id))?;
         }
         let mut anchor_chunks = BTreeSet::new();
         for anchor in &self.anchors {
@@ -676,7 +673,6 @@ pub fn resolve_building(
     materials: &Assets<GltfMaterial>,
 ) -> Result<ResolvedBuilding, String> {
     let gltf = gltfs.get(&asset.gltf).ok_or("GLB 依赖尚未加载")?;
-    let legacy_interior = gltf.named_materials.get("BD_DestructionInterior");
     let mut result = ResolvedBuilding {
         chunks: Vec::with_capacity(asset.manifest.chunks.len()),
         bounds_min: Vec3::splat(f32::INFINITY),
@@ -741,10 +737,6 @@ pub fn resolve_building(
                     .material_extras
                     .as_ref()
                     .map(|extras| extras.value.as_str()),
-                primitive
-                    .material
-                    .as_ref()
-                    .is_some_and(|handle| Some(handle) == legacy_interior),
             )?;
             let triangles = mesh_triangles(mesh)?;
             for position in triangles.iter().flatten() {
@@ -764,23 +756,18 @@ pub fn resolve_building(
     Ok(result)
 }
 
-fn surface_role(extras: Option<&str>, legacy_interior: bool) -> Result<SurfaceRole, String> {
-    if let Some(extras) = extras {
-        let extras: serde_json::Value =
-            serde_json::from_str(extras).map_err(|error| error.to_string())?;
-        if let Some(role) = extras.get("bd_surface_role") {
-            return match role.as_str() {
-                Some("exterior") => Ok(SurfaceRole::Exterior),
-                Some("fracture") => Ok(SurfaceRole::Fracture),
-                _ => Err("未知的 bd_surface_role".into()),
-            };
-        }
+fn surface_role(extras: Option<&str>) -> Result<SurfaceRole, String> {
+    let extras = extras.ok_or("显示材质缺少 bd_surface_role")?;
+    let extras: serde_json::Value =
+        serde_json::from_str(extras).map_err(|error| error.to_string())?;
+    match extras
+        .get("bd_surface_role")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("exterior") => Ok(SurfaceRole::Exterior),
+        Some("fracture") => Ok(SurfaceRole::Fracture),
+        _ => Err("显示材质缺少有效的 bd_surface_role".into()),
     }
-    Ok(if legacy_interior {
-        SurfaceRole::Fracture
-    } else {
-        SurfaceRole::Exterior
-    })
 }
 
 pub fn mesh_triangles(mesh: &Mesh) -> Result<Vec<[Vec3; 3]>, String> {

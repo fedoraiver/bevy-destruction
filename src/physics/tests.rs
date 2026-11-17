@@ -20,11 +20,15 @@ fn app() -> App {
 }
 
 fn manifest() -> Manifest {
-    let mut manifest: Manifest = serde_json::from_str(include_str!(
-        "../../assets/buildings/rectangle.destruction.json"
-    ))
-    .unwrap();
-    manifest.schema_version = 1;
+    let mut manifest = crate::stress_smoke::beam_manifest();
+    let physical = manifest.materials["concrete"].clone();
+    manifest.materials = (2..=5)
+        .map(|mass| {
+            let mut material = physical.clone();
+            material.density = mass as f32;
+            (format!("mass-{mass}"), material)
+        })
+        .collect();
     let template = manifest.chunks[0].clone();
     manifest.chunks = ["a", "b", "c", "d"]
         .into_iter()
@@ -32,7 +36,10 @@ fn manifest() -> Manifest {
         .map(|(index, id)| {
             let mut chunk = template.clone();
             chunk.id = id.into();
+            chunk.node = id.into();
+            chunk.part_id = id.into();
             chunk.mass = index as f32 + 2.0;
+            chunk.material = format!("mass-{}", index + 2);
             chunk.volume = 1.0;
             chunk.position = [0.0, index as f32 + 0.5, 0.0];
             chunk.rotation = Quat::IDENTITY.to_array();
@@ -54,12 +61,38 @@ fn manifest() -> Manifest {
         .collect();
     let bond_template = manifest.bonds[0].clone();
     manifest.bonds = [("ab", "a", "b"), ("bc", "b", "c"), ("cd", "c", "d")]
-        .map(|(id, a, b)| BondRecord {
-            id: id.into(),
-            a: a.into(),
-            b: b.into(),
-            patches: Vec::new(),
-            ..bond_template.clone()
+        .map(|(id, a, b)| {
+            let y = match id {
+                "ab" => 1.0,
+                "bc" => 2.0,
+                _ => 3.0,
+            };
+            let q = [
+                [1.0 / 12.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0 / 12.0],
+            ];
+            BondRecord {
+                id: id.into(),
+                a: a.into(),
+                b: b.into(),
+                center: [0.0, y, 0.0],
+                area: 1.0,
+                area_covariance: q,
+                patches: vec![crate::asset::BondPatchRecord {
+                    area: 1.0,
+                    center: [0.0, y, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                    area_covariance: q,
+                    vertices: vec![
+                        [-0.5, y, -0.5],
+                        [-0.5, y, 0.5],
+                        [0.5, y, 0.5],
+                        [0.5, y, -0.5],
+                    ],
+                }],
+                ..bond_template.clone()
+            }
         })
         .into();
     manifest.anchors = vec![AnchorRecord {
@@ -67,6 +100,7 @@ fn manifest() -> Manifest {
         kind: "fixed".into(),
         position: [0.0; 3],
     }];
+    manifest.validate().unwrap();
     manifest
 }
 

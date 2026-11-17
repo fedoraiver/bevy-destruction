@@ -16,8 +16,6 @@ fn production_manifest() -> Manifest {
 #[test]
 fn production_support_selection_uses_geometry_and_is_independent_of_record_order() {
     let mut manifest = production_manifest();
-    // Force the geometric strategy even while a historical v1 catalog is still installed.
-    manifest.schema_version = 2;
     let selected = select_collapse_support(&manifest).unwrap();
     assert!(selected.support_path.len() >= 2 && !selected.removed.is_empty());
     for pair in selected.support_path.windows(2) {
@@ -37,9 +35,7 @@ fn production_support_selection_uses_geometry_and_is_independent_of_record_order
 #[test]
 fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_stub() {
     let manifest = production_manifest();
-    let mut selection_view = manifest.clone();
-    selection_view.schema_version = 2;
-    let selected = select_collapse_support(&selection_view).unwrap();
+    let selected = select_collapse_support(&manifest).unwrap();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin, PhysicsPlugins::default()))
         .init_resource::<Assets<DestructibleAsset>>()

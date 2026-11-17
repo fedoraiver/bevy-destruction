@@ -18,7 +18,6 @@ use crate::{
     stress::{self, NodeLoad, SolverSettings},
 };
 
-
 pub struct ProjectilePlugin;
 
 impl Plugin for ProjectilePlugin {
@@ -89,12 +88,7 @@ struct ClusterImpact {
     building: Entity,
     chunks: Vec<String>,
     loads: BTreeMap<String, ImpulseLoad>,
-    prepared: Option<PreparedImpact>,
-}
-
-struct PreparedImpact {
-    case: InertialLoadCase,
-    sections: BTreeMap<String, Vec<[f64; 3]>>,
+    prepared: Option<InertialLoadCase>,
 }
 
 #[derive(Resource, Default)]
@@ -435,13 +429,8 @@ fn queue_local_damage(
         .collect::<Vec<_>>();
     let total_area = bonds
         .iter()
-        .map(|bond| {
-            if bond.patches.is_empty() {
-                bond.area
-            } else {
-                bond.patches.iter().map(|patch| patch.area).sum()
-            }
-        })
+        .flat_map(|bond| &bond.patches)
+        .map(|patch| patch.area)
         .sum::<f32>();
     for bond in bonds {
         let material = |id: &str| &manifest.materials[&instance.chunks[id].material];
@@ -462,14 +451,11 @@ fn queue_local_damage(
             normal_utilization.max(shear_utilization)
         };
         // Area-weighted facet impulses share the same traction; preserve each facet's direction.
-        let utilization = if bond.patches.is_empty() {
-            utilization(Vec3::from(bond.normal))
-        } else {
-            bond.patches
-                .iter()
-                .map(|patch| utilization(Vec3::from(patch.normal)))
-                .fold(0.0_f32, f32::max)
-        };
+        let utilization = bond
+            .patches
+            .iter()
+            .map(|patch| utilization(Vec3::from(patch.normal)))
+            .fold(0.0_f32, f32::max);
         if utilization >= 1.0 {
             let prior = pending.entry((building, bond.id.clone())).or_default();
             *prior = prior.max(utilization);
@@ -623,26 +609,9 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             let Some(case) = inertial_loads(&asset.manifest, &shock.chunks, &shock.loads) else {
                 continue;
             };
-            let selected = shock
-                .chunks
-                .iter()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>();
-            let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
-            for patch in instance.patches.iter().filter(|patch| {
-                selected.contains(patch.a.as_str()) && selected.contains(patch.b.as_str())
-            }) {
-                sections.entry(patch.bond_id.clone()).or_default().extend(
-                    patch
-                        .triangles
-                        .iter()
-                        .flat_map(|triangle| triangle.iter())
-                        .map(|point| point.to_array().map(f64::from)),
-                );
-            }
-            shock.prepared = Some(PreparedImpact { case, sections });
+            shock.prepared = Some(case);
         }
-        let PreparedImpact { case, sections } = shock.prepared.as_ref().unwrap();
+        let case = shock.prepared.as_ref().unwrap();
         let mut report = DynamicImpactReport {
             valid: false,
             elapsed_ms: 0.0,
@@ -660,7 +629,6 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                 &instance.bonds,
                 &case.loads,
                 &SolverSettings::default(),
-                Some(sections),
                 &shock.chunks[0],
             )
         } else {

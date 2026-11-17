@@ -476,6 +476,17 @@ fn acceptance_fixture_uses_valid_si_mass_and_section_data() {
 }
 
 mod collapse {
+    #[test]
+    fn retained_failure_graph_uses_current_schema_and_real_interfaces() {
+        let manifest: crate::asset::Manifest = serde_json::from_str(include_str!(
+            "../stress/fixtures/damaged-support.destruction.json"
+        ))
+        .unwrap();
+        assert_eq!(manifest.schema_version, 2);
+        assert!(manifest.bonds.iter().all(|bond| bond.patches.len() == 1));
+        manifest.validate().unwrap();
+    }
+
     use super::*;
     use crate::{
         asset::{ChunkRecord, Manifest},
@@ -499,7 +510,7 @@ mod collapse {
         app.cleanup();
         app.update();
         let manifest: Manifest = serde_json::from_str(include_str!(
-            "../../tests/fixtures/rectangle-v1.destruction.json"
+            "../stress/fixtures/damaged-support.destruction.json"
         ))
         .unwrap();
         let asset = app
@@ -661,7 +672,8 @@ mod collapse {
                     .iter()
                     .filter_map(|id| upper.get(id))
                     .collect::<Vec<_>>();
-                if tracked.len() < 20 || app.world().get::<RigidBody>(body) != Some(&RigidBody::Dynamic)
+                if tracked.len() < 20
+                    || app.world().get::<RigidBody>(body) != Some(&RigidBody::Dynamic)
                 {
                     continue;
                 }
@@ -711,7 +723,9 @@ mod collapse {
             supported_rectangle(|chunk| chunk.part_id == "wall-inner-0-l00-p0000-z00");
         let motion = simulate_collapse(&mut app, root, 240, None);
         assert!(
-            motion.largest_released_upper >= 20 && motion.max_drop > 0.5 && motion.strength_breaks > 0,
+            motion.largest_released_upper >= 20
+                && motion.max_drop > 0.5
+                && motion.strength_breaks > 0,
             "Upper building did not release and fall: {motion:?}"
         );
     }
@@ -753,5 +767,4 @@ mod collapse {
         assert_eq!(motion.strength_breaks, 0);
         assert_eq!(motion.largest_released_upper, 0);
     }
-
 }

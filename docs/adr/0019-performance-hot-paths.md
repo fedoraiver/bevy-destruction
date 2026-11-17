@@ -23,10 +23,10 @@
 
 ### 按冲击事件保存不随断键变化的输入
 
-`ClusterImpact` 现在持有可选 `PreparedImpact`，保存一次计算的惯性平衡节点载荷和 f64 截面顶点表。
+`ClusterImpact` 按事件缓存一次计算的惯性平衡节点载荷。本轮最初还缓存了临时构造的 f64 截面顶点表；后续 [ADR 0020](0020-production-irregular-fracture.md) 改为强制 v2 面片输入，截面顶点直接来自清单，调用方的临时截面表和 `PreparedImpact` 包装已移除。当前 `prepared` 只保存 `InertialLoadCase`。
 
 - 同一冲击事件的成员和原始接触冲量保持不变时，内部连接逐个断开只改变连接图；上述准备数据可供后续求解复用。
-- 首次准备截面表时以 `BTreeSet` 检查成员，替代对每个 ContactPatch 两端反复线性扫描 Chunk 列表。
+- 下述历史对照中的临时截面表曾以 `BTreeSet` 检查成员；当前 v2 求解 API 已无需该表，也不再重复扫描显示用 ContactPatch 构造截面输入。
 - 每次处理仍先验证成员存活、成员数量及所属刚体。成员失效或出现多个刚体时，先丢弃/释放原事件，再决定是否使用准备数据；原冲量不分摊给新子簇。
 - 事件完成、失效、分离或重置时，准备数据随事件释放。各事件独立保存输入；资产及接触几何在实例生存期内保持不变，沿用 ADR 0015 的设定。
 - 首次准备仍有成本。后续每次连接变化仍调用求解器并使用当前有效连接，没有复用旧内力或断裂名单。
@@ -34,6 +34,8 @@
 ## 冻结输入的 CPU 测量方法
 
 对照使用同一机器、`rustc 1.99.1 (58cf8f9c3 2026-10-13)`、`opt-level=2`、`debuginfo=1` 和相同已编译依赖。该工具链以并存方式安装，没有切换全局默认或为此重编译全部 Bevy。计时副本只增加阶段计时器，基线求解源码 SHA-256 为 `474dcb26ceab7bdb6960e26629aea4ccf0a4db5803e83c38477c6d8fce2ec58a`。
+
+本节保留的是切换正式 v2 不规则资产之前的冻结数据和旧截面表 API 对照。它说明当时热点与优化依据，不用于预测新 v2 资产的复合代理、多面片或组装成本；当前 v2 入口不提供旧资产兼容路径。
 
 隔离程序读取真实清单和 GLB，生成相同 ContactPatch/截面数据。测量包括：
 
@@ -129,4 +131,4 @@ CSR 矩阵乘法仍占求解的大头；复杂接触、边带网格生成和烟�
 
 ## 来源
 
-本仓库 `src/stress.rs`、`src/projectiles.rs`、`src/vfx.rs`、`src/dust_material.rs`、`assets/shaders/dust.wesl`、`src/main.rs`、真实 GLB/清单、冻结输入计时副本、对应 Rust/图形回归，以及 ADR 0015 至 0017。缓冲生命周期及实例标签契约同时核对本机构建所用 Bevy 0.20 的 `ShaderBuffer`、材质和 mesh shader 源码。
+本仓库 `src/stress/mod.rs`、`src/projectiles/mod.rs`、`src/vfx/mod.rs`、`src/dust_material/mod.rs`、`assets/shaders/dust.wesl`、`src/main.rs`、真实 GLB/清单、冻结输入计时副本、对应 Rust/图形回归，以及 ADR 0015 至 0017、0020。缓冲生命周期及实例标签契约同时核对本机构建所用 Bevy 0.20 的 `ShaderBuffer`、材质和 mesh shader 源码。

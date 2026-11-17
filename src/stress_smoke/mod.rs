@@ -6,7 +6,10 @@ use bevy::{
 
 use crate::{
     DemoOptions,
-    asset::{AnchorRecord, BondRecord, ColliderRecord, DestructibleAsset, Manifest},
+    asset::{
+        AnchorRecord, BondPatchRecord, BondRecord, ChunkRecord, ColliderRecord, Coordinates,
+        DestructibleAsset, Manifest, PhysicalMaterial,
+    },
     fracture_detail::ContactPatch,
     physics::Cluster,
     projectiles::{
@@ -73,14 +76,34 @@ pub(crate) const LEFT_BOND: &str = "left-beam";
 pub(crate) const RIGHT_BOND: &str = "right-beam";
 
 pub(crate) fn beam_manifest() -> Manifest {
-    let mut manifest: Manifest = serde_json::from_str(include_str!(
-        "../../assets/buildings/rectangle.destruction.json"
-    ))
-    .unwrap();
-    manifest.schema_version = 1;
-    manifest.name = "Concrete beam with two narrow supports".into();
-    manifest.materials.retain(|id, _| id == "concrete");
-    let template = manifest.chunks[0].clone();
+    let mut manifest = Manifest {
+        schema: "bevy_destruction_asset".into(),
+        schema_version: 2,
+        name: "Concrete beam with two narrow supports".into(),
+        asset_id: "0".repeat(64),
+        coordinates: Coordinates {
+            units: "meters".into(),
+            up: "+Y".into(),
+            handedness: "right".into(),
+        },
+        materials: std::collections::BTreeMap::from([(
+            "concrete".into(),
+            PhysicalMaterial {
+                density: 2400.0,
+                color: [0.55, 0.57, 0.6, 1.0],
+                tension_strength: 3e6,
+                compression_strength: 30e6,
+                shear_strength: 4e6,
+                young_modulus: 30e9,
+                poisson_ratio: 0.2,
+            },
+        )]),
+        chunks: Vec::new(),
+        bonds: Vec::new(),
+        anchors: Vec::new(),
+        mesh_file: "synthetic-beam.glb".into(),
+        mesh_sha256: "0".repeat(64),
+    };
     manifest.chunks = [
         (
             LEFT_SUPPORT,
@@ -96,17 +119,21 @@ pub(crate) fn beam_manifest() -> Manifest {
     ]
     .into_iter()
     .map(|(id, position, size)| {
-        let mut chunk = template.clone();
-        chunk.id = id.into();
-        chunk.node = id.into();
-        chunk.part_id = id.into();
-        chunk.kind = if id == BEAM { "beam" } else { "column" }.into();
-        chunk.material = "concrete".into();
-        chunk.position = position.to_array();
-        chunk.rotation = Quat::IDENTITY.to_array();
-        chunk.center_of_mass = [0.0; 3];
-        chunk.volume = size.element_product();
-        chunk.mass = chunk.volume * manifest.materials["concrete"].density;
+        let volume = size.element_product();
+        let mut chunk = ChunkRecord {
+            id: id.into(),
+            node: id.into(),
+            part_id: id.into(),
+            kind: if id == BEAM { "beam" } else { "column" }.into(),
+            material: "concrete".into(),
+            position: position.to_array(),
+            rotation: Quat::IDENTITY.to_array(),
+            center_of_mass: [0.0; 3],
+            volume,
+            mass: volume * manifest.materials["concrete"].density,
+            inertia: [[0.0; 3]; 3],
+            colliders: Vec::new(),
+        };
         chunk.inertia = Mat3::from_diagonal(
             Vec3::new(
                 size.y * size.y + size.z * size.z,
@@ -144,7 +171,19 @@ pub(crate) fn beam_manifest() -> Manifest {
         area_covariance: Mat3::from_diagonal(Vec3::new(second_moment, 0.0, second_moment))
             .to_cols_array_2d(),
         state: "rigid".into(),
-        patches: Vec::new(),
+        patches: vec![BondPatchRecord {
+            area: 0.01,
+            center: [x, 1.0, 0.0],
+            normal: Vec3::Y.to_array(),
+            area_covariance: Mat3::from_diagonal(Vec3::new(second_moment, 0.0, second_moment))
+                .to_cols_array_2d(),
+            vertices: vec![
+                [x - 0.05, 1.0, -0.05],
+                [x - 0.05, 1.0, 0.05],
+                [x + 0.05, 1.0, 0.05],
+                [x + 0.05, 1.0, -0.05],
+            ],
+        }],
     })
     .into();
     manifest.anchors = [(LEFT_SUPPORT, -1.0), (RIGHT_SUPPORT, 1.0)]

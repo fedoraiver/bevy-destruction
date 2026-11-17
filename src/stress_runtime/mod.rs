@@ -17,8 +17,6 @@ use crate::{
     structure,
 };
 
-
-
 pub struct StressRuntimePlugin;
 
 impl Plugin for StressRuntimePlugin {
@@ -210,16 +208,6 @@ pub(crate) fn update_stress(world: &mut World) {
                 .collect();
             let components = structure::components(&asset.manifest, &alive, &instance.bonds);
             let mut previous_components = std::mem::take(&mut state.static_components);
-            let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
-            for patch in instance.patches.iter() {
-                sections.entry(patch.bond_id.clone()).or_default().extend(
-                    patch
-                        .triangles
-                        .iter()
-                        .flat_map(|triangle| triangle.iter())
-                        .map(|point| point.to_array().map(f64::from)),
-                );
-            }
             for component in components {
                 if !component.anchored {
                     state.skipped_dynamic += 1;
@@ -274,7 +262,6 @@ pub(crate) fn update_stress(world: &mut World) {
                     local_gravity,
                     loads,
                     &settings.solver,
-                    Some(&sections),
                 ) {
                     Ok(solution) => {
                         let mut force = [0.0_f64; 3];

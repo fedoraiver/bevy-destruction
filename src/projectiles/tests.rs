@@ -659,7 +659,6 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
         &active,
         &case.loads,
         &SolverSettings::default(),
-        None,
         LEFT_SUPPORT,
     )
     .unwrap();
@@ -669,7 +668,6 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
         &active,
         &case.loads,
         &SolverSettings::default(),
-        None,
         RIGHT_SUPPORT,
     )
     .unwrap();
@@ -748,21 +746,6 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
     let mut app = app();
     let building = spawn_beam(app.world_mut(), Vec3::ZERO);
     let instance = app.world().get::<BuildingInstance>(building).unwrap();
-    let mut legacy = crate::stress_smoke::beam_manifest();
-    for bond in &mut legacy.bonds {
-        bond.normal = Vec3::X.to_array();
-        bond.patches.clear();
-    }
-    let total_area = legacy.bonds.iter().map(|bond| bond.area).sum::<f32>();
-    let intensity = legacy.materials["concrete"].shear_strength * 1.2 / 0.8;
-    let impulse = Vec3::NEG_X * (intensity * total_area * IMPACT_DURATION);
-    let mut pending = BTreeMap::new();
-    queue_local_damage(&legacy, instance, building, BEAM, impulse, &mut pending);
-    assert!(
-        pending.is_empty(),
-        "The average plane should see only subcritical compression"
-    );
-
     let rectangle = |normal: Vec3, center: Vec3, half_height: f32| {
         let tangent = Vec3::new(-normal.y, normal.x, 0.0);
         let half_width = 0.05_f32;
@@ -786,7 +769,25 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
                 .collect(),
         }
     };
-    let mut folded = legacy.clone();
+    let mut planar = crate::stress_smoke::beam_manifest();
+    for bond in &mut planar.bonds {
+        let patch = rectangle(Vec3::X, Vec3::from_array(bond.center), 0.05);
+        bond.normal = patch.normal;
+        bond.area = patch.area;
+        bond.area_covariance = patch.area_covariance;
+        bond.patches = vec![patch];
+    }
+    let total_area = planar.bonds.iter().map(|bond| bond.area).sum::<f32>();
+    let intensity = planar.materials["concrete"].shear_strength * 1.2 / 0.8;
+    let impulse = Vec3::NEG_X * (intensity * total_area * IMPACT_DURATION);
+    let mut pending = BTreeMap::new();
+    queue_local_damage(&planar, instance, building, BEAM, impulse, &mut pending);
+    assert!(
+        pending.is_empty(),
+        "The average plane should see only subcritical compression"
+    );
+
+    let mut folded = planar.clone();
     let bond = folded
         .bonds
         .iter_mut()

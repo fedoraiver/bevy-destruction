@@ -1,8 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(test)]
-mod tests;
-
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{
     prelude::*,
@@ -21,6 +18,8 @@ use crate::{
 
 pub struct CollapseSmokePlugin;
 
+#[cfg(test)]
+mod tests;
 
 impl Plugin for CollapseSmokePlugin {
     fn build(&self, app: &mut App) {
@@ -34,8 +33,6 @@ impl Plugin for CollapseSmokePlugin {
 }
 
 const RECTANGLE: &str = "buildings/rectangle.destruction.json";
-const REMAINING_SUPPORT: &str = "wall-inner-0-l00-p0006-z00";
-const STATIC_REMNANT: &str = "wall-inner-0-l00-p0006-z00:voronoi:7:0001";
 const CAPTURES: [&str; 4] = [
     "01-intact-rectangle.png",
     "02-narrow-support.png",
@@ -100,32 +97,6 @@ pub(crate) fn select_collapse_support(manifest: &Manifest) -> Result<CollapseSel
         .map(|chunk| bounds[chunk.id.as_str()].0.y)
         .min_by(f32::total_cmp)
         .ok_or("No upper storey floor geometry")?;
-    if manifest.schema_version == 1 && records.contains_key(STATIC_REMNANT) {
-        let mut support_path = manifest
-            .chunks
-            .iter()
-            .filter(|chunk| chunk.part_id == REMAINING_SUPPORT)
-            .map(|chunk| chunk.id.clone())
-            .collect::<Vec<_>>();
-        support_path.sort_by(|a, b| {
-            records[a.as_str()].position[1]
-                .total_cmp(&records[b.as_str()].position[1])
-                .then(a.cmp(b))
-        });
-        return Ok(CollapseSelection {
-            removed: manifest
-                .chunks
-                .iter()
-                .filter(|chunk| {
-                    chunk.part_id.contains("-l00") && chunk.part_id != REMAINING_SUPPORT
-                })
-                .map(|chunk| chunk.id.clone())
-                .collect(),
-            support_path,
-            static_stub: STATIC_REMNANT.into(),
-            upper_floor_y,
-        });
-    }
     let supports = manifest
         .chunks
         .iter()

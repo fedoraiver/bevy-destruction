@@ -2,11 +2,7 @@ use super::*;
 use crate::asset::{AnchorRecord, BondPatchRecord, BondRecord};
 
 fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Manifest {
-    let mut manifest: Manifest = serde_json::from_str(include_str!(
-        "../../assets/buildings/rectangle.destruction.json"
-    ))
-    .unwrap();
-    manifest.schema_version = 1;
+    let mut manifest = crate::stress_smoke::beam_manifest();
     let template = manifest.chunks[0].clone();
     manifest.chunks = positions
         .iter()
@@ -38,7 +34,12 @@ fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Man
                 normal: normal.map(|value| value as f32),
                 area: 1.0,
                 area_covariance: q.map(|row| row.map(|value| value as f32)),
-                patches: Vec::new(),
+                patches: vec![rectangular_patch(
+                    scale3(add3(positions[a], positions[b]), 0.5),
+                    normal,
+                    0.5,
+                    0.5,
+                )],
                 ..template.clone()
             }
         })
@@ -107,7 +108,6 @@ fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
         &bonds(&manifest),
         &loads,
         &SolverSettings::default(),
-        None,
         "node-000",
     )
     .unwrap();
@@ -117,7 +117,6 @@ fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
         &bonds(&manifest),
         &loads,
         &SolverSettings::default(),
-        None,
         "node-001",
     )
     .unwrap();
@@ -157,7 +156,6 @@ fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
             &bonds(&manifest),
             &unbalanced_force,
             &SolverSettings::default(),
-            None,
             "node-000"
         ),
         Err(SolveError::InvalidModel(_))
@@ -185,7 +183,6 @@ fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
             &bonds(&manifest),
             &unbalanced_moment,
             &SolverSettings::default(),
-            None,
             "node-000"
         ),
         Err(SolveError::InvalidModel(_))
@@ -207,7 +204,6 @@ fn solve_fixture(manifest: &Manifest, loads: &BTreeMap<String, NodeLoad>) -> Str
         Vec3::ZERO,
         loads,
         &SolverSettings::default(),
-        None,
     )
     .unwrap()
 }
@@ -231,18 +227,15 @@ fn cantilever_preserves_force_and_moment_equilibrium_as_lever_arm_grows() {
 #[test]
 fn rectangular_section_recovers_axial_bending_and_torsional_stress_at_vertices() {
     let mut manifest = fixture(&[[0.0; 3], [1.0, 0.0, 0.0]], &[(0, 1)], &[0]);
-    manifest.bonds[0].area_covariance[1][1] = 2.0 / 3.0;
-    manifest.bonds[0].area_covariance[2][2] = 1.0 / 6.0;
-    manifest.bonds[0].area = 2.0;
-    let vertices = BTreeMap::from([(
-        "bond-000".into(),
-        vec![
-            [0.5, -1.0, -0.5],
-            [0.5, -1.0, 0.5],
-            [0.5, 1.0, -0.5],
-            [0.5, 1.0, 0.5],
-        ],
-    )]);
+    set_interface_patches(
+        &mut manifest.bonds[0],
+        vec![rectangular_patch(
+            [0.5, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            1.0,
+            0.5,
+        )],
+    );
     let loads = load(&manifest, 1, [20.0, 0.0, 0.0], [4.0, 0.0, 8.0]);
     let result = solve(
         &manifest,
@@ -251,7 +244,6 @@ fn rectangular_section_recovers_axial_bending_and_torsional_stress_at_vertices()
         Vec3::ZERO,
         &loads,
         &SolverSettings::default(),
-        Some(&vertices),
     )
     .unwrap();
     let stress = &result.bonds["bond-000"];
@@ -263,7 +255,6 @@ fn rectangular_section_recovers_axial_bending_and_torsional_stress_at_vertices()
         1e-7,
     );
     assert!(stress.section_exact);
-    assert!(!solve_fixture(&manifest, &loads).bonds["bond-000"].section_exact);
 }
 
 #[test]
@@ -300,7 +291,6 @@ fn symmetric_and_unequal_stiffness_paths_share_load_and_redistribute_after_remov
         Vec3::ZERO,
         &loads,
         &SolverSettings::default(),
-        None,
     )
     .unwrap();
     close(remaining.reactions["node-000"].force[0], 0.0, 1e-10);
@@ -399,7 +389,6 @@ fn closed_network_matches_dense_reference_and_redistributes_after_path_removal()
         gravity,
         &BTreeMap::new(),
         &SolverSettings::default(),
-        None,
     )
     .unwrap();
     active.insert(manifest.bonds[0].id.clone(), false);
@@ -410,7 +399,6 @@ fn closed_network_matches_dense_reference_and_redistributes_after_path_removal()
         gravity,
         &BTreeMap::new(),
         &SolverSettings::default(),
-        None,
     )
     .unwrap();
     assert!(!second.bonds.contains_key(&manifest.bonds[0].id));
@@ -477,7 +465,6 @@ fn assembly_is_objective_and_independent_of_input_order() {
         Vec3::ZERO,
         &load,
         &SolverSettings::default(),
-        None,
     )
     .unwrap();
     for (id, stress) in first.bonds {
@@ -502,11 +489,10 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
             Vec3::NEG_Y,
             &BTreeMap::new(),
             &limited,
-            None
         ),
         Err(SolveError::NonConvergence { .. })
     ));
-    manifest.bonds[0].area_covariance = [[0.0; 3]; 3];
+    manifest.bonds[0].patches[0].area_covariance = [[0.0; 3]; 3];
     assert!(matches!(
         solve(
             &manifest,
@@ -515,7 +501,6 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
             Vec3::NEG_Y,
             &BTreeMap::new(),
             &SolverSettings::default(),
-            None
         ),
         Err(SolveError::InvalidModel(_))
     ));
@@ -528,7 +513,6 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
             Vec3::NEG_Y,
             &BTreeMap::new(),
             &SolverSettings::default(),
-            None
         ),
         Err(SolveError::Underconstrained(_))
     ));
@@ -536,10 +520,8 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
 
 #[test]
 fn damaged_rectangle_with_one_remaining_support_interface_converges() {
-    let manifest: Manifest = serde_json::from_str(include_str!(
-        "../../tests/fixtures/rectangle-v1.destruction.json"
-    ))
-    .unwrap();
+    let manifest: Manifest =
+        serde_json::from_str(include_str!("fixtures/damaged-support.destruction.json")).unwrap();
     let centers = manifest
         .chunks
         .iter()
@@ -563,7 +545,6 @@ fn damaged_rectangle_with_one_remaining_support_interface_converges() {
         Vec3::new(0.0, -9.81, 0.0),
         &BTreeMap::new(),
         &SolverSettings::default(),
-        None,
     )
     .unwrap();
     assert!(solution.relative_residual <= 1e-8);
@@ -658,10 +639,8 @@ fn assert_recovered_equilibrium(model: &Model, solution: &StressSolution) {
 
 #[test]
 fn narrow_wall_jamb_transfers_the_upper_building_weight_and_moment() {
-    let manifest: Manifest = serde_json::from_str(include_str!(
-        "../../tests/fixtures/rectangle-v1.destruction.json"
-    ))
-    .unwrap();
+    let manifest: Manifest =
+        serde_json::from_str(include_str!("fixtures/damaged-support.destruction.json")).unwrap();
     let gravity = Vec3::new(0.0, -9.81, 0.0);
     for narrow_jamb in [true, false] {
         let chunks = manifest
@@ -697,7 +676,6 @@ fn narrow_wall_jamb_transfers_the_upper_building_weight_and_moment() {
             gravity,
             &BTreeMap::new(),
             &SolverSettings::default(),
-            None,
         )
         .unwrap();
         assert_recovered_equilibrium(&model, &solution);
@@ -774,7 +752,6 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
             Vec3::new(0.0, -9.81, 0.0),
             &BTreeMap::new(),
             &SolverSettings::default(),
-            None,
         )
         .unwrap_or_else(|error| panic!("{file}: {error}"));
         println!(
@@ -805,12 +782,22 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
                 .values()
                 .all(|stress| stress.utilization.is_finite())
         );
+        assert!(
+            result.bonds.values().all(|stress| stress.utilization < 1.0),
+            "Intact catalog structure {file} must carry its own weight without damage"
+        );
     }
 }
 
 fn rectangular_patch(center: V3, normal: V3, half_width: f64, half_height: f64) -> BondPatchRecord {
-    let tangent = [-normal[1], normal[0], 0.0];
-    let bitangent = [0.0, 0.0, 1.0];
+    let axis = if normal[2].abs() < 0.9 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let raw_tangent = cross3(axis, normal);
+    let tangent = scale3(raw_tangent, 1.0 / norm3(raw_tangent));
+    let bitangent = cross3(normal, tangent);
     let area = 4.0 * half_width * half_height;
     let q = addm3(
         scale_m3(outer3(tangent, tangent), area * half_width.powi(2) / 3.0),
@@ -892,62 +879,42 @@ fn planar_patch_subdivision_preserves_stiffness_reactions_and_peak_stress() {
             rectangular_patch([0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 0.5, 1.0),
         ],
     );
-    let mut legacy = whole.clone();
-    let vertices = BTreeMap::from([(
-        "bond-000".to_owned(),
-        whole.bonds[0].patches[0]
-            .vertices
-            .iter()
-            .map(|p| p.map(f64::from))
-            .collect(),
-    )]);
-    legacy.bonds[0].patches.clear();
     let loads = load(&whole, 1, [100.0, 25.0, -30.0], [20.0, 40.0, -50.0]);
-    let original = solve(
-        &legacy,
-        &ids(&legacy),
-        &bonds(&legacy),
+    let original = solve_fixture(&whole, &loads);
+    let manifest = &divided;
+    let model = assemble(
+        manifest,
+        &ids(manifest),
+        &bonds(manifest),
         Vec3::ZERO,
         &loads,
-        &SolverSettings::default(),
-        Some(&vertices),
     )
     .unwrap();
-    for manifest in [&whole, &divided] {
-        let model = assemble(
-            manifest,
-            &ids(manifest),
-            &bonds(manifest),
-            Vec3::ZERO,
-            &loads,
-        )
-        .unwrap();
-        let result = solve_fixture(manifest, &loads);
-        assert_recovered_equilibrium(&model, &result);
-        assert_eq!(result.bonds.len(), 1);
-        for (actual, expected) in result.displacements["node-001"]
-            .iter()
-            .zip(original.displacements["node-001"])
-        {
-            assert!((actual - expected).abs() < 2e-7 * expected.abs().max(1e-12));
-        }
-        let a = &result.bonds["bond-000"];
-        let b = &original.bonds["bond-000"];
-        assert!(a.section_exact);
-        for (actual, expected) in a
-            .force
-            .into_iter()
-            .chain(a.moment)
-            .chain([a.tension, a.compression, a.shear, a.utilization])
-            .zip(b.force.into_iter().chain(b.moment).chain([
-                b.tension,
-                b.compression,
-                b.shear,
-                b.utilization,
-            ]))
-        {
-            close(actual, expected, 2e-7);
-        }
+    let result = solve_fixture(manifest, &loads);
+    assert_recovered_equilibrium(&model, &result);
+    assert_eq!(result.bonds.len(), 1);
+    for (actual, expected) in result.displacements["node-001"]
+        .iter()
+        .zip(original.displacements["node-001"])
+    {
+        assert!((actual - expected).abs() < 2e-7 * expected.abs().max(1e-12));
+    }
+    let a = &result.bonds["bond-000"];
+    let b = &original.bonds["bond-000"];
+    assert!(a.section_exact);
+    for (actual, expected) in a
+        .force
+        .into_iter()
+        .chain(a.moment)
+        .chain([a.tension, a.compression, a.shear, a.utilization])
+        .zip(b.force.into_iter().chain(b.moment).chain([
+            b.tension,
+            b.compression,
+            b.shear,
+            b.utilization,
+        ]))
+    {
+        close(actual, expected, 2e-7);
     }
 }
 
@@ -1026,9 +993,9 @@ fn folded_interface_matches_independent_surface_integral_and_parent_equilibrium(
             bond.force,
         ),
     );
-    for axis in 0..3 {
+    for (axis, &actual_moment) in moment.iter().enumerate() {
         close(bond.force[axis], expected.force[axis], 1e-8);
-        close(moment[axis], expected.moment[axis], 1e-8);
+        close(actual_moment, expected.moment[axis], 1e-8);
     }
 }
 

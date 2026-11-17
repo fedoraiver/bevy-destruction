@@ -1,13 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(test)]
-mod tests;
-
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::{asset::DestructibleAsset, scene::BuildingInstance, structure};
 
+#[cfg(test)]
+mod tests;
 
 pub struct DestructionPhysicsPlugin;
 
