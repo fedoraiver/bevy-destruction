@@ -52,6 +52,50 @@ impl ContactPatch {
     }
 }
 
+pub fn contact_surface_mesh(patches: &[ContactPatch], chunk: &str) -> Option<Mesh> {
+    let vertex_count = patches
+        .iter()
+        .filter(|patch| patch.a == chunk || patch.b == chunk)
+        .map(|patch| patch.triangles.len() * 3)
+        .sum::<usize>();
+    if vertex_count == 0 {
+        return None;
+    }
+    let mut positions = Vec::with_capacity(vertex_count);
+    let mut normals = Vec::with_capacity(vertex_count);
+    for patch in patches {
+        let side = if patch.a == chunk {
+            1.0
+        } else if patch.b == chunk {
+            -1.0
+        } else {
+            continue;
+        };
+        let normal = patch.normal * side;
+        for &source in &patch.triangles {
+            let mut triangle = source;
+            let points = source.map(|point| point.as_dvec3());
+            if (points[1] - points[0])
+                .cross(points[2] - points[0])
+                .dot(normal.as_dvec3())
+                < 0.0
+            {
+                triangle.swap(1, 2);
+            }
+            positions.extend(triangle.map(|point| point.to_array()));
+            normals.extend([normal.to_array(); 3]);
+        }
+    }
+    Some(
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals),
+    )
+}
+
 struct Plane {
     normal: DVec3,
     origin: DVec3,
@@ -106,113 +150,16 @@ pub fn build_patches(
         let b = geometry
             .get(&bond.b)
             .ok_or_else(|| format!("Contact {} is missing chunk {}", bond.id, bond.b))?;
-        if !bond.patches.is_empty() {
-            result.extend(baked_contact_patches(
-                bond,
-                a,
-                b,
-                widths[bond.a.as_str()],
-                widths[bond.b.as_str()],
-            )?);
-            continue;
+        if bond.patches.is_empty() {
+            return Err(format!("Contact {} is missing interface polygons", bond.id));
         }
-        if manifest.schema_version == 2 {
-            return Err(format!(
-                "Contact {} is missing v2 interface polygons",
-                bond.id
-            ));
-        }
-        let mut a_triangles: Vec<_> = a.triangles.iter().collect();
-        let mut b_triangles: Vec<_> = b.triangles.iter().collect();
-        a_triangles.sort_by(|a, b| triangle_order(a, b));
-        b_triangles.sort_by(|a, b| triangle_order(a, b));
-        // Skinny float32 triangles have unstable normals; keep their true outlines in one
-        // contact frame instead of using each rendered triangle as a new clipping plane.
-        let normal = Vec3::from_array(bond.normal).as_dvec3().normalize();
-        let mut plane = Plane::new(normal, Vec3::from_array(bond.center).as_dvec3());
-        for first in a_triangles {
-            let first = first.map(|p| p.as_dvec3());
-            let cross = (first[1] - first[0]).cross(first[2] - first[0]);
-            if cross.length_squared() < MIN_AREA * MIN_AREA
-                || normal.dot(cross.normalize()) < 0.98
-                || first
-                    .iter()
-                    .any(|point| normal.dot(*point - plane.origin).abs() > CONTACT_TOLERANCE)
-            {
-                continue;
-            }
-            for second in &b_triangles {
-                let second = second.map(|p| p.as_dvec3());
-                let second_cross = (second[1] - second[0]).cross(second[2] - second[0]);
-                if second_cross.length_squared() < MIN_AREA * MIN_AREA
-                    || normal.dot(second_cross.normalize()) > -0.98
-                    || second
-                        .iter()
-                        .any(|point| normal.dot(*point - plane.origin).abs() > CONTACT_TOLERANCE)
-                {
-                    continue;
-                }
-                if (0..3).any(|axis| {
-                    let min_a = first.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min);
-                    let max_a = first
-                        .iter()
-                        .map(|p| p[axis])
-                        .fold(f64::NEG_INFINITY, f64::max);
-                    let min_b = second.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min);
-                    let max_b = second
-                        .iter()
-                        .map(|p| p[axis])
-                        .fold(f64::NEG_INFINITY, f64::max);
-                    max_a < min_b - CONTACT_TOLERANCE || max_b < min_a - CONTACT_TOLERANCE
-                }) {
-                    continue;
-                }
-                let subject: Vec<_> = first.iter().map(|p| plane.project(*p)).collect();
-                let boundary: Vec<_> = second.iter().map(|p| plane.project(*p)).collect();
-                let overlap = clip_polygon(subject, &boundary);
-                if polygon_area(&overlap).abs() > MIN_AREA {
-                    plane.polygons.push(overlap);
-                }
-            }
-        }
-        let first_patch = result.len();
-        for polygon in connected_polygons(&plane.polygons)
-            .map_err(|error| format!("{} plane {:?}: {error}", bond.id, plane.normal))?
-        {
-            let points: Vec<_> = polygon.iter().map(|p| plane.unproject(*p)).collect();
-            let triangles = (1..points.len() - 1)
-                .map(|i| [points[0], points[i], points[i + 1]])
-                .collect();
-            let rims = patch_rims(
-                &points,
-                a,
-                b,
-                widths[bond.a.as_str()],
-                widths[bond.b.as_str()],
-            );
-            result.push(ContactPatch {
-                id: String::new(),
-                bond_id: bond.id.clone(),
-                a: bond.a.clone(),
-                b: bond.b.clone(),
-                normal: plane.normal.as_vec3(),
-                triangles,
-                area: polygon_area(&polygon).abs() as f32,
-                rims,
-            });
-        }
-        let patches = &mut result[first_patch..];
-        patches.sort_by(|a, b| triangle_order(&a.triangles[0], &b.triangles[0]));
-        let area: f32 = patches.iter().map(|patch| patch.area).sum();
-        if patches.is_empty() || (area - bond.area).abs() > (bond.area * 0.01).max(0.00002) {
-            return Err(format!(
-                "Contact {} mesh area {area:.7} does not match bond area {:.7}",
-                bond.id, bond.area
-            ));
-        }
-        for (index, patch) in patches.iter_mut().enumerate() {
-            patch.id = format!("{}:patch:{index:03}", bond.id);
-        }
+        result.extend(baked_contact_patches(
+            bond,
+            a,
+            b,
+            widths[bond.a.as_str()],
+            widths[bond.b.as_str()],
+        )?);
     }
     result.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(result)
@@ -230,9 +177,6 @@ fn mesh_patch_coverage(
         let cross = (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]);
         if cross.length_squared() <= 1e-24
             || plane.normal.dot(cross.normalize()) * orientation < 0.98
-            || triangle
-                .iter()
-                .any(|point| plane.normal.dot(*point - plane.origin).abs() > CONTACT_TOLERANCE)
         {
             continue;
         }
@@ -240,6 +184,13 @@ fn mesh_patch_coverage(
         let overlap = clip_polygon(projected, boundary);
         let area = polygon_area(&overlap).abs();
         if area <= 1e-14 {
+            continue;
+        }
+        let surface_normal = cross.normalize();
+        if overlap.iter().any(|point| {
+            let position = plane.origin + plane.tangent * point.x + plane.bitangent * point.y;
+            surface_normal.dot(position - triangle[0]).abs() > CONTACT_TOLERANCE
+        }) {
             continue;
         }
         for previous in &covered {

@@ -152,5 +152,11 @@ pub fn rim_material(material_id: &str) -> BuildingMaterial {
     material
 }
 
+pub fn contact_material(material_id: &str) -> BuildingMaterial {
+    let mut material = building_material(None, true, material_id);
+    material.base.depth_bias = 2.0;
+    material
+}
+
 #[cfg(test)]
 mod tests;

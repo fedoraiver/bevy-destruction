@@ -2,22 +2,26 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use avian3d::prelude::*;
 use bevy::{
-    asset::{AssetId, LoadState, RenderAssetUsages},
+    asset::{AssetEvent, AssetId, LoadState, RenderAssetUsages},
     camera::visibility::NoFrustumCulling,
     core_pipeline::prepass::DepthPrepass,
     gltf::*,
+    light::NotShadowCaster,
     mesh::PrimitiveTopology,
     prelude::*,
 };
 
 use crate::{
     DemoOptions,
-    asset::{DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
+    asset::{ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
     camera::{Crosshair, FreeCamera},
     debug::fracture_edges,
-    fracture_detail::{ContactPatch, SurfaceGeometry, build_patches, detail_mesh},
+    fracture_detail::{
+        ContactPatch, SurfaceGeometry, build_patches, contact_surface_mesh, detail_mesh,
+    },
     material::{
-        BuildingMaterial, SurfaceMeshCache, building_material, rim_material, surface_coordinates,
+        BuildingMaterial, SurfaceMeshCache, building_material, contact_material, rim_material,
+        surface_coordinates,
     },
 };
 
@@ -32,6 +36,7 @@ impl Plugin for DemoScenePlugin {
             .init_resource::<RimMaterials>()
             .add_systems(Startup, (setup, warm_rim_pipeline))
             .add_systems(Update, (instantiate_pending, update_hint).chain())
+            .add_systems(Update, release_geometry_cache.before(instantiate_pending))
             .add_systems(
                 Update,
                 maintain_rim_warmup.after(crate::camera::move_camera),
@@ -112,7 +117,75 @@ pub struct ChunkIdentity {
 pub struct RemovedChunk;
 
 #[derive(Resource, Default)]
-pub(crate) struct GeometryCache(BTreeMap<AssetId<DestructibleAsset>, Arc<Vec<ContactPatch>>>);
+pub(crate) struct GeometryCache {
+    patches: BTreeMap<AssetId<DestructibleAsset>, Arc<Vec<ContactPatch>>>,
+    contact_meshes: BTreeMap<(AssetId<DestructibleAsset>, usize), Option<Handle<Mesh>>>,
+    contact_materials: BTreeMap<String, Handle<BuildingMaterial>>,
+}
+
+impl GeometryCache {
+    fn contact_surface(
+        &mut self,
+        asset: AssetId<DestructibleAsset>,
+        index: usize,
+        record: &ChunkRecord,
+        patches: &[ContactPatch],
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<BuildingMaterial>,
+    ) -> Option<(Handle<Mesh>, Handle<BuildingMaterial>)> {
+        let mesh = self
+            .contact_meshes
+            .entry((asset, index))
+            .or_insert_with(|| {
+                contact_surface_mesh(patches, &record.id).map(|mesh| {
+                    let local = Transform::from_matrix(record.transform().to_matrix().inverse());
+                    meshes.add(surface_coordinates(mesh, Transform::IDENTITY).transformed_by(local))
+                })
+            })
+            .clone()?;
+        let material = self
+            .contact_materials
+            .entry(record.material.clone())
+            .or_insert_with(|| materials.add(contact_material(&record.material)))
+            .clone();
+        Some((mesh, material))
+    }
+}
+
+#[derive(Component)]
+pub struct ContactFractureSurface;
+
+fn spawn_contact_surface(
+    commands: &mut Commands,
+    parent: Entity,
+    mesh: Handle<Mesh>,
+    material: Handle<BuildingMaterial>,
+) -> Entity {
+    commands
+        .spawn((
+            Name::new("Contact fracture surface"),
+            ContactFractureSurface,
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::IDENTITY,
+            Visibility::Inherited,
+            NotShadowCaster,
+            ChildOf(parent),
+        ))
+        .id()
+}
+
+fn release_geometry_cache(
+    mut events: MessageReader<AssetEvent<DestructibleAsset>>,
+    mut cache: ResMut<GeometryCache>,
+) {
+    for event in events.read() {
+        if let AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
+            cache.patches.remove(id);
+            cache.contact_meshes.retain(|(asset, _), _| asset != id);
+        }
+    }
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct RimMaterials(BTreeMap<String, Handle<BuildingMaterial>>);
@@ -311,7 +384,7 @@ pub(crate) fn instantiate_pending(
             let mut geometry = BTreeMap::new();
             for chunk in building.chunks {
                 let record = &asset.manifest.chunks[chunk.record_index];
-                if !cache.0.contains_key(&instance.asset.id()) {
+                if !cache.patches.contains_key(&instance.asset.id()) {
                     let transform = record.transform();
                     let exterior = chunk
                         .primitives
@@ -355,13 +428,13 @@ pub(crate) fn instantiate_pending(
                 )?;
                 chunks.push((chunk, Collider::compound(shapes), edges));
             }
-            let patches = if let Some(patches) = cache.0.get(&instance.asset.id()) {
+            let patches = if let Some(patches) = cache.patches.get(&instance.asset.id()) {
                 patches.clone()
             } else {
                 let start = bevy::platform::time::Instant::now();
                 let patches = Arc::new(build_patches(&asset.manifest, &geometry)?);
                 stats.cache_build_ms += start.elapsed().as_secs_f64() * 1000.0;
-                cache.0.insert(instance.asset.id(), patches.clone());
+                cache.patches.insert(instance.asset.id(), patches.clone());
                 patches
             };
             Ok((
@@ -426,6 +499,16 @@ pub(crate) fn instantiate_pending(
                     Name::new(primitive_name) Mesh3d(mesh) MeshMaterial3d::<BuildingMaterial>(material) Transform::IDENTITY
                 }).insert(ChildOf(entity)).id();
                 primitives.push(primitive_entity);
+            }
+            if let Some((mesh, material)) = cache.contact_surface(
+                instance.asset.id(),
+                chunk.record_index,
+                record,
+                &patches,
+                &mut meshes,
+                &mut materials,
+            ) {
+                spawn_contact_surface(&mut commands, entity, mesh, material);
             }
             instance.chunks.insert(
                 record.id.clone(),
