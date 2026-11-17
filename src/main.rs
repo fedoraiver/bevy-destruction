@@ -6,6 +6,7 @@ mod dust_material;
 mod fracture_detail;
 mod interaction;
 mod material;
+mod rim_profile;
 mod scene;
 mod smoke;
 mod vfx;

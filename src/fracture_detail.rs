@@ -7,13 +7,13 @@ use bevy::{
     prelude::*,
 };
 
-use crate::asset::Manifest;
+use crate::{asset::Manifest, rim_profile::rim_profile};
 
 const CONTACT_TOLERANCE: f64 = 0.00004;
 const MIN_AREA: f64 = 1e-10;
 pub const MIN_VISUAL_CONTACT_AREA: f32 = 1e-7;
 const MIN_RIM_LENGTH: f32 = 0.002;
-const MAX_TOOTH_DEPTH: f32 = 0.02;
+const MAX_RIM_DEPTH: f32 = 0.02;
 
 #[derive(Clone, Default)]
 pub struct SurfaceGeometry {
@@ -554,7 +554,7 @@ pub fn detail_mesh(patch: &ContactPatch, survivor: &str) -> Option<Mesh> {
         if outward.dot(exterior).abs() > 0.97 {
             continue;
         }
-        let depth = MAX_TOOTH_DEPTH.min(thickness * 0.08);
+        let depth = MAX_RIM_DEPTH.min(thickness * 0.08);
         if depth < 0.001 {
             continue;
         }
@@ -565,19 +565,17 @@ pub fn detail_mesh(patch: &ContactPatch, survivor: &str) -> Option<Mesh> {
         }
         let tangent = (end - start) / length;
         let inward = -(exterior + outward).normalize();
-        let count = (length / 0.12).ceil().max(2.0) as usize;
         let mut rings = Vec::new();
-        for i in 0..=count * 2 {
-            let t = i as f32 / (count * 2) as f32;
+        for sample in rim_profile(&patch.id, start, end) {
+            let t = sample.t;
             let point = start.lerp(end, t);
             let seed = stable_value(&patch.id, point);
             let endpoint_fade = (length * t / (depth * 2.0))
                 .min(length * (1.0 - t) / (depth * 2.0))
                 .min(1.0);
-            let amplitude =
-                depth * (0.35 + seed * 0.65) * if i % 2 == 0 { 0.15 } else { 1.0 } * endpoint_fade;
-            let embed = depth * 0.22;
-            let width = depth * (1.5 + seed * 0.5);
+            let amplitude = depth * sample.height * endpoint_fade;
+            let embed = depth * sample.embed;
+            let width = depth * sample.width;
             let surface_offset = 0.00015_f32.min(embed * across.dot(outward) * 0.25);
             let ring = [
                 (
