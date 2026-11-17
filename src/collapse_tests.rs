@@ -21,7 +21,7 @@ fn supported_rectangle(keep_support: impl Fn(&ChunkRecord) -> bool) -> (App, Ent
     app.cleanup();
     app.update();
     let manifest: Manifest = serde_json::from_str(include_str!(
-        "../assets/buildings/rectangle.destruction.json"
+        "../tests/fixtures/rectangle-v1.destruction.json"
     ))
     .unwrap();
     let asset = app

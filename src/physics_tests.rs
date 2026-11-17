@@ -24,6 +24,7 @@ fn manifest() -> Manifest {
         "../assets/buildings/rectangle.destruction.json"
     ))
     .unwrap();
+    manifest.schema_version = 1;
     let template = manifest.chunks[0].clone();
     manifest.chunks = ["a", "b", "c", "d"]
         .into_iter()
@@ -57,6 +58,7 @@ fn manifest() -> Manifest {
             id: id.into(),
             a: a.into(),
             b: b.into(),
+            patches: Vec::new(),
             ..bond_template.clone()
         })
         .into();

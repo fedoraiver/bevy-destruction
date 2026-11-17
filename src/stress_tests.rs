@@ -1,11 +1,12 @@
 use super::*;
-use crate::asset::{AnchorRecord, BondRecord};
+use crate::asset::{AnchorRecord, BondPatchRecord, BondRecord};
 
 fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Manifest {
     let mut manifest: Manifest = serde_json::from_str(include_str!(
         "../assets/buildings/rectangle.destruction.json"
     ))
     .unwrap();
+    manifest.schema_version = 1;
     let template = manifest.chunks[0].clone();
     manifest.chunks = positions
         .iter()
@@ -37,6 +38,7 @@ fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Man
                 normal: normal.map(|value| value as f32),
                 area: 1.0,
                 area_covariance: q.map(|row| row.map(|value| value as f32)),
+                patches: Vec::new(),
                 ..template.clone()
             }
         })
@@ -535,7 +537,7 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
 #[test]
 fn damaged_rectangle_with_one_remaining_support_interface_converges() {
     let manifest: Manifest = serde_json::from_str(include_str!(
-        "../assets/buildings/rectangle.destruction.json"
+        "../tests/fixtures/rectangle-v1.destruction.json"
     ))
     .unwrap();
     let centers = manifest
@@ -601,14 +603,18 @@ fn damaged_rectangle_with_one_remaining_support_interface_converges() {
 
 fn assert_recovered_equilibrium(model: &Model, solution: &StressSolution) {
     let mut internal = vec![NodeLoad::default(); model.nodes.len()];
+    let mut seen = BTreeSet::new();
     for element in &model.elements {
+        if !seen.insert(&element.id) {
+            continue;
+        }
         let stress = &solution.bonds[&element.id];
         assert!(stress.utilization.is_finite());
         for (index, sign) in [(element.a, -1.0), (element.b, 1.0)] {
             let force = scale3(stress.force, sign);
             let moment = add3(
                 scale3(stress.moment, sign),
-                cross3(sub3(element.center, model.nodes[index].center), force),
+                cross3(sub3(element.bond_center, model.nodes[index].center), force),
             );
             internal[index].force = add3(internal[index].force, force);
             internal[index].moment = add3(internal[index].moment, moment);
@@ -653,7 +659,7 @@ fn assert_recovered_equilibrium(model: &Model, solution: &StressSolution) {
 #[test]
 fn narrow_wall_jamb_transfers_the_upper_building_weight_and_moment() {
     let manifest: Manifest = serde_json::from_str(include_str!(
-        "../assets/buildings/rectangle.destruction.json"
+        "../tests/fixtures/rectangle-v1.destruction.json"
     ))
     .unwrap();
     let gravity = Vec3::new(0.0, -9.81, 0.0);
@@ -799,5 +805,229 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
                 .values()
                 .all(|stress| stress.utilization.is_finite())
         );
+    }
+}
+
+fn rectangular_patch(center: V3, normal: V3, half_width: f64, half_height: f64) -> BondPatchRecord {
+    let tangent = [-normal[1], normal[0], 0.0];
+    let bitangent = [0.0, 0.0, 1.0];
+    let area = 4.0 * half_width * half_height;
+    let q = addm3(
+        scale_m3(outer3(tangent, tangent), area * half_width.powi(2) / 3.0),
+        scale_m3(
+            outer3(bitangent, bitangent),
+            area * half_height.powi(2) / 3.0,
+        ),
+    );
+    BondPatchRecord {
+        area: area as f32,
+        center: center.map(|v| v as f32),
+        normal: normal.map(|v| v as f32),
+        area_covariance: q.map(|row| row.map(|v| v as f32)),
+        vertices: [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .map(|(u, v)| {
+                add3(
+                    center,
+                    add3(
+                        scale3(tangent, u * half_width),
+                        scale3(bitangent, v * half_height),
+                    ),
+                )
+                .map(|v| v as f32)
+            })
+            .collect(),
+    }
+}
+
+fn set_interface_patches(bond: &mut BondRecord, patches: Vec<BondPatchRecord>) {
+    let area = patches
+        .iter()
+        .map(|patch| f64::from(patch.area))
+        .sum::<f64>();
+    let center = scale3(
+        patches.iter().fold([0.0; 3], |sum, patch| {
+            add3(
+                sum,
+                scale3(patch.center.map(f64::from), f64::from(patch.area)),
+            )
+        }),
+        1.0 / area,
+    );
+    let normal = patches.iter().fold([0.0; 3], |sum, patch| {
+        add3(
+            sum,
+            scale3(patch.normal.map(f64::from), f64::from(patch.area)),
+        )
+    });
+    let q = patches.iter().fold([[0.0; 3]; 3], |sum, patch| {
+        let offset = sub3(patch.center.map(f64::from), center);
+        addm3(
+            sum,
+            addm3(
+                patch.area_covariance.map(|r| r.map(f64::from)),
+                scale_m3(outer3(offset, offset), f64::from(patch.area)),
+            ),
+        )
+    });
+    bond.area = area as f32;
+    bond.center = center.map(|v| v as f32);
+    bond.normal = scale3(normal, 1.0 / norm3(normal)).map(|v| v as f32);
+    bond.area_covariance = q.map(|row| row.map(|v| v as f32));
+    bond.patches = patches;
+}
+
+#[test]
+fn planar_patch_subdivision_preserves_stiffness_reactions_and_peak_stress() {
+    let mut whole = fixture(&[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], &[(0, 1)], &[0]);
+    set_interface_patches(
+        &mut whole.bonds[0],
+        vec![rectangular_patch([0.0; 3], [1.0, 0.0, 0.0], 1.0, 1.0)],
+    );
+    let mut divided = whole.clone();
+    set_interface_patches(
+        &mut divided.bonds[0],
+        vec![
+            rectangular_patch([0.0, -0.5, 0.0], [1.0, 0.0, 0.0], 0.5, 1.0),
+            rectangular_patch([0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 0.5, 1.0),
+        ],
+    );
+    let mut legacy = whole.clone();
+    let vertices = BTreeMap::from([(
+        "bond-000".to_owned(),
+        whole.bonds[0].patches[0]
+            .vertices
+            .iter()
+            .map(|p| p.map(f64::from))
+            .collect(),
+    )]);
+    legacy.bonds[0].patches.clear();
+    let loads = load(&whole, 1, [100.0, 25.0, -30.0], [20.0, 40.0, -50.0]);
+    let original = solve(
+        &legacy,
+        &ids(&legacy),
+        &bonds(&legacy),
+        Vec3::ZERO,
+        &loads,
+        &SolverSettings::default(),
+        Some(&vertices),
+    )
+    .unwrap();
+    for manifest in [&whole, &divided] {
+        let model = assemble(
+            manifest,
+            &ids(manifest),
+            &bonds(manifest),
+            Vec3::ZERO,
+            &loads,
+        )
+        .unwrap();
+        let result = solve_fixture(manifest, &loads);
+        assert_recovered_equilibrium(&model, &result);
+        assert_eq!(result.bonds.len(), 1);
+        for (actual, expected) in result.displacements["node-001"]
+            .iter()
+            .zip(original.displacements["node-001"])
+        {
+            assert!((actual - expected).abs() < 2e-7 * expected.abs().max(1e-12));
+        }
+        let a = &result.bonds["bond-000"];
+        let b = &original.bonds["bond-000"];
+        assert!(a.section_exact);
+        for (actual, expected) in a
+            .force
+            .into_iter()
+            .chain(a.moment)
+            .chain([a.tension, a.compression, a.shear, a.utilization])
+            .zip(b.force.into_iter().chain(b.moment).chain([
+                b.tension,
+                b.compression,
+                b.shear,
+                b.utilization,
+            ]))
+        {
+            close(actual, expected, 2e-7);
+        }
+    }
+}
+
+#[test]
+fn folded_interface_matches_independent_surface_integral_and_parent_equilibrium() {
+    let mut manifest = fixture(&[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], &[(0, 1)], &[0]);
+    let angle = std::f64::consts::PI / 6.0;
+    let (sine, cosine) = angle.sin_cos();
+    set_interface_patches(
+        &mut manifest.bonds[0],
+        vec![
+            rectangular_patch(
+                [0.5 * sine, -0.5 * cosine, 0.0],
+                [cosine, sine, 0.0],
+                0.5,
+                1.0,
+            ),
+            rectangular_patch(
+                [0.5 * sine, 0.5 * cosine, 0.0],
+                [cosine, -sine, 0.0],
+                0.5,
+                1.0,
+            ),
+        ],
+    );
+    let loads = load(&manifest, 1, [100.0, 25.0, -30.0], [20.0, 40.0, -50.0]);
+    let model = assemble(
+        &manifest,
+        &ids(&manifest),
+        &bonds(&manifest),
+        Vec3::ZERO,
+        &loads,
+    )
+    .unwrap();
+    let displacement = [0.001, -0.002, 0.003, 0.0003, -0.0004, 0.0007];
+    let mut product = [0.0; 6];
+    model.multiply(&displacement, &mut product);
+    let energy = dot(&displacement, &product);
+    let material = &manifest.materials["concrete"];
+    let young = f64::from(material.young_modulus);
+    let shear = shear_modulus(material);
+    let translation = [displacement[0], displacement[1], displacement[2]];
+    let rotation = scale3(
+        [displacement[3], displacement[4], displacement[5]],
+        1.0 / model.length_scale,
+    );
+    let mut integral = 0.0;
+    for patch in &manifest.bonds[0].patches {
+        let normal = patch.normal.map(f64::from);
+        let tangent = [-normal[1], normal[0], 0.0];
+        for u in [-1.0_f64 / 3.0_f64.sqrt(), 1.0 / 3.0_f64.sqrt()] {
+            for v in [-1.0_f64 / 3.0_f64.sqrt(), 1.0 / 3.0_f64.sqrt()] {
+                let point = add3(
+                    patch.center.map(f64::from),
+                    add3(scale3(tangent, u * 0.5), [0.0, 0.0, v]),
+                );
+                let delta = add3(translation, cross3(rotation, sub3(point, [1.0, 0.0, 0.0])));
+                let normal_displacement = dot3(normal, delta);
+                integral += f64::from(patch.area) / 4.0 / model.length_scale
+                    * (young * normal_displacement.powi(2)
+                        + shear * (dot3(delta, delta) - normal_displacement.powi(2)));
+            }
+        }
+    }
+    close(energy, integral, 2e-7);
+    let result = solve_fixture(&manifest, &loads);
+    assert_recovered_equilibrium(&model, &result);
+    assert_eq!(result.bonds.len(), 1);
+    assert!(result.bonds["bond-000"].section_exact);
+    let bond = &result.bonds["bond-000"];
+    let expected = loads["node-001"];
+    let moment = add3(
+        bond.moment,
+        cross3(
+            sub3(manifest.bonds[0].center.map(f64::from), [1.0, 0.0, 0.0]),
+            bond.force,
+        ),
+    );
+    for axis in 0..3 {
+        close(bond.force[axis], expected.force[axis], 1e-8);
+        close(moment[axis], expected.moment[axis], 1e-8);
     }
 }

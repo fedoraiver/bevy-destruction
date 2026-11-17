@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::{
     asset::{AssetLoader, LoadContext, io::Reader},
     gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode},
+    math::{DVec2, DVec3},
     mesh::{PrimitiveTopology, VertexAttributeValues},
     prelude::*,
 };
@@ -98,7 +99,18 @@ pub struct BondRecord {
     pub center: [f32; 3],
     pub normal: [f32; 3],
     pub area_covariance: [[f32; 3]; 3],
+    #[serde(default)]
+    pub patches: Vec<BondPatchRecord>,
     pub state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BondPatchRecord {
+    pub area: f32,
+    pub center: [f32; 3],
+    pub normal: [f32; 3],
+    pub area_covariance: [[f32; 3]; 3],
+    pub vertices: Vec<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -167,8 +179,8 @@ fn validate_mesh_hash(bytes: &[u8], expected: &str) -> Result<(), String> {
 
 impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema != "bevy_destruction_asset" || self.schema_version != 1 {
-            return Err("只支持 bevy_destruction_asset 格式 v1".into());
+        if self.schema != "bevy_destruction_asset" || !matches!(self.schema_version, 1 | 2) {
+            return Err("只支持 bevy_destruction_asset 格式 v1/v2".into());
         }
         if self.coordinates.units != "meters"
             || self.coordinates.up != "+Y"
@@ -249,6 +261,21 @@ impl Manifest {
         }
         let mut bond_ids = BTreeSet::new();
         let mut bond_pairs = BTreeSet::new();
+        let bounds = self
+            .chunks
+            .iter()
+            .map(|chunk| {
+                let transform = chunk.transform();
+                let mut min = DVec3::splat(f64::INFINITY);
+                let mut max = DVec3::splat(f64::NEG_INFINITY);
+                for vertex in chunk.colliders.iter().flat_map(|proxy| &proxy.vertices) {
+                    let point = transform.transform_point((*vertex).into()).as_dvec3();
+                    min = min.min(point);
+                    max = max.max(point);
+                }
+                (chunk.id.as_str(), (min, max))
+            })
+            .collect::<BTreeMap<_, _>>();
         for bond in &self.bonds {
             if bond.id.is_empty()
                 || !bond_ids.insert(bond.id.as_str())
@@ -265,6 +292,13 @@ impl Manifest {
             {
                 return Err(format!("连接 {} 的端点或接触数据无效", bond.id));
             }
+            if self.schema_version == 2 && bond.patches.is_empty() {
+                return Err(format!("v2 连接 {} 缺少真实接触面片", bond.id));
+            }
+            if !bond.patches.is_empty() {
+                validate_bond_patches(bond, bounds[&*bond.a], bounds[&*bond.b])
+                    .map_err(|error| format!("连接 {}: {error}", bond.id))?;
+            }
         }
         let mut anchor_chunks = BTreeSet::new();
         for anchor in &self.anchors {
@@ -278,6 +312,276 @@ impl Manifest {
         }
         Ok(())
     }
+}
+
+const PATCH_POSITION_TOLERANCE: f64 = 4e-5;
+const PATCH_METRIC_TOLERANCE: f64 = 0.002;
+
+struct PatchMetrics {
+    area: f64,
+    center: DVec3,
+    normal: DVec3,
+    covariance: [[f64; 3]; 3],
+}
+
+fn patch_metrics(patch: &BondPatchRecord) -> Result<PatchMetrics, String> {
+    if !(3..=1024).contains(&patch.vertices.len())
+        || !positive(patch.area)
+        || !finite3(patch.center)
+        || !finite3(patch.normal)
+        || !valid_symmetric_tensor(patch.area_covariance, false)
+        || patch.vertices.iter().any(|point| !finite3(*point))
+    {
+        return Err("面片的顶点或物理量无效".into());
+    }
+    let normal = DVec3::from_array(patch.normal.map(f64::from));
+    if (normal.length_squared() - 1.0).abs() > 1e-3 {
+        return Err("面片法线不是单位向量".into());
+    }
+    let normal = normal.normalize();
+    let points = patch
+        .vertices
+        .iter()
+        .map(|point| DVec3::from_array(point.map(f64::from)))
+        .collect::<Vec<_>>();
+    let origin = points[0];
+    let geometric_area = (1..points.len() - 1)
+        .map(|index| (points[index] - origin).cross(points[index + 1] - origin))
+        .sum::<DVec3>()
+        * 0.5;
+    if geometric_area.length() <= 1e-12 || geometric_area.normalize().dot(normal) < 1.0 - 1e-5 {
+        return Err("面片法线与顶点几何方向不符".into());
+    }
+    let normal = geometric_area.normalize();
+    if points
+        .iter()
+        .any(|point| normal.dot(*point - origin).abs() > PATCH_POSITION_TOLERANCE)
+    {
+        return Err("面片顶点不共面".into());
+    }
+    for (index, &a) in points.iter().enumerate() {
+        let edge = points[(index + 1) % points.len()] - a;
+        if edge.length_squared() <= 1e-20
+            || points
+                .iter()
+                .any(|point| normal.dot(edge.cross(*point - a)) < -1e-10 * edge.length())
+        {
+            return Err("面片必须为按 a→b 法线绕序的凸多边形".into());
+        }
+    }
+    let mut area = 0.0;
+    let mut first = DVec3::ZERO;
+    let mut triangles = Vec::new();
+    for index in 1..points.len() - 1 {
+        let a = points[index] - origin;
+        let b = points[index + 1] - origin;
+        let triangle_area = normal.dot(a.cross(b)) * 0.5;
+        if triangle_area < -1e-12 {
+            return Err("面片绕序无效".into());
+        }
+        area += triangle_area;
+        first += (a + b) * (triangle_area / 3.0);
+        triangles.push((a, b, triangle_area));
+    }
+    if area <= 1e-12 {
+        return Err("面片没有可解析的二维面积".into());
+    }
+    let relative_center = first / area;
+    let center = origin + relative_center;
+    let mut covariance = [[0.0; 3]; 3];
+    for (a, b, triangle_area) in triangles {
+        let points = [-relative_center, a - relative_center, b - relative_center];
+        let sum = points.iter().copied().sum::<DVec3>();
+        for row in 0..3 {
+            for column in 0..3 {
+                covariance[row][column] += triangle_area / 12.0
+                    * (sum[row] * sum[column]
+                        + points
+                            .iter()
+                            .map(|point| point[row] * point[column])
+                            .sum::<f64>());
+            }
+        }
+    }
+    if (area - f64::from(patch.area)).abs() > (area * PATCH_METRIC_TOLERANCE).max(1e-12)
+        || center.distance(DVec3::from_array(patch.center.map(f64::from)))
+            > PATCH_POSITION_TOLERANCE
+        || !covariance_matches(&covariance, &patch.area_covariance)
+    {
+        return Err("面片面积、中心或二阶矩与真实顶点不符".into());
+    }
+    let tangent = normal.any_orthonormal_vector();
+    let bitangent = normal.cross(tangent);
+    let quadratic = |a: DVec3, b: DVec3| {
+        (0..3)
+            .map(|row| {
+                (0..3)
+                    .map(|column| {
+                        a[row] * f64::from(patch.area_covariance[row][column]) * b[column]
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>()
+    };
+    let qt = quadratic(tangent, tangent);
+    let qb = quadratic(bitangent, bitangent);
+    let qtb = quadratic(tangent, bitangent);
+    if qt <= 0.0 || qb <= 0.0 || qt * qb - qtb * qtb <= 0.0 {
+        return Err("面片二阶矩没有可解析的二维截面".into());
+    }
+    Ok(PatchMetrics {
+        area,
+        center,
+        normal,
+        covariance,
+    })
+}
+
+fn covariance_matches(expected: &[[f64; 3]; 3], actual: &[[f32; 3]; 3]) -> bool {
+    let scale = expected
+        .iter()
+        .flatten()
+        .copied()
+        .map(f64::abs)
+        .fold(0.0, f64::max);
+    expected
+        .iter()
+        .flatten()
+        .zip(actual.iter().flatten())
+        .all(|(expected, actual)| {
+            (expected - f64::from(*actual)).abs() <= (scale * PATCH_METRIC_TOLERANCE).max(1e-24)
+        })
+}
+
+fn validate_bond_patches(
+    bond: &BondRecord,
+    bounds_a: (DVec3, DVec3),
+    bounds_b: (DVec3, DVec3),
+) -> Result<(), String> {
+    if bond.patches.len() > 8192 {
+        return Err("接触面片数量超过 8192".into());
+    }
+    let mut metrics = Vec::with_capacity(bond.patches.len());
+    for patch in &bond.patches {
+        let metric = patch_metrics(patch)?;
+        for vertex in &patch.vertices {
+            let point = DVec3::from_array(vertex.map(f64::from));
+            if [bounds_a, bounds_b].into_iter().any(|(min, max)| {
+                point
+                    .cmplt(min - DVec3::splat(PATCH_POSITION_TOLERANCE))
+                    .any()
+                    || point
+                        .cmpgt(max + DVec3::splat(PATCH_POSITION_TOLERANCE))
+                        .any()
+            }) {
+                return Err("接触面片超出端点碰撞几何范围".into());
+            }
+        }
+        metrics.push(metric);
+    }
+    for (index, first) in bond.patches.iter().enumerate() {
+        for second in &bond.patches[..index] {
+            if coplanar_overlap(first, second)
+                > f64::from(first.area.min(second.area)) * PATCH_METRIC_TOLERANCE
+            {
+                return Err("同一连接的接触面片重复或重叠".into());
+            }
+        }
+    }
+    let area = metrics.iter().map(|metric| metric.area).sum::<f64>();
+    let center = metrics
+        .iter()
+        .map(|metric| metric.center * metric.area)
+        .sum::<DVec3>()
+        / area;
+    let normal = metrics
+        .iter()
+        .map(|metric| metric.normal * metric.area)
+        .sum::<DVec3>();
+    if normal.length() <= area * 1e-6 {
+        return Err("接触面片法线近似相消".into());
+    }
+    let mut covariance = [[0.0; 3]; 3];
+    for metric in &metrics {
+        let offset = metric.center - center;
+        for row in 0..3 {
+            for column in 0..3 {
+                covariance[row][column] +=
+                    metric.covariance[row][column] + metric.area * offset[row] * offset[column];
+            }
+        }
+    }
+    if (area - f64::from(bond.area)).abs() > area * PATCH_METRIC_TOLERANCE
+        || center.distance(DVec3::from_array(bond.center.map(f64::from))) > PATCH_POSITION_TOLERANCE
+        || normal
+            .normalize()
+            .distance(DVec3::from_array(bond.normal.map(f64::from)))
+            > 1e-3
+        || !covariance_matches(&covariance, &bond.area_covariance)
+    {
+        return Err("连接汇总数据与真实面片不符".into());
+    }
+    Ok(())
+}
+
+fn coplanar_overlap(first: &BondPatchRecord, second: &BondPatchRecord) -> f64 {
+    let normal = DVec3::from_array(first.normal.map(f64::from)).normalize();
+    let origin = DVec3::from_array(first.vertices[0].map(f64::from));
+    if normal
+        .dot(DVec3::from_array(second.normal.map(f64::from)).normalize())
+        .abs()
+        < 1.0 - 1e-8
+        || second.vertices.iter().any(|point| {
+            normal
+                .dot(DVec3::from_array(point.map(f64::from)) - origin)
+                .abs()
+                > 1e-6
+        })
+    {
+        return 0.0;
+    }
+    let tangent = normal.any_orthonormal_vector();
+    let bitangent = normal.cross(tangent);
+    let project = |point: &[f32; 3]| {
+        let point = DVec3::from_array(point.map(f64::from)) - origin;
+        DVec2::new(point.dot(tangent), point.dot(bitangent))
+    };
+    let boundary = first.vertices.iter().map(project).collect::<Vec<_>>();
+    let mut polygon = second.vertices.iter().map(project).collect::<Vec<_>>();
+    for index in 0..boundary.len() {
+        if polygon.is_empty() {
+            return 0.0;
+        }
+        let a = boundary[index];
+        let edge = boundary[(index + 1) % boundary.len()] - a;
+        let mut output = Vec::new();
+        let mut previous = *polygon.last().unwrap();
+        let mut previous_side = edge.perp_dot(previous - a);
+        for &point in &polygon {
+            let side = edge.perp_dot(point - a);
+            if (side >= 0.0) != (previous_side >= 0.0) {
+                output.push(previous.lerp(point, previous_side / (previous_side - side)));
+            }
+            if side >= 0.0 {
+                output.push(point);
+            }
+            previous = point;
+            previous_side = side;
+        }
+        polygon = output;
+    }
+    if polygon.len() < 3 {
+        return 0.0;
+    }
+    let origin = polygon[0];
+    polygon
+        .iter()
+        .zip(polygon.iter().cycle().skip(1))
+        .take(polygon.len())
+        .map(|(a, b)| (*a - origin).perp_dot(*b - origin))
+        .sum::<f64>()
+        .abs()
+        * 0.5
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -566,6 +870,131 @@ mod tests {
             mutation(&mut asset);
             assert!(asset.validate().is_err());
         }
+    }
+
+    fn multipatch_fixture() -> Manifest {
+        let mut asset = fixture();
+        asset.schema_version = 2;
+        let mut a = asset.chunks[0].clone();
+        a.position = [0.0; 3];
+        a.colliders[0].vertices = [-1.0, 0.0]
+            .into_iter()
+            .flat_map(|x| {
+                [0.0, 1.0]
+                    .into_iter()
+                    .flat_map(move |y| [0.0, 1.0].into_iter().map(move |z| [x, y, z]))
+            })
+            .collect();
+        let mut b = a.clone();
+        b.id = "b".into();
+        b.node = "b".into();
+        for point in &mut b.colliders[0].vertices {
+            point[0] += 1.0;
+        }
+        asset.chunks = vec![a, b];
+        asset.bonds = vec![BondRecord {
+            id: "ab".into(),
+            a: "a".into(),
+            b: "b".into(),
+            area: 1.0,
+            center: [0.0, 0.5, 0.5],
+            normal: [1.0, 0.0, 0.0],
+            area_covariance: [
+                [0.0, 0.0, 0.0],
+                [0.0, 1.0 / 12.0, 0.0],
+                [0.0, 0.0, 1.0 / 12.0],
+            ],
+            patches: [0.0, 0.5]
+                .into_iter()
+                .map(|y| BondPatchRecord {
+                    area: 0.5,
+                    center: [0.0, y + 0.25, 0.5],
+                    normal: [1.0, 0.0, 0.0],
+                    area_covariance: [
+                        [0.0, 0.0, 0.0],
+                        [0.0, 1.0 / 96.0, 0.0],
+                        [0.0, 0.0, 1.0 / 24.0],
+                    ],
+                    vertices: vec![
+                        [0.0, y, 0.0],
+                        [0.0, y + 0.5, 0.0],
+                        [0.0, y + 0.5, 1.0],
+                        [0.0, y, 1.0],
+                    ],
+                })
+                .collect(),
+            state: "rigid".into(),
+        }];
+        asset
+    }
+
+    #[test]
+    fn v2_patch_metrics_and_parent_parallel_axis_aggregation_are_validated() {
+        let asset = multipatch_fixture();
+        asset.validate().unwrap();
+        for mutate in [
+            |asset: &mut Manifest| asset.bonds[0].patches.clear(),
+            |asset: &mut Manifest| asset.bonds[0].patches[0].area *= 2.0,
+            |asset: &mut Manifest| asset.bonds[0].patches[0].center[1] += 0.1,
+            |asset: &mut Manifest| asset.bonds[0].patches[0].area_covariance[1][1] *= 2.0,
+            |asset: &mut Manifest| asset.bonds[0].area *= 1.5,
+            |asset: &mut Manifest| asset.bonds[0].center[1] += 0.1,
+            |asset: &mut Manifest| asset.bonds[0].area_covariance[1][1] *= 2.0,
+            |asset: &mut Manifest| asset.bonds[0].normal = [0.0, 1.0, 0.0],
+        ] {
+            let mut asset = asset.clone();
+            mutate(&mut asset);
+            assert!(asset.validate().is_err());
+        }
+        let legacy = fixture();
+        assert_eq!(legacy.schema_version, 1);
+        legacy.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_nonplanar_reversed_concave_duplicated_and_out_of_bounds_patches() {
+        for mutate in [
+            |asset: &mut Manifest| asset.bonds[0].patches[0].vertices[0][0] = 0.1,
+            |asset: &mut Manifest| asset.bonds[0].patches[0].vertices.reverse(),
+            |asset: &mut Manifest| asset.bonds[0].patches[0].vertices[1] = [0.0, 0.1, 0.5],
+            |asset: &mut Manifest| {
+                asset.bonds[0].patches[1] = asset.bonds[0].patches[0].clone();
+            },
+            |asset: &mut Manifest| {
+                for patch in &mut asset.bonds[0].patches {
+                    patch.center[0] += 2.0;
+                    for vertex in &mut patch.vertices {
+                        vertex[0] += 2.0;
+                    }
+                }
+                asset.bonds[0].center[0] += 2.0;
+            },
+        ] {
+            let mut asset = multipatch_fixture();
+            mutate(&mut asset);
+            assert!(asset.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn small_patch_cannot_hide_an_incorrect_normal_inside_position_tolerance() {
+        let patch = BondPatchRecord {
+            area: 1.6e-8,
+            center: [0.0, 1e-5, 0.0005],
+            normal: [0.8, 0.6, 0.0],
+            area_covariance: [
+                [0.0, 0.0, 0.0],
+                [0.0, 1.6e-8 * 4e-10 / 12.0, 0.0],
+                [0.0, 0.0, 1.6e-8 * 1e-6 / 12.0],
+            ],
+            vertices: vec![
+                [0.0, 0.0, 0.0],
+                [0.0, 2e-5, 0.0],
+                [0.0, 2e-5, 0.001],
+                [0.0, 0.0, 0.001],
+            ],
+        };
+        assert!(patch_metrics(&patch).is_err());
     }
 
     #[test]

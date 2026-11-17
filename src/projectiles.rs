@@ -433,23 +433,43 @@ fn queue_local_damage(
         .iter()
         .filter(|bond| (bond.a == id || bond.b == id) && instance.bonds[&bond.id])
         .collect::<Vec<_>>();
-    let total_area = bonds.iter().map(|bond| bond.area).sum::<f32>();
+    let total_area = bonds
+        .iter()
+        .map(|bond| {
+            if bond.patches.is_empty() {
+                bond.area
+            } else {
+                bond.patches.iter().map(|patch| patch.area).sum()
+            }
+        })
+        .sum::<f32>();
     for bond in bonds {
         let material = |id: &str| &manifest.materials[&instance.chunks[id].material];
         let a = material(&bond.a);
         let b = material(&bond.b);
-        let normal = Vec3::from(bond.normal);
-        let projected = impulse.dot(normal);
-        let tension = projected * if bond.a == id { -1.0 } else { 1.0 };
-        let normal_strength = if tension > 0.0 {
-            a.tension_strength.min(b.tension_strength)
-        } else {
-            a.compression_strength.min(b.compression_strength)
+        let utilization = |normal: Vec3| {
+            let projected = impulse.dot(normal);
+            let tension = projected * if bond.a == id { -1.0 } else { 1.0 };
+            let normal_strength = if tension > 0.0 {
+                a.tension_strength.min(b.tension_strength)
+            } else {
+                a.compression_strength.min(b.compression_strength)
+            };
+            let normal_utilization =
+                tension.abs() / (total_area * IMPACT_DURATION * normal_strength);
+            let shear_utilization = (impulse - normal * projected).length()
+                / (total_area * IMPACT_DURATION * a.shear_strength.min(b.shear_strength));
+            normal_utilization.max(shear_utilization)
         };
-        let normal_utilization = tension.abs() / (total_area * IMPACT_DURATION * normal_strength);
-        let shear_utilization = (impulse - normal * projected).length()
-            / (total_area * IMPACT_DURATION * a.shear_strength.min(b.shear_strength));
-        let utilization = normal_utilization.max(shear_utilization);
+        // Area-weighted facet impulses share the same traction; preserve each facet's direction.
+        let utilization = if bond.patches.is_empty() {
+            utilization(Vec3::from(bond.normal))
+        } else {
+            bond.patches
+                .iter()
+                .map(|patch| utilization(Vec3::from(patch.normal)))
+                .fold(0.0_f32, f32::max)
+        };
         if utilization >= 1.0 {
             let prior = pending.entry((building, bond.id.clone())).or_default();
             *prior = prior.max(utilization);

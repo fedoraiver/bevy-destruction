@@ -742,3 +742,99 @@ fn a_rigid_velocity_change_has_no_internal_impact_load() {
         assert!(DVec3::from_array(load.moment).length() < 1e-7);
     }
 }
+
+#[test]
+fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() {
+    let mut app = app();
+    let building = spawn_beam(app.world_mut(), Vec3::ZERO);
+    let instance = app.world().get::<BuildingInstance>(building).unwrap();
+    let mut legacy = crate::stress_smoke::beam_manifest();
+    for bond in &mut legacy.bonds {
+        bond.normal = Vec3::X.to_array();
+        bond.patches.clear();
+    }
+    let total_area = legacy.bonds.iter().map(|bond| bond.area).sum::<f32>();
+    let intensity = legacy.materials["concrete"].shear_strength * 1.2 / 0.8;
+    let impulse = Vec3::NEG_X * (intensity * total_area * IMPACT_DURATION);
+    let mut pending = BTreeMap::new();
+    queue_local_damage(&legacy, instance, building, BEAM, impulse, &mut pending);
+    assert!(
+        pending.is_empty(),
+        "The average plane should see only subcritical compression"
+    );
+
+    let rectangle = |normal: Vec3, center: Vec3, half_height: f32| {
+        let tangent = Vec3::new(-normal.y, normal.x, 0.0);
+        let half_width = 0.05_f32;
+        let area = 4.0 * half_width * half_height;
+        crate::asset::BondPatchRecord {
+            area,
+            center: center.to_array(),
+            normal: normal.to_array(),
+            area_covariance: std::array::from_fn(|row| {
+                std::array::from_fn(|column| {
+                    area / 3.0
+                        * (half_width.powi(2) * tangent[row] * tangent[column]
+                            + half_height.powi(2) * Vec3::Z[row] * Vec3::Z[column])
+                })
+            }),
+            vertices: [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+                .into_iter()
+                .map(|(u, v)| {
+                    (center + tangent * (u * half_width) + Vec3::Z * (v * half_height)).to_array()
+                })
+                .collect(),
+        }
+    };
+    let mut folded = legacy.clone();
+    let bond = folded
+        .bonds
+        .iter_mut()
+        .find(|bond| bond.id == LEFT_BOND)
+        .unwrap();
+    bond.patches = [-1.0, 1.0]
+        .into_iter()
+        .map(|side| {
+            rectangle(
+                Vec3::new(0.6, side * 0.8, 0.0),
+                Vec3::from_array(bond.center) + Vec3::Y * (side * 0.03),
+                0.025,
+            )
+        })
+        .collect();
+    queue_local_damage(&folded, instance, building, BEAM, impulse, &mut pending);
+    assert_eq!(pending.len(), 1);
+    assert!(
+        (pending[&(building, LEFT_BOND.to_string())] - 1.2).abs() < 1e-5,
+        "The folded facets must see shear hidden by their average plane"
+    );
+
+    let mut subdivided = folded.clone();
+    let bond = subdivided
+        .bonds
+        .iter_mut()
+        .find(|bond| bond.id == LEFT_BOND)
+        .unwrap();
+    bond.patches = bond
+        .patches
+        .iter()
+        .flat_map(|patch| {
+            [-1.0, 1.0].into_iter().map(move |side| {
+                rectangle(
+                    Vec3::from_array(patch.normal),
+                    Vec3::from_array(patch.center) + Vec3::Z * (side * 0.0125),
+                    0.0125,
+                )
+            })
+        })
+        .collect();
+    let mut second = BTreeMap::new();
+    queue_local_damage(&subdivided, instance, building, BEAM, impulse, &mut second);
+    assert_eq!(
+        pending.keys().collect::<Vec<_>>(),
+        second.keys().collect::<Vec<_>>()
+    );
+    for (key, value) in pending {
+        assert!((value - second[&key]).abs() < 1e-6);
+    }
+}

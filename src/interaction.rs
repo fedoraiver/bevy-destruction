@@ -377,6 +377,7 @@ mod tests {
             "../assets/buildings/rectangle.destruction.json"
         ))
         .unwrap();
+        manifest.schema_version = 1;
         let template = manifest.bonds[0].clone();
         manifest.bonds = [("ab", "a", "b"), ("cd", "c", "d")]
             .map(|(id, a, b)| crate::asset::BondRecord {
@@ -385,6 +386,7 @@ mod tests {
                 b: b.into(),
                 center: [0.0; 3],
                 normal: Vec3::Y.to_array(),
+                patches: Vec::new(),
                 ..template.clone()
             })
             .into();

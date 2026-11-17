@@ -77,6 +77,7 @@ pub(crate) fn beam_manifest() -> Manifest {
         "../assets/buildings/rectangle.destruction.json"
     ))
     .unwrap();
+    manifest.schema_version = 1;
     manifest.name = "Concrete beam with two narrow supports".into();
     manifest.materials.retain(|id, _| id == "concrete");
     let template = manifest.chunks[0].clone();
@@ -143,6 +144,7 @@ pub(crate) fn beam_manifest() -> Manifest {
         area_covariance: Mat3::from_diagonal(Vec3::new(second_moment, 0.0, second_moment))
             .to_cols_array_2d(),
         state: "rigid".into(),
+        patches: Vec::new(),
     })
     .into();
     manifest.anchors = [(LEFT_SUPPORT, -1.0), (RIGHT_SUPPORT, 1.0)]

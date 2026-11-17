@@ -106,6 +106,22 @@ pub fn build_patches(
         let b = geometry
             .get(&bond.b)
             .ok_or_else(|| format!("Contact {} is missing chunk {}", bond.id, bond.b))?;
+        if !bond.patches.is_empty() {
+            result.extend(baked_contact_patches(
+                bond,
+                a,
+                b,
+                widths[bond.a.as_str()],
+                widths[bond.b.as_str()],
+            )?);
+            continue;
+        }
+        if manifest.schema_version == 2 {
+            return Err(format!(
+                "Contact {} is missing v2 interface polygons",
+                bond.id
+            ));
+        }
         let mut a_triangles: Vec<_> = a.triangles.iter().collect();
         let mut b_triangles: Vec<_> = b.triangles.iter().collect();
         a_triangles.sort_by(|a, b| triangle_order(a, b));
@@ -199,6 +215,131 @@ pub fn build_patches(
         }
     }
     result.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(result)
+}
+
+fn mesh_patch_coverage(
+    plane: &Plane,
+    boundary: &[DVec2],
+    surface: &SurfaceGeometry,
+    orientation: f64,
+) -> Result<f64, String> {
+    let mut covered = Vec::<Vec<DVec2>>::new();
+    for triangle in &surface.triangles {
+        let triangle = triangle.map(|point| point.as_dvec3());
+        let cross = (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]);
+        if cross.length_squared() <= 1e-24
+            || plane.normal.dot(cross.normalize()) * orientation < 0.98
+            || triangle
+                .iter()
+                .any(|point| plane.normal.dot(*point - plane.origin).abs() > CONTACT_TOLERANCE)
+        {
+            continue;
+        }
+        let projected = triangle.iter().map(|point| plane.project(*point)).collect();
+        let overlap = clip_polygon(projected, boundary);
+        let area = polygon_area(&overlap).abs();
+        if area <= 1e-14 {
+            continue;
+        }
+        for previous in &covered {
+            let duplicated = polygon_area(&clip_polygon(overlap.clone(), previous)).abs();
+            if duplicated > (area.min(polygon_area(previous).abs()) * 0.005).max(1e-12) {
+                return Err("Display mesh overlaps itself on a baked interface".into());
+            }
+        }
+        covered.push(overlap);
+    }
+    Ok(covered
+        .iter()
+        .map(|polygon| polygon_area(polygon).abs())
+        .sum())
+}
+
+fn baked_contact_patches(
+    bond: &crate::asset::BondRecord,
+    a: &SurfaceGeometry,
+    b: &SurfaceGeometry,
+    width_a: f32,
+    width_b: f32,
+) -> Result<Vec<ContactPatch>, String> {
+    let mut planes = Vec::<Plane>::new();
+    for patch in &bond.patches {
+        if patch.vertices.len() < 3 {
+            return Err(format!(
+                "Contact {} has an empty interface polygon",
+                bond.id
+            ));
+        }
+        let normal = Vec3::from_array(patch.normal).as_dvec3().normalize();
+        let plane = Plane::new(normal, Vec3::from_array(patch.center).as_dvec3());
+        let vertices = patch
+            .vertices
+            .iter()
+            .map(|point| Vec3::from_array(*point).as_dvec3())
+            .collect::<Vec<_>>();
+        let polygon = vertices
+            .iter()
+            .map(|point| plane.project(*point))
+            .collect::<Vec<_>>();
+        let expected = f64::from(patch.area);
+        for (surface, orientation) in [(a, 1.0), (b, -1.0)] {
+            let covered = mesh_patch_coverage(&plane, &polygon, surface, orientation)
+                .map_err(|error| format!("Contact {}: {error}", bond.id))?;
+            if covered <= 0.0 || (covered - expected).abs() > (expected * 0.01).max(1e-9) {
+                return Err(format!(
+                    "Contact {} baked area {expected:.9} has mesh coverage {covered:.9}",
+                    bond.id
+                ));
+            }
+        }
+        if let Some(existing) = planes.iter_mut().find(|existing| {
+            existing.normal.dot(normal) > 1.0 - 1e-10
+                && vertices
+                    .iter()
+                    .all(|point| existing.normal.dot(*point - existing.origin).abs() <= 1e-6)
+        }) {
+            existing.polygons.push(
+                vertices
+                    .iter()
+                    .map(|point| existing.project(*point))
+                    .collect(),
+            );
+        } else {
+            let mut plane = plane;
+            plane.polygons.push(polygon);
+            planes.push(plane);
+        }
+    }
+    let mut result = Vec::new();
+    for plane in planes {
+        // Merge convex coplanar unions; retain valid per-facet polygons for concave unions.
+        let polygons =
+            connected_polygons(&plane.polygons).unwrap_or_else(|_| plane.polygons.clone());
+        for polygon in polygons {
+            let points = polygon
+                .iter()
+                .map(|point| plane.unproject(*point))
+                .collect::<Vec<_>>();
+            let triangles = (1..points.len() - 1)
+                .map(|index| [points[0], points[index], points[index + 1]])
+                .collect();
+            result.push(ContactPatch {
+                id: String::new(),
+                bond_id: bond.id.clone(),
+                a: bond.a.clone(),
+                b: bond.b.clone(),
+                normal: plane.normal.as_vec3(),
+                triangles,
+                area: polygon_area(&polygon).abs() as f32,
+                rims: patch_rims(&points, a, b, width_a, width_b),
+            });
+        }
+    }
+    result.sort_by(|a, b| triangle_order(&a.triangles[0], &b.triangles[0]));
+    for (index, patch) in result.iter_mut().enumerate() {
+        patch.id = format!("{}:patch:{index:03}", bond.id);
+    }
     Ok(result)
 }
 
@@ -698,6 +839,7 @@ mod tests {
                 center: [0.0, 0.5, 0.5],
                 normal: [1.0, 0.0, 0.0],
                 area_covariance: [[0.0; 3]; 3],
+                patches: Vec::new(),
                 state: "rigid".into(),
             }],
             anchors: Vec::new(),
@@ -736,6 +878,118 @@ mod tests {
         assert_eq!(patches[0].exposed_survivor(|id| id == "a"), Some("a"));
         assert_eq!(patches[0].exposed_survivor(|id| id == "b"), Some("b"));
         assert!(patches[0].exposed_survivor(|_| false).is_none());
+    }
+
+    fn rectangular_patch(vertices: [[f32; 3]; 4]) -> crate::asset::BondPatchRecord {
+        let points = vertices.map(Vec3::from_array);
+        let first = points[1] - points[0];
+        let second = points[3] - points[0];
+        crate::asset::BondPatchRecord {
+            area: first.cross(second).length(),
+            center: ((points[0] + points[2]) * 0.5).to_array(),
+            normal: first.cross(second).normalize().to_array(),
+            area_covariance: [[0.0; 3]; 3],
+            vertices: vertices.into(),
+        }
+    }
+
+    #[test]
+    fn baked_coplanar_facets_merge_without_visual_internal_seams() {
+        let mut manifest = manifest(1.0);
+        manifest.schema_version = 2;
+        manifest.bonds[0].patches = [0.0, 0.5]
+            .into_iter()
+            .map(|y| {
+                rectangular_patch([
+                    [0.0, y, 0.0],
+                    [0.0, y + 0.5, 0.0],
+                    [0.0, y + 0.5, 1.0],
+                    [0.0, y, 1.0],
+                ])
+            })
+            .collect();
+        let patches = build_patches(&manifest, &adjacent(1.0)).unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].rims.len(), 4);
+        assert!((patches[0].area - 1.0).abs() < 1e-6);
+        let original = patches[0].triangles.clone();
+        manifest.bonds[0].patches.reverse();
+        assert_eq!(
+            build_patches(&manifest, &adjacent(1.0)).unwrap()[0].triangles,
+            original
+        );
+    }
+
+    #[test]
+    fn baked_folded_interfaces_use_actual_faces_and_reject_fabricated_coverage() {
+        let mut manifest = manifest(1.0);
+        manifest.schema_version = 2;
+        manifest.bonds[0].patches = vec![
+            rectangular_patch([
+                [0.0, 0.0, 0.0],
+                [0.0, 0.5, 0.0],
+                [0.0, 0.5, 1.0],
+                [0.0, 0.0, 1.0],
+            ]),
+            rectangular_patch([
+                [0.0, 0.5, 0.0],
+                [0.1, 1.0, 0.0],
+                [0.1, 1.0, 1.0],
+                [0.0, 0.5, 1.0],
+            ]),
+        ];
+        let mut triangles = Vec::new();
+        for patch in &manifest.bonds[0].patches {
+            let p = patch
+                .vertices
+                .iter()
+                .copied()
+                .map(Vec3::from_array)
+                .collect::<Vec<_>>();
+            triangles.extend([[p[0], p[1], p[2]], [p[0], p[2], p[3]]]);
+        }
+        let mut geometry = BTreeMap::from([
+            (
+                "a".into(),
+                SurfaceGeometry {
+                    triangles: triangles.clone(),
+                    exterior: Vec::new(),
+                },
+            ),
+            (
+                "b".into(),
+                SurfaceGeometry {
+                    triangles: triangles.iter().map(|t| [t[0], t[2], t[1]]).collect(),
+                    exterior: Vec::new(),
+                },
+            ),
+        ]);
+        let patches = build_patches(&manifest, &geometry).unwrap();
+        assert_eq!(patches.len(), 2);
+        assert!(patches[0].normal.dot(patches[1].normal) < 0.999);
+        assert!(patches.iter().all(|patch| patch.rims.is_empty()));
+        geometry.get_mut("b").unwrap().triangles.truncate(2);
+        assert!(build_patches(&manifest, &geometry).is_err());
+        geometry.get_mut("b").unwrap().triangles =
+            vec![[triangles[0][0], triangles[0][2], triangles[0][1]]; 2];
+        assert!(build_patches(&manifest, &geometry).is_err());
+    }
+
+    #[test]
+    fn a_baked_facet_below_area_tolerance_still_needs_actual_mesh_coverage() {
+        let mut manifest = manifest(1.0);
+        manifest.schema_version = 2;
+        manifest.bonds[0].patches = vec![rectangular_patch([
+            [0.0, 0.0, 0.0],
+            [0.0, 1e-5, 0.0],
+            [0.0, 1e-5, 1e-5],
+            [0.0, 0.0, 1e-5],
+        ])];
+        let geometry = BTreeMap::from([
+            ("a".into(), SurfaceGeometry::default()),
+            ("b".into(), SurfaceGeometry::default()),
+        ]);
+        assert!(build_patches(&manifest, &geometry).is_err());
     }
 
     #[test]

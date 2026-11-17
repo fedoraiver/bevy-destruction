@@ -86,6 +86,8 @@ struct Element {
     a: usize,
     b: usize,
     center: V3,
+    bond_center: V3,
+    vertices: Option<Vec<V3>>,
     normal: V3,
     area: f64,
     q: M3,
@@ -358,92 +360,119 @@ fn assemble_with_gauge(
             material_b.young_modulus as f64,
         );
         let shear = harmonic(shear_modulus(material_a), shear_modulus(material_b));
-        let normal_length = norm3(bond.normal.map(f64::from));
-        if !normal_length.is_finite()
-            || (normal_length - 1.0).abs() > 1e-3
-            || !bond.area.is_finite()
-            || bond.area <= 0.0
-        {
-            return invalid(&format!("Invalid interface area or normal for {}", bond.id));
-        }
-        let normal = scale3(bond.normal.map(f64::from), 1.0 / normal_length);
-        let normal_outer = outer3(normal, normal);
-        let projection = subm3(identity3(), normal_outer);
-        let raw_q = bond.area_covariance.map(|row| row.map(f64::from));
-        let q = mulm3(mulm3(projection, raw_q), projection);
-        let axis = if normal[0].abs() < 0.7 {
-            [1.0, 0.0, 0.0]
+        // A shared equivalent length makes a planar interface invariant under subdivision.
+        let sections = if bond.patches.is_empty() {
+            vec![(
+                bond.area,
+                bond.center,
+                bond.normal,
+                bond.area_covariance,
+                None,
+            )]
         } else {
-            [0.0, 1.0, 0.0]
+            bond.patches
+                .iter()
+                .map(|patch| {
+                    (
+                        patch.area,
+                        patch.center,
+                        patch.normal,
+                        patch.area_covariance,
+                        Some(patch.vertices.iter().map(|p| p.map(f64::from)).collect()),
+                    )
+                })
+                .collect()
         };
-        let tangent_raw = cross3(normal, axis);
-        let tangent = scale3(tangent_raw, 1.0 / norm3(tangent_raw));
-        let bitangent = cross3(normal, tangent);
-        let qt = dot3(tangent, mul3(q, tangent));
-        let qb = dot3(bitangent, mul3(q, bitangent));
-        let qtb = dot3(tangent, mul3(q, bitangent));
-        let determinant = qt * qb - qtb * qtb;
-        if !q.into_iter().flatten().all(f64::is_finite)
-            || qt <= 0.0
-            || qb <= 0.0
-            || determinant <= 0.0
-        {
-            return invalid(&format!(
-                "Degenerate interface second moment for {}",
-                bond.id
-            ));
-        }
-        let inverse_q = [
-            [qb / determinant, -qtb / determinant],
-            [-qtb / determinant, qt / determinant],
-        ];
-        let trace = qt + qb;
-        let lambda_max = 0.5 * (trace + ((qt - qb).powi(2) + 4.0 * qtb * qtb).sqrt());
-        let area = bond.area as f64;
-        let max_radius = 2.0 * (lambda_max / area).sqrt();
-        let translation = addm3(
-            scale_m3(normal_outer, young * area / length),
-            scale_m3(projection, shear * area / length),
-        );
-        let cross_normal = skew3(normal);
-        let bending = mulm3(mulm3(cross_normal, q), transpose3(cross_normal));
-        let rotation = addm3(
-            scale_m3(bending, young / length),
-            scale_m3(normal_outer, shear * trace / length),
-        );
-        let mut stiffness = [[0.0; 6]; 6];
-        for row in 0..3 {
-            for column in 0..3 {
-                stiffness[row][column] = translation[row][column];
-                stiffness[row + 3][column + 3] = rotation[row][column];
+        for (area, center, normal, area_covariance, vertices) in sections {
+            let normal_length = norm3(normal.map(f64::from));
+            if !normal_length.is_finite()
+                || (normal_length - 1.0).abs() > 1e-3
+                || !area.is_finite()
+                || area <= 0.0
+            {
+                return invalid(&format!("Invalid interface area or normal for {}", bond.id));
             }
+            let normal = scale3(normal.map(f64::from), 1.0 / normal_length);
+            let normal_outer = outer3(normal, normal);
+            let projection = subm3(identity3(), normal_outer);
+            let raw_q = area_covariance.map(|row| row.map(f64::from));
+            let q = mulm3(mulm3(projection, raw_q), projection);
+            let axis = if normal[0].abs() < 0.7 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            let tangent_raw = cross3(normal, axis);
+            let tangent = scale3(tangent_raw, 1.0 / norm3(tangent_raw));
+            let bitangent = cross3(normal, tangent);
+            let qt = dot3(tangent, mul3(q, tangent));
+            let qb = dot3(bitangent, mul3(q, bitangent));
+            let qtb = dot3(tangent, mul3(q, bitangent));
+            let determinant = qt * qb - qtb * qtb;
+            if !q.into_iter().flatten().all(f64::is_finite)
+                || qt <= 0.0
+                || qb <= 0.0
+                || determinant <= 0.0
+            {
+                return invalid(&format!(
+                    "Degenerate interface second moment for {}",
+                    bond.id
+                ));
+            }
+            let inverse_q = [
+                [qb / determinant, -qtb / determinant],
+                [-qtb / determinant, qt / determinant],
+            ];
+            let trace = qt + qb;
+            let lambda_max = 0.5 * (trace + ((qt - qb).powi(2) + 4.0 * qtb * qtb).sqrt());
+            let area = area as f64;
+            let max_radius = 2.0 * (lambda_max / area).sqrt();
+            let translation = addm3(
+                scale_m3(normal_outer, young * area / length),
+                scale_m3(projection, shear * area / length),
+            );
+            let cross_normal = skew3(normal);
+            let bending = mulm3(mulm3(cross_normal, q), transpose3(cross_normal));
+            let rotation = addm3(
+                scale_m3(bending, young / length),
+                scale_m3(normal_outer, shear * trace / length),
+            );
+            let mut stiffness = [[0.0; 6]; 6];
+            for row in 0..3 {
+                for column in 0..3 {
+                    stiffness[row][column] = translation[row][column];
+                    stiffness[row + 3][column + 3] = rotation[row][column];
+                }
+            }
+            let center = center.map(f64::from);
+            elements.push(Element {
+                id: bond.id.clone(),
+                a,
+                b,
+                center,
+                bond_center: bond.center.map(f64::from),
+                vertices,
+                normal,
+                area,
+                q,
+                tangent,
+                bitangent,
+                inverse_q,
+                max_radius,
+                stiffness,
+                ja: jacobian(sub3(center, nodes[a].center), -1.0, length_scale),
+                jb: jacobian(sub3(center, nodes[b].center), 1.0, length_scale),
+                tension_strength: f64::from(
+                    material_a.tension_strength.min(material_b.tension_strength),
+                ),
+                compression_strength: f64::from(
+                    material_a
+                        .compression_strength
+                        .min(material_b.compression_strength),
+                ),
+                shear_strength: f64::from(material_a.shear_strength.min(material_b.shear_strength)),
+            });
         }
-        let center = bond.center.map(f64::from);
-        elements.push(Element {
-            id: bond.id.clone(),
-            a,
-            b,
-            center,
-            normal,
-            area,
-            q,
-            tangent,
-            bitangent,
-            inverse_q,
-            max_radius,
-            stiffness,
-            ja: jacobian(sub3(center, nodes[a].center), -1.0, length_scale),
-            jb: jacobian(sub3(center, nodes[b].center), 1.0, length_scale),
-            tension_strength: f64::from(
-                material_a.tension_strength.min(material_b.tension_strength),
-            ),
-            compression_strength: f64::from(
-                material_a
-                    .compression_strength
-                    .min(material_b.compression_strength),
-            ),
-            shear_strength: f64::from(material_a.shear_strength.min(material_b.shear_strength)),
-        });
     }
     let mut rows = vec![BTreeMap::new(); free_count];
     for element in &elements {
@@ -534,13 +563,31 @@ impl Model {
                     internal[node][axis] += gradient[axis];
                 }
             }
-            bonds.insert(
-                element.id.clone(),
-                element.stress(
-                    traction,
-                    section_vertices.and_then(|vertices| vertices.get(&element.id)),
-                ),
+            let mut stress = element.stress(
+                traction,
+                element
+                    .vertices
+                    .as_ref()
+                    .or_else(|| section_vertices.and_then(|vertices| vertices.get(&element.id))),
             );
+            if element.vertices.is_some() {
+                stress.moment = add3(
+                    stress.moment,
+                    cross3(sub3(element.center, element.bond_center), stress.force),
+                );
+            }
+            bonds
+                .entry(element.id.clone())
+                .and_modify(|total: &mut BondStress| {
+                    total.force = add3(total.force, stress.force);
+                    total.moment = add3(total.moment, stress.moment);
+                    total.tension = total.tension.max(stress.tension);
+                    total.compression = total.compression.max(stress.compression);
+                    total.shear = total.shear.max(stress.shear);
+                    total.utilization = total.utilization.max(stress.utilization);
+                    total.section_exact &= stress.section_exact;
+                })
+                .or_insert(stress);
         }
         let reactions = self
             .nodes

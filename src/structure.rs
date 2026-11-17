@@ -140,11 +140,13 @@ mod tests {
         record.id = id.into();
         record.a = a.into();
         record.b = b.into();
+        record.patches.clear();
         record
     }
 
     fn graph() -> Manifest {
         let mut manifest = fixture();
+        manifest.schema_version = 1;
         manifest.chunks = ["a", "b", "c", "d"]
             .map(|id| chunk(id, 1.0, Vec3::ZERO))
             .into();
