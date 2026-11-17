@@ -89,6 +89,12 @@ struct ClusterImpact {
     building: Entity,
     chunks: Vec<String>,
     loads: BTreeMap<String, ImpulseLoad>,
+    prepared: Option<PreparedImpact>,
+}
+
+struct PreparedImpact {
+    case: InertialLoadCase,
+    sections: BTreeMap<String, Vec<[f64; 3]>>,
 }
 
 #[derive(Resource, Default)]
@@ -284,6 +290,7 @@ fn impact_damage(world: &mut World) {
                         building: identity.building,
                         chunks: cluster.chunks.clone(),
                         loads: BTreeMap::new(),
+                        prepared: None,
                     });
                     let load = shock.loads.entry(identity.id.clone()).or_default();
                     for manifold in &pair.manifolds {
@@ -559,7 +566,7 @@ struct DynamicImpactReport {
 }
 
 fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
-    while let Some(shock) = state.shocks.pop_front() {
+    while let Some(mut shock) = state.shocks.pop_front() {
         let Some(instance) = world.get::<BuildingInstance>(shock.building) else {
             continue;
         };
@@ -591,9 +598,31 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             continue;
         }
         let started = bevy::platform::time::Instant::now();
-        let Some(case) = inertial_loads(&asset.manifest, &shock.chunks, &shock.loads) else {
-            continue;
-        };
+        // Continuations retain these inputs until the membership checks above release the event.
+        if shock.prepared.is_none() {
+            let Some(case) = inertial_loads(&asset.manifest, &shock.chunks, &shock.loads) else {
+                continue;
+            };
+            let selected = shock
+                .chunks
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
+            for patch in instance.patches.iter().filter(|patch| {
+                selected.contains(patch.a.as_str()) && selected.contains(patch.b.as_str())
+            }) {
+                sections.entry(patch.bond_id.clone()).or_default().extend(
+                    patch
+                        .triangles
+                        .iter()
+                        .flat_map(|triangle| triangle.iter())
+                        .map(|point| point.to_array().map(f64::from)),
+                );
+            }
+            shock.prepared = Some(PreparedImpact { case, sections });
+        }
+        let PreparedImpact { case, sections } = shock.prepared.as_ref().unwrap();
         let mut report = DynamicImpactReport {
             valid: false,
             elapsed_ms: 0.0,
@@ -604,20 +633,6 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             fracture: None,
             continuation: None,
         };
-        let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
-        for patch in instance
-            .patches
-            .iter()
-            .filter(|patch| shock.chunks.contains(&patch.a) && shock.chunks.contains(&patch.b))
-        {
-            sections.entry(patch.bond_id.clone()).or_default().extend(
-                patch
-                    .triangles
-                    .iter()
-                    .flat_map(|triangle| triangle.iter())
-                    .map(|point| point.to_array().map(f64::from)),
-            );
-        }
         let result = if case.force_balance_ratio <= 1e-6 && case.moment_balance_ratio <= 1e-6 {
             stress::solve_with_gauge(
                 &asset.manifest,
@@ -625,7 +640,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                 &instance.bonds,
                 &case.loads,
                 &SolverSettings::default(),
-                Some(&sections),
+                Some(sections),
                 &shock.chunks[0],
             )
         } else {

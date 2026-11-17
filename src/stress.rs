@@ -695,6 +695,9 @@ fn precise_deformation(model: &Model, element: &Element, high: &[f64], low: Opti
         for (node, jacobian) in [(element.a, &element.ja), (element.b, &element.jb)] {
             if let Some(index) = model.nodes[node].free {
                 for (column, &coefficient) in jacobian[row].iter().enumerate() {
+                    if coefficient == 0.0 {
+                        continue;
+                    }
                     let offset = index * 6 + column;
                     sum.product(coefficient, high[offset]);
                     if let Some(low) = low {

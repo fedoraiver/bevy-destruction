@@ -573,7 +573,12 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
                 angular: DVec3::ZERO,
             },
         )]),
+        prepared: None,
     });
+    let initial = process_dynamic_impact(app.world(), &mut state).unwrap();
+    assert!(initial.valid);
+    assert!(initial.fracture.is_some());
+    state.shocks.push_back(initial.continuation.unwrap());
     let detached = upper.last().unwrap();
     let ids = {
         let instance = app.world().get::<BuildingInstance>(building).unwrap();
