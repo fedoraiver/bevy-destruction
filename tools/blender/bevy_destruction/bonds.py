@@ -1,6 +1,7 @@
 """Find finite contact patches between convex chunks, including across parts."""
 
 import hashlib
+import math
 
 from mathutils import Matrix, Vector
 
@@ -15,6 +16,17 @@ def _sub(a, b):
 
 def _polygon_area(points):
     return sum(_cross(a, b) for a, b in zip(points, points[1:] + points[:1])) * 0.5
+
+
+def _minimum_width(points):
+    widths = []
+    for a, b in zip(points, points[1:] + points[:1]):
+        edge = _sub(b, a)
+        length = math.hypot(*edge)
+        if length > 0:
+            distances = [_cross(edge, _sub(p, a)) / length for p in points]
+            widths.append(max(distances) - min(distances))
+    return min(widths, default=0.0)
 
 
 def _clip(subject, boundary, tolerance):
@@ -90,7 +102,7 @@ def _face_contacts(faces_a, faces_b, tolerance):
             if len(overlap) < 3:
                 continue
             area, _ = _area_centroid(overlap)
-            if area <= tolerance * tolerance:
+            if area <= tolerance * tolerance or _minimum_width(overlap) <= tolerance:
                 continue
             yield normal, origin, tangent, bitangent, overlap
 

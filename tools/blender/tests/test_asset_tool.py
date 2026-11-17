@@ -112,6 +112,18 @@ class AuthoringTests(unittest.TestCase):
         self.assertAlmostEqual(bonds[0]["area_covariance"][1][1], 1 / 6, places=6)
         self.assertAlmostEqual(bonds[0]["area_covariance"][2][2], 2 / 3, places=6)
 
+    def test_line_slivers_do_not_create_bonds_but_resolved_narrow_faces_do(self):
+        a = cube("sliver_a", (0, 0, 0), (1, 1, 1))
+        for width, expected in ((0.00001, 0), (0.0001, 1)):
+            with self.subTest(width=width):
+                b = cube(f"sliver_b_{width}", (1, 1 - width, 0), (2, 2 - width, 1))
+                chunks = [Chunk(label, label, "wall", "concrete", obj, obj, 1, (0, 0, 0), [])
+                          for label, obj in (("a", a), ("b", b))]
+                bonds = generate_bonds(chunks, tolerance=0.00002)
+                self.assertEqual(len(bonds), expected)
+                if expected:
+                    self.assertAlmostEqual(bonds[0]["area"], width, delta=2e-7)
+
     def test_rectangle_openings_survive_fracture_and_collision_export(self):
         previous_scale = bpy.context.scene.unit_settings.scale_length
         bpy.context.scene.unit_settings.scale_length = 0.01
