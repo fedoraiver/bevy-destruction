@@ -234,8 +234,9 @@ def boundary_faces(cells, tolerance=2e-6):
     return result
 
 
-def mesh_data(faces, tolerance=2e-6):
+def mesh_data(faces, tolerance=2e-6, *, _repair_internal=True):
     """Weld shared vertices and split boundary edges at all T-junctions."""
+    faces = list(faces)
     vertices, polygons = [], []
     buckets = collections.defaultdict(list)
     weld = tolerance * 0.25
@@ -307,6 +308,19 @@ def mesh_data(faces, tolerance=2e-6):
             if len(boundary) != len(remaining):
                 raise ValueError("Union face welding produced multiple contours")
         stitched.append(boundary)
+    incidence = collections.Counter(
+        tuple(sorted((a, b)))
+        for polygon in stitched
+        for a, b in zip(polygon, polygon[1:] + polygon[:1])
+    )
+    if any(count > 2 for count in incidence.values()):
+        if not _repair_internal:
+            raise ValueError(
+                "Union boundary remains nonmanifold after internal-face removal"
+            )
+        # Clipping can expose a common plane that the original cell faces only approximated.
+        repaired = boundary_faces([[face] for face in faces], tolerance)
+        return mesh_data(repaired, tolerance, _repair_internal=False)
     used = sorted({i for polygon in stitched for i in polygon})
     indices = {old: new for new, old in enumerate(used)}
     return [vertices[i] for i in used], [

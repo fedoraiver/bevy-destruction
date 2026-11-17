@@ -211,6 +211,19 @@ class NaturalUnionTests(unittest.TestCase):
         points = {tuple(point) for point in data["vertices"]}
         self.assertTrue(all(point in points for face in hull for point in face))
 
+    def test_clipped_inner_wall_removes_remaining_finite_internal_face(self):
+        path = Path(__file__).parent / "fixtures" / "rounded-inner-boundary.json"
+        faces = json.loads(path.read_text(encoding="utf-8"))["faces"]
+        metrics = mesh_metrics(self.object(mesh_data(faces)))
+        self.assertAlmostEqual(metrics["volume"], volume(faces), places=6)
+        for actual, expected in zip(
+            metrics["center"], (4.0, 1.2287110655, 1.4018807593)
+        ):
+            self.assertAlmostEqual(actual, expected, places=6)
+        self.assertAlmostEqual(metrics["inertia"][0][0], 0.2023217594, places=6)
+        self.assertAlmostEqual(metrics["inertia"][1][1], 0.0814006325, places=6)
+        self.assertAlmostEqual(metrics["inertia"][2][2], 0.1227606885, places=6)
+
 
 if __name__ == "__main__":
     if not bpy.app.background:
