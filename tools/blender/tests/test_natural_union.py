@@ -1,6 +1,7 @@
 """Run with background factory-startup Blender and --python-exit-code 1."""
 
 from pathlib import Path
+import json
 import sys
 import unittest
 
@@ -183,6 +184,18 @@ class NaturalUnionTests(unittest.TestCase):
     def test_tiny_notch_is_preserved_even_below_relative_volume_budget(self):
         cells = [box((0, 0, 0), (1, 1, 1)), box((1, 0, 0), (1.001, 0.9999, 1))]
         self.assertEqual(len(merge_convex_cells(cells)), 2)
+
+    def test_rounded_floor_partition_cancels_collapsed_backtracking_face(self):
+        path = Path(__file__).parent / "fixtures" / "rounded-floor-boundary.json"
+        faces = json.loads(path.read_text(encoding="utf-8"))["faces"]
+        metrics = mesh_metrics(self.object(mesh_data(faces)))
+        self.assertAlmostEqual(metrics["volume"], 0.8479134901250343, places=6)
+        for actual, expected in zip(metrics["center"], (1.09951031, 3.08129598, 0.1)):
+            self.assertAlmostEqual(actual, expected, places=6)
+        self.assertAlmostEqual(metrics["inertia"][0][0], 0.29067132, places=6)
+        self.assertAlmostEqual(metrics["inertia"][1][1], 0.34966558, places=6)
+        self.assertAlmostEqual(metrics["inertia"][2][2], 0.63468414, places=6)
+        self.assertAlmostEqual(metrics["inertia"][0][1], -0.06299143, places=6)
 
 
 if __name__ == "__main__":

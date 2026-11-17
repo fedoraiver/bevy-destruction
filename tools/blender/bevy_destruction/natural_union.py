@@ -283,9 +283,35 @@ def mesh_data(faces, tolerance=2e-6):
                     splits.append((t, i))
             boundary.extend(i for _, i in sorted(splits))
         if len(boundary) != len(set(boundary)):
-            raise ValueError("Repeated vertex in union boundary face")
+            edges = collections.Counter()
+            for a, b in zip(boundary, boundary[1:] + boundary[:1]):
+                if edges[b, a]:
+                    edges[b, a] -= 1
+                else:
+                    edges[a, b] += 1
+            remaining = [
+                (a, b) for (a, b), count in edges.items() for _ in range(count)
+            ]
+            if not remaining:
+                continue
+            links = dict(remaining)
+            start = min(links)
+            boundary = [start]
+            while links.get(boundary[-1]) != start:
+                following = links.get(boundary[-1])
+                if following is None or following in boundary:
+                    raise ValueError(
+                        "Union boundary has a non-simple contour after welding"
+                    )
+                boundary.append(following)
+            if len(boundary) != len(remaining):
+                raise ValueError("Union face welding produced multiple contours")
         stitched.append(boundary)
-    return vertices, stitched
+    used = sorted({i for polygon in stitched for i in polygon})
+    indices = {old: new for new, old in enumerate(used)}
+    return [vertices[i] for i in used], [
+        [indices[i] for i in face] for face in stitched
+    ]
 
 
 def boundary_mesh(cells, tolerance=2e-6):
