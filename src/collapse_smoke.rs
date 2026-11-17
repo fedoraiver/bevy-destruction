@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{
@@ -8,7 +8,7 @@ use bevy::{
 
 use crate::{
     DemoOptions,
-    asset::DestructibleAsset,
+    asset::{DestructibleAsset, Manifest},
     debug::FractureEdges,
     diagnostics::RunMetrics,
     physics::Cluster,
@@ -17,6 +17,10 @@ use crate::{
 };
 
 pub struct CollapseSmokePlugin;
+
+#[cfg(test)]
+#[path = "collapse_smoke_tests.rs"]
+mod tests;
 
 impl Plugin for CollapseSmokePlugin {
     fn build(&self, app: &mut App) {
@@ -39,6 +43,234 @@ const CAPTURES: [&str; 4] = [
     "04-final-collapse.png",
 ];
 
+pub(crate) struct CollapseSelection {
+    pub removed: Vec<String>,
+    pub support_path: Vec<String>,
+    pub static_stub: String,
+    pub upper_floor_y: f32,
+}
+
+pub(crate) fn select_collapse_support(manifest: &Manifest) -> Result<CollapseSelection, String> {
+    let records = manifest
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect::<BTreeMap<_, _>>();
+    let bounds = manifest
+        .chunks
+        .iter()
+        .map(|chunk| {
+            let transform = chunk.transform();
+            let mut min = Vec3::splat(f32::INFINITY);
+            let mut max = Vec3::splat(f32::NEG_INFINITY);
+            for point in chunk.colliders.iter().flat_map(|proxy| &proxy.vertices) {
+                let point = transform.transform_point((*point).into());
+                min = min.min(point);
+                max = max.max(point);
+            }
+            (chunk.id.as_str(), (min, max))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let bottom = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.kind == "floor")
+        .map(|chunk| bounds[chunk.id.as_str()].0.y)
+        .min_by(f32::total_cmp)
+        .ok_or("No foundation floor geometry")?;
+    let foundation = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && (bounds[chunk.id.as_str()].0.y - bottom).abs() < 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let foundation_top = foundation
+        .iter()
+        .map(|id| bounds[id].1.y)
+        .max_by(f32::total_cmp)
+        .unwrap();
+    let upper_floor_y = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && bounds[chunk.id.as_str()].0.y > foundation_top + 1e-4
+        })
+        .map(|chunk| bounds[chunk.id.as_str()].0.y)
+        .min_by(f32::total_cmp)
+        .ok_or("No upper storey floor geometry")?;
+    if manifest.schema_version == 1 && records.contains_key(STATIC_REMNANT) {
+        let mut support_path = manifest
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.part_id == REMAINING_SUPPORT)
+            .map(|chunk| chunk.id.clone())
+            .collect::<Vec<_>>();
+        support_path.sort_by(|a, b| {
+            records[a.as_str()].position[1]
+                .total_cmp(&records[b.as_str()].position[1])
+                .then(a.cmp(b))
+        });
+        return Ok(CollapseSelection {
+            removed: manifest
+                .chunks
+                .iter()
+                .filter(|chunk| {
+                    chunk.part_id.contains("-l00") && chunk.part_id != REMAINING_SUPPORT
+                })
+                .map(|chunk| chunk.id.clone())
+                .collect(),
+            support_path,
+            static_stub: STATIC_REMNANT.into(),
+            upper_floor_y,
+        });
+    }
+    let supports = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            let (min, max) = bounds[chunk.id.as_str()];
+            chunk.kind != "floor"
+                && chunk.kind != "roof"
+                && min.y < upper_floor_y - 1e-4
+                && max.y > foundation_top + 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let upper_floor = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && (bounds[chunk.id.as_str()].0.y - upper_floor_y).abs() < 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut adjacent = records
+        .keys()
+        .map(|&id| (id, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for bond in &manifest.bonds {
+        adjacent
+            .get_mut(bond.a.as_str())
+            .unwrap()
+            .insert(bond.b.as_str());
+        adjacent
+            .get_mut(bond.b.as_str())
+            .unwrap()
+            .insert(bond.a.as_str());
+    }
+    let mut grounded = manifest
+        .anchors
+        .iter()
+        .filter(|anchor| anchor.kind == "fixed" && foundation.contains(anchor.chunk.as_str()))
+        .map(|anchor| anchor.chunk.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut pending = grounded.iter().copied().collect::<Vec<_>>();
+    while let Some(id) = pending.pop() {
+        for &neighbor in adjacent[id].intersection(&foundation) {
+            if grounded.insert(neighbor) {
+                pending.push(neighbor);
+            }
+        }
+    }
+    let starts = supports
+        .iter()
+        .copied()
+        .filter(|id| {
+            adjacent[id]
+                .iter()
+                .any(|neighbor| grounded.contains(neighbor))
+                && !adjacent[id]
+                    .iter()
+                    .any(|neighbor| upper_floor.contains(neighbor))
+        })
+        .collect::<Vec<_>>();
+    let ends = supports
+        .iter()
+        .copied()
+        .filter(|id| {
+            adjacent[id]
+                .iter()
+                .any(|neighbor| upper_floor.contains(neighbor))
+        })
+        .collect::<BTreeSet<_>>();
+    let mut low = Vec3::splat(f32::INFINITY);
+    let mut high = Vec3::splat(f32::NEG_INFINITY);
+    for &(min, max) in bounds.values() {
+        low = low.min(min);
+        high = high.max(max);
+    }
+    let target = (low + high) * 0.5 - Vec3::Z * 0.5;
+    let mut candidates = Vec::new();
+    for start in starts {
+        let mut remaining = supports.clone();
+        let mut costs = BTreeMap::from([(start, f64::from(records[start].mass))]);
+        let mut previous = BTreeMap::new();
+        while let Some(id) = remaining
+            .iter()
+            .copied()
+            .filter(|id| costs.contains_key(id))
+            .min_by(|a, b| costs[a].total_cmp(&costs[b]).then(a.cmp(b)))
+        {
+            remaining.remove(id);
+            if ends.contains(id) {
+                let mut path = vec![id.to_owned()];
+                let mut cursor = id;
+                while cursor != start {
+                    cursor = previous[cursor];
+                    path.push(cursor.to_owned());
+                }
+                path.reverse();
+                if path.len() >= 2 {
+                    let (min, max) = bounds[start];
+                    let interior = min.x > low.x + 1e-4
+                        && max.x < high.x - 1e-4
+                        && min.z > low.z + 1e-4
+                        && max.z < high.z - 1e-4;
+                    let center = records[start]
+                        .transform()
+                        .transform_point(records[start].center_of_mass.into());
+                    let distance = (center.x - target.x).powi(2) + (center.z - target.z).powi(2);
+                    candidates.push((!interior, distance, costs[id], path));
+                }
+                break;
+            }
+            for &neighbor in adjacent[id].intersection(&remaining) {
+                let cost = costs[id] + f64::from(records[neighbor].mass);
+                if costs.get(neighbor).is_none_or(|old| cost < *old) {
+                    costs.insert(neighbor, cost);
+                    previous.insert(neighbor, id);
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    let (_, _, _, support_path) = candidates
+        .into_iter()
+        .next()
+        .ok_or("No multi-piece foundation-to-upperfloor support path")?;
+    let retained = support_path
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    Ok(CollapseSelection {
+        removed: supports
+            .into_iter()
+            .filter(|id| !retained.contains(id))
+            .map(str::to_owned)
+            .collect(),
+        static_stub: support_path[0].clone(),
+        support_path,
+        upper_floor_y,
+    })
+}
+
 #[derive(Resource, Default)]
 struct CollapseState {
     initialized: bool,
@@ -47,6 +279,9 @@ struct CollapseState {
     warmup: u32,
     frame: u32,
     upper: BTreeMap<String, (Vec3, f32)>,
+    upper_mass: f32,
+    support_path: Vec<String>,
+    static_stub: String,
     removed: Vec<String>,
     initial_pose: Transform,
     expected_mass: f64,
@@ -90,7 +325,8 @@ fn finish(
     let directory = options.collapse_smoke_output.as_ref().unwrap();
     let report = serde_json::json!({
         "asset":options.asset,
-        "scenario":"Eccentric support: first-storey removal except the p0006 inner door jamb",
+        "scenario":"Eccentric support: remove other first-storey supports while retaining a geometry-selected multi-piece load path",
+        "selected_support_path":state.support_path,
         "removed_chunks":state.removed.len(),
         "original_upper_chunks":state.upper.len(),
         "expected_retained_mass_kg":state.expected_mass,
@@ -110,7 +346,7 @@ fn finish(
         "max_bulk_downward_speed_m_per_s":state.max_downward_speed,
         "bulk_fell":state.bulk_fell,
         "residual_support_contact":state.residual_support_contact,
-        "residual_support_chunk":STATIC_REMNANT,
+        "residual_support_chunk":state.static_stub,
         "tipping_sample":state.tipping_sample,
         "simulated_frames_after_warmup":state.frame,
         "profile":options.profile,
@@ -258,14 +494,25 @@ fn drive(
                     weighted_center += center * mass;
                 }
             }
-            if upper_chunks < 20 {
+            if upper_chunks < 2 || upper_mass < state.upper_mass * 0.25 {
                 continue;
             }
             let frame = state.frame;
             state.first_release.get_or_insert(frame);
             state.largest_released_upper = state.largest_released_upper.max(upper_chunks);
             let body = instance.chunks[&cluster.chunks[0]].cluster.unwrap();
-            if let Some(support) = instance.chunks[STATIC_REMNANT].cluster
+            if let Some(stub) = state
+                .support_path
+                .iter()
+                .find(|id| {
+                    instance.chunks[id.as_str()].cluster.is_some_and(|body| {
+                        bodies
+                            .get(body)
+                            .is_ok_and(|entry| *entry.1 == RigidBody::Static)
+                    })
+                })
+                .cloned()
+                && let Some(support) = instance.chunks[stub.as_str()].cluster
                 && bodies
                     .get(support)
                     .is_ok_and(|entry| *entry.1 == RigidBody::Static)
@@ -273,11 +520,12 @@ fn drive(
                     [pair.body1, pair.body2].contains(&Some(body))
                         && [pair.body1, pair.body2].contains(&Some(support))
                         && [pair.collider1, pair.collider2]
-                            .contains(&instance.chunks[STATIC_REMNANT].entity)
+                            .contains(&instance.chunks[stub.as_str()].entity)
                         && pair.total_normal_impulse_magnitude() > 0.0
                 })
             {
                 state.residual_support_contact = true;
+                state.static_stub = stub;
             }
             let rest_center = weighted_center / upper_mass;
             let center = position.0 + rotation.0 * rest_center;
@@ -318,6 +566,14 @@ fn drive(
             capture(&mut commands, &options, CAPTURES[0]);
         }
         20 => {
+            let selection = match select_collapse_support(&asset.manifest) {
+                Ok(selection) => selection,
+                Err(error) => {
+                    state.errors.push(error);
+                    finish(&mut state, &options, &metrics, &mut exit);
+                    return;
+                }
+            };
             state.initial_pose = root_global.compute_transform();
             state.before_broken = stress.broken_total;
             state.upper = asset
@@ -329,7 +585,7 @@ fn drive(
                         .transform()
                         .transform_point(record.center_of_mass.into())
                         .y
-                        >= 3.0
+                        >= selection.upper_floor_y
                 })
                 .map(|record| {
                     (
@@ -343,15 +599,10 @@ fn drive(
                     )
                 })
                 .collect();
-            state.removed = asset
-                .manifest
-                .chunks
-                .iter()
-                .filter(|record| {
-                    record.part_id.contains("-l00") && record.part_id != REMAINING_SUPPORT
-                })
-                .map(|record| record.id.clone())
-                .collect();
+            state.upper_mass = state.upper.values().map(|(_, mass)| mass).sum();
+            state.removed = selection.removed;
+            state.support_path = selection.support_path;
+            state.static_stub = selection.static_stub;
             state.expected_mass = asset
                 .manifest
                 .chunks
@@ -359,11 +610,6 @@ fn drive(
                 .filter(|record| !state.removed.contains(&record.id))
                 .map(|record| f64::from(record.mass))
                 .sum();
-            if state.removed.len() != 61 || instance.chunks.len() != 255 {
-                state.errors.push(
-                    "Rectangle no longer matches the eccentric-support regression fixture".into(),
-                );
-            }
             for id in &state.removed {
                 let chunk = instance.chunks.get_mut(id).unwrap();
                 chunk.alive = false;
@@ -383,7 +629,8 @@ fn drive(
             instance.topology_dirty = true;
             let damage = serde_json::json!({
                 "asset":options.asset,"frame_after_warmup":state.frame,
-                "predicate":"part_id.contains('-l00') && part_id != 'wall-inner-0-l00-p0006-z00'",
+                "predicate":"foundation-adjacent interior start, minimum-mass multi-piece support path to the next floor",
+                "retained_support_path":state.support_path,"static_stub_candidate":state.static_stub,
                 "removed_ids":state.removed,"retained_chunks":instance.chunks.len()-state.removed.len(),
                 "expected_retained_mass_kg":state.expected_mass,
             });
@@ -406,7 +653,7 @@ fn drive(
             }
             if state.first_release.is_none() || !state.bulk_fell {
                 state.errors.push(
-                    "No released rigid body with at least 20 original upper chunks fell".into(),
+                    "No coherent released body with at least a quarter of the original upper mass fell".into(),
                 );
             }
             if state.first_tipping.is_none() {
