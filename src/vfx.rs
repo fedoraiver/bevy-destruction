@@ -680,6 +680,8 @@ fn animate_particles(
     spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
     identities: Query<(&ChunkIdentity, Has<RemovedChunk>)>,
+    colliders: Query<&ColliderOf>,
+    bodies: Query<&RigidBody>,
     instances: Query<&BuildingInstance>,
     mut particles: Query<
         (
@@ -723,6 +725,13 @@ fn animate_particles(
                 .and_then(|instance| instance.chunks.get(&identity.id))
                 .is_some_and(|chunk| chunk.alive)
     };
+    let static_collider = |entity| {
+        colliders
+            .get(entity)
+            .ok()
+            .and_then(|collider| bodies.get(collider.body).ok())
+            .is_some_and(|body| *body == RigidBody::Static)
+    };
     for (entity, mut particle, mut transform, mut visibility, solid) in &mut particles {
         let old_age = particle.age;
         particle.age += dt;
@@ -749,7 +758,7 @@ fn animate_particles(
             if particle.settled
                 && particle
                     .support
-                    .is_some_and(|entity| !live_collider(entity))
+                    .is_some_and(|entity| !live_collider(entity) || !static_collider(entity))
             {
                 particle.settled = false;
                 particle.sweep_origin = transform.translation;
@@ -790,6 +799,7 @@ fn animate_particles(
                             particle.bounces += 1;
                             stats.collisions += 1;
                             if normal.y > 0.5
+                                && static_collider(hit.entity)
                                 && (particle.velocity.length_squared() < 0.25
                                     || particle.bounces >= 2)
                             {
@@ -1065,7 +1075,7 @@ mod tests {
     }
 
     #[test]
-    fn heavy_debris_bounces_on_live_building_and_falls_when_support_is_removed() {
+    fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
         let mut app = app();
         app.add_plugins((TransformPlugin, PhysicsPlugins::default()));
         app.finish();
@@ -1101,6 +1111,7 @@ mod tests {
                     transform: floor_transform,
                     material: "concrete".into(),
                     detail: None,
+                    cluster: None,
                 },
             );
         let mut seed = 71;
@@ -1120,6 +1131,9 @@ mod tests {
         assert!(app.world().resource::<VfxStats>().collisions >= 2);
         assert!(app.world().get::<Particle>(entity).unwrap().settled);
         assert!(app.world().get::<Transform>(entity).unwrap().translation.y > 0.6);
+        app.world_mut().entity_mut(floor).insert(RigidBody::Dynamic);
+        app.update();
+        assert!(!app.world().get::<Particle>(entity).unwrap().settled);
         let collisions = app.world().resource::<VfxStats>().collisions;
         app.world_mut()
             .get_mut::<BuildingInstance>(building)

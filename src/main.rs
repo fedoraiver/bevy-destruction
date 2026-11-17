@@ -6,9 +6,12 @@ mod dust_material;
 mod fracture_detail;
 mod interaction;
 mod material;
+mod physics;
+mod physics_smoke;
 mod rim_profile;
 mod scene;
 mod smoke;
+mod structure;
 mod vfx;
 
 use avian3d::prelude::*;
@@ -18,6 +21,7 @@ use bevy::prelude::*;
 pub struct DemoOptions {
     pub asset: String,
     pub smoke_output: Option<std::path::PathBuf>,
+    pub physics_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
     pub no_detail: bool,
     pub no_soft_particles: bool,
@@ -30,6 +34,7 @@ impl Default for DemoOptions {
         Self {
             asset: "buildings/rectangle.destruction.json".into(),
             smoke_output: None,
+            physics_smoke_output: None,
             no_vfx: false,
             no_detail: false,
             no_soft_particles: false,
@@ -52,9 +57,16 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 )
             }
+            "--physics-smoke-test" => {
+                options.physics_smoke_output = Some(
+                    args.next()
+                        .ok_or("--physics-smoke-test requires an output directory")?
+                        .into(),
+                )
+            }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--asset buildings/rectangle.destruction.json] [--smoke-test output/demo]\nValidation: --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor | Left click: break | 0: edges | Esc: exit"
+                    "bevy-destruction [--asset buildings/rectangle.destruction.json] [--smoke-test output/demo] [--physics-smoke-test output/physics]\nValidation: --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor | Left click: break | 0: edges | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -66,6 +78,9 @@ fn options() -> Result<DemoOptions, String> {
             _ => return Err(format!("Unknown option: {arg}")),
         }
     }
+    if options.smoke_output.is_some() && options.physics_smoke_output.is_some() {
+        return Err("Choose either --smoke-test or --physics-smoke-test".into());
+    }
     Ok(options)
 }
 
@@ -74,7 +89,7 @@ fn main() -> AppExit {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    let smoke_test = options.smoke_output.is_some();
+    let smoke_test = options.smoke_output.is_some() || options.physics_smoke_output.is_some();
     let profile = options.profile;
     let vfx_settings = vfx::VfxSettings {
         enabled: !options.no_vfx,
@@ -93,7 +108,7 @@ fn main() -> AppExit {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Bevy Destruction · ADR 0007".into(),
+                        title: "Bevy Destruction · Physical fracture".into(),
                         resolution: (1280, 900).into(),
                         ..default()
                     }),
@@ -108,10 +123,12 @@ fn main() -> AppExit {
             diagnostics::MetricsPlugin,
             debug::FractureDebugPlugin,
             scene::DemoScenePlugin,
+            physics::DestructionPhysicsPlugin,
             camera::FreeCameraPlugin,
             interaction::InteractionPlugin,
             vfx::VfxPlugin,
             smoke::SmokePlugin,
+            physics_smoke::PhysicsSmokePlugin,
         ))
         .add_systems(Update, close_on_escape);
     if smoke_test {

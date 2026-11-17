@@ -67,6 +67,7 @@ pub struct ChunkInstance {
     pub transform: Transform,
     pub material: String,
     pub detail: Option<Entity>,
+    pub cluster: Option<Entity>,
 }
 
 #[derive(Component)]
@@ -78,6 +79,8 @@ pub struct BuildingInstance {
     pub error: Option<String>,
     pub patches: Arc<Vec<ContactPatch>>,
     pub detail_dirty: std::collections::BTreeSet<String>,
+    pub clusters: Vec<Entity>,
+    pub topology_dirty: bool,
 }
 
 impl BuildingInstance {
@@ -90,6 +93,8 @@ impl BuildingInstance {
             error: None,
             patches: Arc::new(Vec::new()),
             detail_dirty: default(),
+            clusters: Vec::new(),
+            topology_dirty: false,
         }
     }
 }
@@ -386,7 +391,7 @@ pub(crate) fn instantiate_pending(
                 .collect();
             let chunk_name = record.id.clone();
             let entity = commands.spawn_scene(bsn! { Name::new(chunk_name) Transform { translation: {transform.translation}, rotation: {transform.rotation} } Visibility::Visible })
-                .insert((ChunkIdentity { building: root, id: record.id.clone() }, ChildOf(root), RigidBody::Static, collider,
+                .insert((ChunkIdentity { building: root, id: record.id.clone() }, ChildOf(root), collider,
                     ColliderDensity(0.0), Mass(record.mass), AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
                     CenterOfMass(Vec3::from(record.center_of_mass)), NoAutoMass, NoAutoAngularInertia, NoAutoCenterOfMass, edges)).id();
             let mut primitives = Vec::new();
@@ -427,6 +432,7 @@ pub(crate) fn instantiate_pending(
                     transform,
                     material: record.material.clone(),
                     detail: None,
+                    cluster: None,
                 },
             );
         }
@@ -437,6 +443,7 @@ pub(crate) fn instantiate_pending(
             .map(|bond| (bond.id.clone(), true))
             .collect();
         instance.bounds = Some(bounds);
+        instance.topology_dirty = true;
         instance.patches = patches;
         stats.patches = instance.patches.len();
         info!(
@@ -514,6 +521,13 @@ fn update_details(
                     .entry(survivor.to_owned())
                     .or_default()
                     .push(patch_index);
+            } else if instance.chunks[&patch.a].alive
+                && instance.chunks[&patch.b].alive
+                && !instance.bonds.get(&patch.bond_id).copied().unwrap_or(true)
+            {
+                for id in [&patch.a, &patch.b] {
+                    exposed.entry(id.clone()).or_default().push(patch_index);
+                }
             }
         }
         let chunk_ids = instance.chunks.keys().cloned().collect::<Vec<_>>();
@@ -687,6 +701,7 @@ mod tests {
                     transform: Transform::IDENTITY,
                     material: "concrete".into(),
                     detail: None,
+                    cluster: None,
                 },
             );
         }
@@ -760,6 +775,30 @@ mod tests {
         assert_eq!(stats.active_meshes, 1);
         assert_eq!(stats.cached_meshes, 1);
         assert_eq!(stats.triangles, stats.cached_triangles);
+    }
+
+    #[test]
+    fn severed_bond_exposes_both_live_sides_only_in_the_damaged_instance() {
+        let mut app = detail_app();
+        let patches = shared_patches();
+        let intact = spawn_instance(app.world_mut(), patches.clone());
+        let detached = spawn_instance(app.world_mut(), patches);
+        app.world_mut()
+            .get_mut::<BuildingInstance>(detached)
+            .unwrap()
+            .bonds
+            .insert("ab".into(), false);
+        app.update();
+        assert!(detail_snapshot(app.world(), intact).is_empty());
+        let snapshot = detail_snapshot(app.world(), detached);
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].0, "a");
+        assert_eq!(snapshot[1].0, "b");
+        for (_, patch_ids, positions) in snapshot {
+            assert_eq!(patch_ids, ["ab"]);
+            assert!(!positions.is_empty());
+            assert!(positions.iter().flatten().all(|value| value.is_finite()));
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::{
     asset::DestructibleAsset,
     camera::CameraControl,
     debug::FractureEdges,
-    scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
+    scene::{BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, RemovedChunk},
     vfx::{BreakBurst, EmissionSurface},
 };
 
@@ -22,9 +22,7 @@ impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DamageRequests>()
             .init_resource::<ScriptedClick>()
-            .init_resource::<PendingColliderRemoval>()
-            .add_systems(Update, (cursor_damage, apply_damage).chain())
-            .add_systems(FixedUpdate, remove_colliders);
+            .add_systems(Update, (cursor_damage, apply_damage).chain());
     }
 }
 
@@ -33,9 +31,6 @@ pub struct DamageRequests(pub VecDeque<Ray3d>);
 
 #[derive(Resource, Default)]
 pub struct ScriptedClick(pub Option<Vec2>);
-
-#[derive(Resource, Default)]
-pub(crate) struct PendingColliderRemoval(Vec<Entity>);
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cursor_damage(
@@ -54,7 +49,7 @@ pub(crate) fn cursor_damage(
     let (Ok(window), Ok((entity, camera))) = (windows.single(), cameras.single()) else {
         return;
     };
-    let cursor = if options.smoke_output.is_some() {
+    let cursor = if options.smoke_output.is_some() || options.physics_smoke_output.is_some() {
         scripted.0.take()
     } else {
         if !control.captured || control.suppress_click || !window.focused {
@@ -118,9 +113,9 @@ pub fn apply_damage(
     mut requests: ResMut<DamageRequests>,
     spatial: SpatialQuery,
     identities: Query<&ChunkIdentity>,
+    poses: Query<(&Position, &Rotation)>,
     mut instances: Query<&mut BuildingInstance>,
     assets: Res<Assets<DestructibleAsset>>,
-    mut pending: ResMut<PendingColliderRemoval>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
     while let Some(ray) = requests.0.pop_front() {
@@ -168,7 +163,14 @@ pub fn apply_damage(
                 continue;
             };
             if let Some(chunk) = instance.chunks.get(neighbor).filter(|chunk| chunk.alive)
-                && let Some(distance) = surface_distance(&chunk.triangles, point, normal)
+                && let Some(distance) = {
+                    let rest_from_world = world_from_rest(chunk, &poses).inverse();
+                    surface_distance(
+                        &chunk.triangles,
+                        rest_from_world.transform_point3(point),
+                        rest_from_world.transform_vector3(normal),
+                    )
+                }
                 && distance <= BREAK_RADIUS
             {
                 candidates.push((neighbor.clone(), distance));
@@ -223,9 +225,10 @@ pub fn apply_damage(
             } else {
                 patch.normal
             };
+            let world_from_rest = world_from_rest(&instance.chunks[survivor], &poses);
             surfaces.extend(patch.triangles.iter().map(|triangle| EmissionSurface {
-                triangle: *triangle,
-                normal,
+                triangle: triangle.map(|point| world_from_rest.transform_point3(point)),
+                normal: world_from_rest.transform_vector3(normal).normalize(),
             }));
         }
         surfaces.sort_by(|a, b| {
@@ -247,13 +250,13 @@ pub fn apply_damage(
             for &primitive in &chunk.primitives {
                 commands.entity(primitive).despawn();
             }
-            pending.0.push(chunk.entity);
         }
         for bond in &asset.manifest.bonds {
             if selected.contains(&bond.a) || selected.contains(&bond.b) {
                 instance.bonds.insert(bond.id.clone(), false);
             }
         }
+        instance.topology_dirty = true;
         bursts.write(BreakBurst {
             point,
             normal,
@@ -275,10 +278,15 @@ pub fn apply_damage(
     }
 }
 
-fn remove_colliders(mut commands: Commands, mut pending: ResMut<PendingColliderRemoval>) {
-    for entity in pending.0.drain(..) {
-        commands.entity(entity).remove::<(Collider, RigidBody)>();
-    }
+fn world_from_rest(
+    chunk: &ChunkInstance,
+    poses: &Query<(&Position, &Rotation)>,
+) -> bevy::math::Affine3A {
+    let (position, rotation) = poses.get(chunk.entity).expect("Chunk has a physics pose");
+    Transform::from_translation(position.0)
+        .with_rotation(rotation.0)
+        .compute_affine()
+        * chunk.transform.compute_affine().inverse()
 }
 
 #[cfg(test)]
