@@ -84,9 +84,7 @@ fn fire(
     cameras: Query<&GlobalTransform, With<DemoCamera>>,
     mut requests: ResMut<LaunchRequests>,
 ) {
-    if options.smoke_output.is_some()
-        || options.physics_smoke_output.is_some()
-        || options.stress_smoke_output.is_some()
+    if options.scripted()
         || !control.captured
         || control.suppress_click
         || !windows.iter().any(|window| window.focused)

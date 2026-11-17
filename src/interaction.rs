@@ -105,10 +105,7 @@ pub(crate) fn cursor_damage(
     let (Ok(window), Ok((entity, camera))) = (windows.single(), cameras.single()) else {
         return;
     };
-    let cursor = if options.smoke_output.is_some()
-        || options.physics_smoke_output.is_some()
-        || options.stress_smoke_output.is_some()
-    {
+    let cursor = if options.scripted() {
         scripted.0.take()
     } else {
         if !control.captured || control.suppress_click || !window.focused {

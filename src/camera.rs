@@ -134,9 +134,7 @@ pub(crate) fn move_camera(
         return;
     };
     control.suppress_click = false;
-    let smoke = options.smoke_output.is_some()
-        || options.physics_smoke_output.is_some()
-        || options.stress_smoke_output.is_some();
+    let smoke = options.scripted();
     if !smoke {
         if !window.focused {
             control.captured = false;

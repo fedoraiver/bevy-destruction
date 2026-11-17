@@ -15,7 +15,6 @@ import bevy_pbr::render::{
 };
 
 struct SurfaceSettings {
-    building_from_world: mat4x4<f32>,
     grid: vec4<f32>,
     fracture: vec4<f32>,
     fracture_color: vec4<f32>,
@@ -57,11 +56,19 @@ fn grid_coverage(position: vec2<f32>, spacing: f32, width: f32) -> f32 {
     return line * smoothstep(1.5, 3.5, pixels_per_cell);
 }
 
+fn unit(v: vec3<f32>) -> vec3<f32> {
+    return v / max(length(v), 0.000000000001);
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr = pbr_input_from_standard_material(in, is_front);
-    let position = (surface.building_from_world * in.world_position).xyz;
-    let normal = normalize((surface.building_from_world * vec4<f32>(in.world_normal, 0.0)).xyz);
+    let position = vec3<f32>(in.uv, in.uv_b.x);
+    let rest_dx = dpdx(position);
+    let rest_dy = dpdy(position);
+    let world_dx = dpdx(in.world_position.xyz);
+    let world_dy = dpdy(in.world_position.xyz);
+    let normal = unit(cross(rest_dx, rest_dy));
 
     if surface.fracture.x < 0.5 {
         let horizontal = cross(vec3<f32>(0.0, 1.0, 0.0), normal);
@@ -94,13 +101,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             height(position + vec3<f32>(0.0, e, 0.0)) - height(position - vec3<f32>(0.0, e, 0.0)),
             height(position + vec3<f32>(0.0, 0.0, e)) - height(position - vec3<f32>(0.0, 0.0, e))
         ) / (2.0 * e);
-        let tangent_gradient = gradient - normal * dot(gradient, normal);
-        let world_from_building = transpose(mat3x3<f32>(
-            surface.building_from_world[0].xyz,
-            surface.building_from_world[1].xyz,
-            surface.building_from_world[2].xyz
-        ));
-        pbr.N = normalize(pbr.N - world_from_building * tangent_gradient);
+        let rest_tangent = unit(rest_dx);
+        let rest_bitangent = cross(normal, rest_tangent);
+        let world_tangent = unit(world_dx);
+        let world_bitangent = cross(unit(cross(world_dx, world_dy)), world_tangent);
+        let world_gradient = world_tangent * dot(gradient, rest_tangent)
+            + world_bitangent * dot(gradient, rest_bitangent);
+        pbr.N = normalize(pbr.N - world_gradient);
     }
 
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);

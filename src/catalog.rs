@@ -37,10 +37,7 @@ fn switch_scene(
     mut loads: ResMut<StructuralLoads>,
     mut particles: Query<&mut crate::vfx::Particle>,
 ) {
-    if options.smoke_output.is_some()
-        || options.physics_smoke_output.is_some()
-        || options.stress_smoke_output.is_some()
-    {
+    if options.scripted() {
         return;
     }
     let Some(index) = [

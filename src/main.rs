@@ -7,6 +7,7 @@ mod dust_material;
 mod fracture_detail;
 mod interaction;
 mod material;
+mod material_smoke;
 mod physics;
 mod physics_smoke;
 mod projectiles;
@@ -28,6 +29,7 @@ pub struct DemoOptions {
     pub smoke_output: Option<std::path::PathBuf>,
     pub physics_smoke_output: Option<std::path::PathBuf>,
     pub stress_smoke_output: Option<std::path::PathBuf>,
+    pub material_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
     pub no_stress: bool,
     pub no_detail: bool,
@@ -43,6 +45,7 @@ impl Default for DemoOptions {
             smoke_output: None,
             physics_smoke_output: None,
             stress_smoke_output: None,
+            material_smoke_output: None,
             no_vfx: false,
             no_stress: false,
             no_detail: false,
@@ -50,6 +53,15 @@ impl Default for DemoOptions {
             capture_replay: false,
             profile: false,
         }
+    }
+}
+
+impl DemoOptions {
+    pub fn scripted(&self) -> bool {
+        self.smoke_output.is_some()
+            || self.physics_smoke_output.is_some()
+            || self.stress_smoke_output.is_some()
+            || self.material_smoke_output.is_some()
     }
 }
 
@@ -89,6 +101,13 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 )
             }
+            "--material-smoke-test" => {
+                options.material_smoke_output = Some(
+                    args.next()
+                        .ok_or("--material-smoke-test requires an output directory")?
+                        .into(),
+                );
+            }
             "--help" | "-h" => {
                 println!(
                     "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | Esc: exit"
@@ -108,6 +127,7 @@ fn options() -> Result<DemoOptions, String> {
         options.smoke_output.is_some(),
         options.physics_smoke_output.is_some(),
         options.stress_smoke_output.is_some(),
+        options.material_smoke_output.is_some(),
     ]
     .into_iter()
     .filter(|enabled| *enabled)
@@ -124,9 +144,7 @@ fn main() -> AppExit {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    let smoke_test = options.smoke_output.is_some()
-        || options.physics_smoke_output.is_some()
-        || options.stress_smoke_output.is_some();
+    let smoke_test = options.scripted();
     let profile = options.profile;
     let vfx_settings = vfx::VfxSettings {
         enabled: !options.no_vfx,
@@ -177,6 +195,7 @@ fn main() -> AppExit {
             projectiles::ProjectilePlugin,
             stress_smoke::StressSmokePlugin,
             catalog::CatalogPlugin,
+            material_smoke::MaterialSmokePlugin,
         ))
         .add_systems(Update, close_on_escape);
     if smoke_test {

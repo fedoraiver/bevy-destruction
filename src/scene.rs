@@ -16,7 +16,9 @@ use crate::{
     camera::{Crosshair, FreeCamera},
     debug::fracture_edges,
     fracture_detail::{ContactPatch, SurfaceGeometry, build_patches, detail_mesh},
-    material::{BuildingMaterial, building_material, rim_material},
+    material::{
+        BuildingMaterial, SurfaceMeshCache, building_material, rim_material, surface_coordinates,
+    },
 };
 
 pub struct DemoScenePlugin;
@@ -24,6 +26,7 @@ pub struct DemoScenePlugin;
 impl Plugin for DemoScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GeometryCache>()
+            .init_resource::<SurfaceMeshCache>()
             .init_resource::<DetailStats>()
             .init_resource::<DetailMeshCache>()
             .init_resource::<RimMaterials>()
@@ -214,7 +217,7 @@ fn warm_rim_pipeline(
     if options.no_detail {
         return;
     }
-    // Match the real non-indexed POSITION/NORMAL/COLOR layout, including its prepass.
+    // Match the real rim vertex layout, including attached surface coordinates and its prepass.
     let mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -225,6 +228,7 @@ fn warm_rim_pipeline(
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 3])
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0, 0.5, 1.0, 1.0]; 3]);
+    let mesh = surface_coordinates(mesh, Transform::IDENTITY);
     commands.spawn((
         Name::new("Fracture rim pipeline warmup"),
         RimPipelineWarmup(90),
@@ -261,13 +265,14 @@ pub(crate) fn instantiate_pending(
     gltfs: Res<Assets<Gltf>>,
     nodes: Res<Assets<GltfNode>>,
     gltf_meshes: Res<Assets<GltfMesh>>,
-    meshes: Res<Assets<Mesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     gltf_materials: Res<Assets<GltfMaterial>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
     mut instances: Query<(Entity, &mut BuildingInstance)>,
     mut cache: ResMut<GeometryCache>,
     mut rim_materials: ResMut<RimMaterials>,
     mut stats: ResMut<DetailStats>,
+    mut surface_meshes: ResMut<SurfaceMeshCache>,
 ) {
     for (root, mut instance) in &mut instances {
         if instance.bounds.is_some() || instance.error.is_some() {
@@ -415,7 +420,7 @@ pub(crate) fn instantiate_pending(
                         ))
                     })
                     .clone();
-                let mesh = primitive.mesh.clone();
+                let mesh = surface_meshes.get_or_create(&primitive.mesh, transform, &mut meshes);
                 let primitive_name = format!("{} primitive {i}", record.id);
                 let primitive_entity = commands.spawn_scene(bsn! {
                     Name::new(primitive_name) Mesh3d(mesh) MeshMaterial3d::<BuildingMaterial>(material) Transform::IDENTITY
@@ -605,7 +610,12 @@ fn update_details(
                         .spawn((
                             Name::new("Exposed jagged fracture rim"),
                             ChildOf(chunk.entity),
-                            Mesh3d(meshes.add(mesh.transformed_by(local))),
+                            Mesh3d(
+                                meshes.add(
+                                    surface_coordinates(mesh, Transform::IDENTITY)
+                                        .transformed_by(local),
+                                ),
+                            ),
                             MeshMaterial3d(material),
                             Transform::IDENTITY,
                             DamageDetail {
