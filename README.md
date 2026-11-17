@@ -2,7 +2,7 @@
 
 面向 Bevy 0.20 + Avian 0.8 的建筑物理破坏插件项目。
 
-已实现建筑资产导入、自由飞行、点击破坏、分层烟尘与暴露破口、失支撑刚体下落，并接入六自由度连接应力、自重承载、渐进过载断裂与刚性撞击物。设计和验证边界见 [ADR 0010 应力与过载](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0011 场景目录与撞击物](docs/adr/0011-building-catalog-and-rigid-impact-scenarios.md)。
+已实现建筑资产导入、自由飞行、点击破坏、分层烟尘与暴露破口、失支撑刚体下落，并接入六自由度连接应力、自重承载、渐进过载断裂与刚性撞击物。动态大块落地时会把接触载荷传到内部连接，触发楼层断裂；程序化网格与断面材质随碎块运动。设计和验证边界见 [ADR 0010 应力与过载](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0014 落地结构破坏](docs/adr/0014-inertial-cluster-impact-fracture.md)。
 
 ## 运行
 
@@ -35,18 +35,22 @@ cargo run -- --scene bridge
 
 应力计算默认启用：对仍与地基连接的结构求解自重和外加载荷，恢复连接拉、压、剪应力及弯曲、扭转影响，持续过载会积累损伤并断开连接。HUD 显示最大承载率、过载断键数、无效求解数量和毫米级弹性位移估计；位移估计用于承载诊断，可见建筑仍按刚体簇运动。失败的求解会标为无效并重试，其结果不驱动断裂。`--no-stress` 可关闭此承载路径，保留直接点击与撞击破坏。
 
-左键每次最多删除 6 个碎块。失去全部固定锚点的连通部分会转为动态残骸，在重力下下落、与地面和建筑碰撞并休眠；运动中仍可点击拆分并继承原速度。撞击会根据实际接触冲量触发独立的局部断裂判据，接触或休眠不会生成永久锚点。当前使用小变形弹性连接近似和单独标定的撞击判据；完整动态内部应力、大变形和可见挠曲属于后续范围。
+左键每次最多删除 6 个碎块。失去全部固定锚点的连通部分会转为动态残骸，在重力下下落、与地面和建筑碰撞并休眠；运动中仍可点击拆分并继承原速度。多块动态残骸的快速碰撞会扣除整体刚体加速度，使用平衡后的接触载荷求解内部连接力与力矩；完整自由落体不会因此自行损坏。静态建筑和单块仍采用局部冲量断裂路径。接触或休眠不会生成永久锚点，物理冲量不重复施加。当前采用小变形弹性网络和 10 ms 冲量标定时间，未模拟完整应力波、大变形或可见挠曲。
+
+默认开发构建针对结构求解与碰撞依赖启用优化，并缓存未变化的锚定结构。当前机器的板楼初始应力求解约 `357 → 30 ms`，相同 300 步无图形落地测试约 `10.04 → 2.30 s`；这些不是渲染帧率保证。首次针对性编译会增加耗时，测量方法与取舍见 [ADR 0015](docs/adr/0015-structural-and-collision-runtime-performance.md)。
 
 破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。邻块消失或连接断开后，暴露侧生成带骨料材质的闭合棱角边带，并随所属碎块运动；完整建筑和其他实例不提前显露裂缝。碰撞仍使用资产的凸代理近似，新增边带不改变碰撞形状。
 
 ## 验证
 
-当前已通过 65 项 Rust 测试、28 项 Blender 测试及六个场景的应力/刚性撞击图形验收，结果与范围见 [ADR 0010](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)。
+当前已通过 75 项 Rust 测试；此前资产流程已通过 28 项 Blender 测试及六个场景的应力/刚性撞击图形验收。验证范围分别见 [ADR 0010](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0013 材质附着](docs/adr/0013-object-attached-procedural-surfaces.md)、[ADR 0014 落地破坏](docs/adr/0014-inertial-cluster-impact-fracture.md)。
 
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+cargo run -- --material-smoke-test output/acceptance/material-attached
+cargo run -- --scene highrise_slab --landing-smoke-test output/acceptance/landing-highrise_slab
 cargo run -- --scene rectangle --stress-smoke-test output/acceptance/stress-rectangle
 cargo run -- --scene highrise_slab --stress-smoke-test output/acceptance/stress-highrise_slab
 cargo run -- --scene highrise_l --stress-smoke-test output/acceptance/stress-highrise_l
@@ -70,7 +74,9 @@ cargo run -- --asset buildings/courtyard.destruction.json --physics-smoke-test o
 
 `--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、相机控制、鼠标点击、连续破坏与特效回收检查，保存截图和 `report.json`，然后退出；失败返回非零退出码。验证模式只接收预定的控制输入，正常运行使用实际时间和实际输入。截图由引擎直接生成，无需桌面自动化。
 
-`--physics-smoke-test` 独立检查屋顶双块失支撑下落、运动中再次拆分、质量/位姿/速度继承及接触后休眠，保存 3 张阶段截图和报告。三种烟测模式互斥；原表现对照可加 `--no-stress`。
+`--physics-smoke-test` 独立检查屋顶双块失支撑下落、运动中再次拆分、质量/位姿/速度继承及接触后休眠，保存 3 张阶段截图和报告。各验证模式互斥；原表现对照可加 `--no-stress`。
+
+`--material-smoke-test` 比较真实材质在平移、旋转前后的图像，并加入世界锁定负对照，输出四张对照图和报告。`--landing-smoke-test` 暖机后移除高楼下半部分，使完整上半部分仅受重力落地；检查接触前不损坏、撞击引发内部楼层断键、质量保留、有限位姿与速度，以及力/力矩平衡，输出四张阶段图和报告。建议使用 `highrise_slab` 或 `highrise_l`。
 
 验证包含 0.05 / 0.15 / 0.4 / 1 / 3 秒分阶段画面，以及烟尘散尽后的破口近景。可用以下参数做同路径比较：
 

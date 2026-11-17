@@ -62,6 +62,7 @@ pub struct BondLoadState {
     pub valid: bool,
 }
 
+#[derive(Clone)]
 pub struct StressComponentReport {
     pub chunks: usize,
     pub valid: bool,
@@ -78,13 +79,33 @@ pub struct StressState {
     pub bonds: BTreeMap<String, BondLoadState>,
     pub reports: Vec<StressComponentReport>,
     pub solves: u64,
+    pub numerical_solves: u64,
     pub failures: u64,
     pub broken_total: u64,
     pub last_broken: Vec<String>,
     pub max_utilization: f64,
     pub max_solve_ms: f64,
     pub skipped_dynamic: usize,
-    cache: Option<(u64, f64)>,
+    cache: Option<StressCache>,
+    requires_damage_update: bool,
+    static_components: BTreeMap<Vec<String>, StaticComponentCache>,
+}
+
+struct StaticComponentCache {
+    key: u64,
+    report: StressComponentReport,
+    bonds: Vec<String>,
+    max_utilization: f64,
+}
+
+#[derive(Clone, Copy)]
+struct StressCache {
+    key: u64,
+    source_tick: u32,
+    loads_tick: u32,
+    settings_tick: u32,
+    gravity: Vec3,
+    retry_at: f64,
 }
 
 pub(crate) fn update_stress(world: &mut World) {
@@ -101,17 +122,33 @@ pub(crate) fn update_stress(world: &mut World) {
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
     for building in buildings {
-        let mut state = world
-            .entity_mut(building)
-            .take::<StressState>()
-            .unwrap_or_default();
+        if world.get::<StressState>(building).is_none() {
+            world.entity_mut(building).insert(StressState::default());
+        }
+        let mut state = std::mem::take(&mut *world.get_mut::<StressState>(building).unwrap());
         state.last_broken.clear();
+        let source_tick = world
+            .entity(building)
+            .get_ref::<BuildingInstance>()
+            .unwrap()
+            .last_changed()
+            .get();
+        let loads_tick = world
+            .get_resource_ref::<StructuralLoads>()
+            .unwrap()
+            .last_changed()
+            .get();
+        let settings_tick = world
+            .get_resource_ref::<StressSettings>()
+            .unwrap()
+            .last_changed()
+            .get();
         let instance = world.get::<BuildingInstance>(building).unwrap();
         let Some(asset) = world
             .resource::<Assets<DestructibleAsset>>()
             .get(&instance.asset)
         else {
-            world.entity_mut(building).insert(state);
+            *world.get_mut::<StressState>(building).unwrap() = state;
             continue;
         };
         let settings = world.resource::<StressSettings>();
@@ -123,28 +160,39 @@ pub(crate) fn update_stress(world: &mut World) {
             .0
             .get(&building)
             .unwrap_or(&empty_loads);
-        let mut hash = std::hash::DefaultHasher::new();
-        instance.asset.id().hash(&mut hash);
-        for (id, chunk) in &instance.chunks {
-            id.hash(&mut hash);
-            chunk.alive.hash(&mut hash);
-        }
-        instance.bonds.hash(&mut hash);
-        for value in local_gravity.to_array() {
-            value.to_bits().hash(&mut hash);
-        }
-        settings.solver.max_iterations.hash(&mut hash);
-        settings.solver.relative_tolerance.to_bits().hash(&mut hash);
-        for (id, load) in loads {
-            id.hash(&mut hash);
-            for value in load.force.into_iter().chain(load.moment) {
+        let unchanged = state.cache.is_some_and(|cache| {
+            cache.source_tick == source_tick
+                && cache.loads_tick == loads_tick
+                && cache.settings_tick == settings_tick
+                && cache.gravity == local_gravity
+        });
+        let key = if unchanged {
+            state.cache.unwrap().key
+        } else {
+            let mut hash = std::hash::DefaultHasher::new();
+            instance.asset.id().hash(&mut hash);
+            for (id, chunk) in &instance.chunks {
+                id.hash(&mut hash);
+                chunk.alive.hash(&mut hash);
+            }
+            instance.bonds.hash(&mut hash);
+            for value in local_gravity.to_array() {
                 value.to_bits().hash(&mut hash);
             }
-        }
-        let key = hash.finish();
+            settings.solver.max_iterations.hash(&mut hash);
+            settings.solver.relative_tolerance.to_bits().hash(&mut hash);
+            for (id, load) in loads {
+                id.hash(&mut hash);
+                for value in load.force.into_iter().chain(load.moment) {
+                    value.to_bits().hash(&mut hash);
+                }
+            }
+            hash.finish()
+        };
         let retry = state.reports.iter().any(|report| !report.valid)
-            && state.cache.is_some_and(|(_, retry_at)| now >= retry_at);
-        if state.cache.is_none_or(|(old, _)| old != key) || retry {
+            && state.cache.is_some_and(|cache| now >= cache.retry_at);
+        let recompute = state.cache.is_none_or(|cache| cache.key != key) || retry;
+        if recompute {
             let started = bevy::platform::time::Instant::now();
             state.solves += 1;
             state.reports.clear();
@@ -160,6 +208,7 @@ pub(crate) fn update_stress(world: &mut World) {
                 .map(|(id, _)| id.clone())
                 .collect();
             let components = structure::components(&asset.manifest, &alive, &instance.bonds);
+            let mut previous_components = std::mem::take(&mut state.static_components);
             let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
             for patch in instance.patches.iter() {
                 sections.entry(patch.bond_id.clone()).or_default().extend(
@@ -175,6 +224,48 @@ pub(crate) fn update_stress(world: &mut World) {
                     state.skipped_dynamic += 1;
                     continue;
                 }
+                let mut component_hash = std::hash::DefaultHasher::new();
+                instance.asset.id().hash(&mut component_hash);
+                component.chunks.hash(&mut component_hash);
+                for value in local_gravity.to_array() {
+                    value.to_bits().hash(&mut component_hash);
+                }
+                settings.solver.max_iterations.hash(&mut component_hash);
+                settings
+                    .solver
+                    .relative_tolerance
+                    .to_bits()
+                    .hash(&mut component_hash);
+                for bond in &asset.manifest.bonds {
+                    if component.chunks.binary_search(&bond.a).is_ok()
+                        && component.chunks.binary_search(&bond.b).is_ok()
+                    {
+                        bond.id.hash(&mut component_hash);
+                        instance.bonds[&bond.id].hash(&mut component_hash);
+                    }
+                }
+                for id in &component.chunks {
+                    if let Some(load) = loads.get(id) {
+                        id.hash(&mut component_hash);
+                        for value in load.force.into_iter().chain(load.moment) {
+                            value.to_bits().hash(&mut component_hash);
+                        }
+                    }
+                }
+                let component_key = component_hash.finish();
+                if let Some(cached) = previous_components
+                    .remove(&component.chunks)
+                    .filter(|cached| cached.key == component_key)
+                {
+                    for id in &cached.bonds {
+                        state.bonds.get_mut(id).unwrap().valid = true;
+                    }
+                    state.reports.push(cached.report.clone());
+                    state.max_utilization = state.max_utilization.max(cached.max_utilization);
+                    state.static_components.insert(component.chunks, cached);
+                    continue;
+                }
+                state.numerical_solves += 1;
                 match stress::solve(
                     &asset.manifest,
                     &component.chunks,
@@ -219,7 +310,7 @@ pub(crate) fn update_stress(world: &mut World) {
                             .values()
                             .map(|d| DVec3::new(d[0], d[1], d[2]).length())
                             .fold(0.0_f64, f64::max);
-                        state.reports.push(StressComponentReport {
+                        let report = StressComponentReport {
                             chunks: component.chunks.len(),
                             valid: true,
                             iterations: solution.iterations,
@@ -228,7 +319,19 @@ pub(crate) fn update_stress(world: &mut World) {
                             force_balance_error: DVec3::from_array(force).length(),
                             moment_balance_error: DVec3::from_array(moment).length(),
                             max_displacement,
-                        });
+                        };
+                        let cached = StaticComponentCache {
+                            key: component_key,
+                            report: report.clone(),
+                            bonds: solution.bonds.keys().cloned().collect(),
+                            max_utilization: solution
+                                .bonds
+                                .values()
+                                .map(|bond| bond.utilization)
+                                .fold(0.0_f64, f64::max),
+                        };
+                        state.static_components.insert(component.chunks, cached);
+                        state.reports.push(report);
                         for (id, stress) in solution.bonds {
                             state.max_utilization = state.max_utilization.max(stress.utilization);
                             let damage = state.bonds.get(&id).map_or(0.0, |bond| bond.damage);
@@ -261,10 +364,38 @@ pub(crate) fn update_stress(world: &mut World) {
                     }
                 }
             }
-            state.cache = Some((key, now + 1.0));
             state.max_solve_ms = state
                 .max_solve_ms
                 .max(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        if recompute
+            || state
+                .cache
+                .is_none_or(|cache| cache.settings_tick != settings_tick)
+        {
+            state.requires_damage_update = state.bonds.iter().any(|(id, bond)| {
+                bond.valid
+                    && instance.bonds.get(id).copied().unwrap_or(false)
+                    && (bond.stress.utilization > 1.0
+                        || bond.stress.utilization >= settings.immediate_utilization
+                        || bond.damage >= 1.0)
+            });
+        }
+        state.cache = Some(StressCache {
+            key,
+            source_tick,
+            loads_tick,
+            settings_tick,
+            gravity: local_gravity,
+            retry_at: if recompute {
+                now + 1.0
+            } else {
+                state.cache.unwrap().retry_at
+            },
+        });
+        if !state.requires_damage_update {
+            *world.get_mut::<StressState>(building).unwrap() = state;
+            continue;
         }
         let mut candidates = Vec::new();
         for (id, bond) in &mut state.bonds {
@@ -291,6 +422,6 @@ pub(crate) fn update_stress(world: &mut World) {
         if !state.last_broken.is_empty() {
             crate::interaction::bond_feedback(world, building, &state.last_broken);
         }
-        world.entity_mut(building).insert(state);
+        *world.get_mut::<StressState>(building).unwrap() = state;
     }
 }

@@ -176,6 +176,210 @@ fn progressive_failure_uses_elapsed_fixed_time() {
 }
 
 #[test]
+fn healthy_cache_tracks_load_gravity_settings_and_topology_changes() {
+    let mut app = app(60.0);
+    app.world_mut()
+        .resource_mut::<StressSettings>()
+        .immediate_utilization = 1000.0;
+    app.world_mut()
+        .resource_mut::<StressSettings>()
+        .damage_seconds = 1000.0;
+    let root = spawn_beam(app.world_mut(), Vec3::ZERO);
+    tick(&mut app, 5);
+    let initial = app.world().get::<StressState>(root).unwrap();
+    let solves = initial.solves;
+    let initial_force = initial.bonds[RIGHT_BOND].stress.force[1].abs();
+    tick(&mut app, 120);
+    let unchanged = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(unchanged.solves, solves);
+    assert_eq!(
+        unchanged.bonds[RIGHT_BOND].stress.force[1].abs(),
+        initial_force
+    );
+
+    app.world_mut()
+        .resource_mut::<StructuralLoads>()
+        .0
+        .entry(root)
+        .or_default()
+        .insert(
+            BEAM.into(),
+            NodeLoad {
+                force: [0.0, -1000.0, 0.0],
+                moment: [0.0; 3],
+            },
+        );
+    tick(&mut app, 3);
+    let loaded = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(loaded.solves, solves + 1);
+    let loaded_force = loaded.bonds[RIGHT_BOND].stress.force[1].abs();
+    assert!(loaded_force > initial_force + 400.0);
+    app.world_mut().resource_mut::<Gravity>().0 *= 2.0;
+    tick(&mut app, 3);
+    let heavier = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(heavier.solves, solves + 2);
+    assert!(heavier.bonds[RIGHT_BOND].stress.force[1].abs() > loaded_force + 1000.0);
+
+    app.world_mut()
+        .resource_mut::<StressSettings>()
+        .solver
+        .relative_tolerance = 1e-7;
+    tick(&mut app, 3);
+    assert_eq!(
+        app.world().get::<StressState>(root).unwrap().solves,
+        solves + 3
+    );
+    remove_left_support(app.world_mut(), root);
+    tick(&mut app, 3);
+    let cantilever = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(cantilever.solves, solves + 4);
+    assert!(cantilever.bonds[RIGHT_BOND].stress.moment[2].abs() > 5000.0);
+    assert_eq!(cantilever.broken_total, 0);
+}
+
+#[test]
+fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
+    let mut warm = app(60.0);
+    let root = spawn_beam(warm.world_mut(), Vec3::ZERO);
+    tick(&mut warm, 5);
+    let state = warm.world().get::<StressState>(root).unwrap();
+    assert_eq!(state.broken_total, 0);
+    assert!(state.max_utilization > 0.0 && state.max_utilization < 1.0);
+    let threshold = state.max_utilization * 0.5;
+    let numerical_solves = state.numerical_solves;
+    warm.world_mut()
+        .resource_mut::<StressSettings>()
+        .immediate_utilization = threshold;
+    tick(&mut warm, 1);
+    let state = warm.world().get::<StressState>(root).unwrap();
+    assert!(state.broken_total > 0);
+    assert_eq!(state.numerical_solves, numerical_solves);
+    assert!(
+        warm.world()
+            .get::<BuildingInstance>(root)
+            .unwrap()
+            .bonds
+            .values()
+            .any(|active| !active)
+    );
+
+    let mut cold = app(60.0);
+    cold.world_mut()
+        .resource_mut::<StressSettings>()
+        .immediate_utilization = threshold;
+    let root = spawn_beam(cold.world_mut(), Vec3::ZERO);
+    tick(&mut cold, 1);
+    let state = cold.world().get::<StressState>(root).unwrap();
+    assert!(state.broken_total > 0);
+    assert_eq!(state.numerical_solves, 1);
+    assert!(state.max_utilization < 1.0);
+}
+
+#[test]
+fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
+    use crate::scene::{ChunkIdentity, ChunkInstance};
+    let mut app = app(60.0);
+    let root = spawn_beam(app.world_mut(), Vec3::ZERO);
+    let asset = app
+        .world()
+        .get::<BuildingInstance>(root)
+        .unwrap()
+        .asset
+        .clone();
+    let mut record = app
+        .world()
+        .resource::<Assets<DestructibleAsset>>()
+        .get(&asset)
+        .unwrap()
+        .manifest
+        .chunks
+        .iter()
+        .find(|chunk| chunk.id == BEAM)
+        .unwrap()
+        .clone();
+    record.id = "floating".into();
+    record.node = "floating".into();
+    record.position = [8.0, 6.0, 0.0];
+    let transform = record.transform();
+    let entity = app
+        .world_mut()
+        .spawn((
+            transform,
+            ChildOf(root),
+            Collider::cuboid(3.0, 0.2, 0.2),
+            ColliderDensity(0.0),
+            Mass(record.mass),
+            CenterOfMass(Vec3::ZERO),
+            AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
+            NoAutoMass,
+            NoAutoAngularInertia,
+            NoAutoCenterOfMass,
+            ChunkIdentity {
+                building: root,
+                id: "floating".into(),
+            },
+        ))
+        .id();
+    app.world_mut()
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .get_mut(&asset)
+        .unwrap()
+        .manifest
+        .chunks
+        .push(record);
+    app.world_mut()
+        .get_mut::<BuildingInstance>(root)
+        .unwrap()
+        .chunks
+        .insert(
+            "floating".into(),
+            ChunkInstance {
+                entity,
+                primitives: Vec::new(),
+                alive: true,
+                triangles: Vec::new(),
+                transform,
+                material: "concrete".into(),
+                detail: None,
+                cluster: None,
+            },
+        );
+    tick(&mut app, 5);
+    let state = app.world().get::<StressState>(root).unwrap();
+    let solves = state.numerical_solves;
+    let force = state.bonds[RIGHT_BOND].stress.force;
+    let supported = body(app.world(), root);
+    {
+        let mut instance = app.world_mut().get_mut::<BuildingInstance>(root).unwrap();
+        instance.chunks.get_mut("floating").unwrap().alive = false;
+        instance.topology_dirty = true;
+    }
+    tick(&mut app, 3);
+    let state = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(state.numerical_solves, solves);
+    assert_eq!(state.bonds[RIGHT_BOND].stress.force, force);
+    assert_eq!(body(app.world(), root), supported);
+    assert!(state.reports.iter().all(|report| report.valid));
+    assert!(app.world().get::<Collider>(entity).is_none());
+    app.world_mut()
+        .resource_mut::<StructuralLoads>()
+        .0
+        .entry(root)
+        .or_default()
+        .insert(
+            BEAM.into(),
+            NodeLoad {
+                force: [0.0, -1000.0, 0.0],
+                moment: [0.0; 3],
+            },
+        );
+    tick(&mut app, 3);
+    let state = app.world().get::<StressState>(root).unwrap();
+    assert_eq!(state.numerical_solves, solves + 1);
+    assert!(state.bonds[RIGHT_BOND].stress.force[1].abs() > force[1].abs() + 400.0);
+}
+
+#[test]
 fn failed_solve_does_not_break_bonds_and_recovers_after_settings_change() {
     let mut app = app(60.0);
     app.world_mut()

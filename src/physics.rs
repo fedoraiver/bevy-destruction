@@ -101,10 +101,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             .map(|(id, _)| id.clone())
             .collect::<BTreeSet<_>>();
         let components = structure::components(manifest, &alive, &instance.bonds);
-        let masses = components
-            .iter()
-            .map(|component| structure::cluster_mass(manifest, &component.chunks))
-            .collect::<Vec<_>>();
         let chunks = instance
             .chunks
             .iter()
@@ -148,6 +144,17 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     .then_some(parent)
             })
             .collect::<BTreeSet<_>>();
+        let masses = components
+            .iter()
+            .map(|component| {
+                let parent = chunks[&component.chunks[0]].1;
+                if parent.is_some_and(|parent| retained.contains(&parent)) {
+                    None
+                } else {
+                    Some(structure::cluster_mass(manifest, &component.chunks))
+                }
+            })
+            .collect::<Vec<_>>();
         // Purge contacts with old body owners before rebinding colliders.
         for &(entity, parent, _) in chunks.values() {
             if !parent.is_some_and(|parent| retained.contains(&parent)) {
@@ -178,6 +185,7 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                 next.push(parent);
                 continue;
             }
+            let mass = mass.unwrap();
             let motion = parent.map_or(initial, |parent| motions[&parent]);
             let pose = motion.transform();
             let global = GlobalTransform::from(pose);
@@ -232,7 +240,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                 world
                     .entity_mut(entity)
                     .insert((local, global * local, ChildOf(body)));
-                world.flush();
                 world.entity_mut(entity).insert(ColliderOf { body });
                 world
                     .get_mut::<BuildingInstance>(building)

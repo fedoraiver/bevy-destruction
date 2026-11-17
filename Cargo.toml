@@ -13,3 +13,12 @@ thiserror = "2"
 
 [profile.dev]
 debug = 1
+
+[profile.dev.package.bevy-destruction]
+opt-level = 2
+
+[profile.dev.package.avian3d]
+opt-level = 2
+
+[profile.dev.package.parry3d]
+opt-level = 2
