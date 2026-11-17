@@ -1,13 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
-use bevy::prelude::*;
+use bevy::{
+    math::{DMat3, DVec3},
+    prelude::*,
+};
 
 use crate::{
     DemoOptions,
-    asset::DestructibleAsset,
+    asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
+    physics::Cluster,
     scene::{BuildingInstance, ChunkIdentity, DemoCamera},
+    stress::{self, NodeLoad, SolverSettings},
 };
 
 #[cfg(test)]
@@ -61,12 +66,32 @@ pub struct ImpactStats {
     pub broken_bonds: u64,
     pub last_impulse: f32,
     pub max_impulse: f32,
+    pub structural_solves: u64,
+    pub structural_failures: u64,
+    pub pending_structural: usize,
+    pub max_structural_solve_ms: f64,
+    pub max_force_balance_ratio: f64,
+    pub max_moment_balance_ratio: f64,
+    pub max_gauge_reaction_ratio: f64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ImpulseLoad {
+    linear: DVec3,
+    angular: DVec3,
+}
+
+struct ClusterImpact {
+    building: Entity,
+    chunks: Vec<String>,
+    loads: BTreeMap<String, ImpulseLoad>,
 }
 
 #[derive(Resource, Default)]
 struct ImpactState {
     touching: BTreeSet<(Entity, Entity)>,
     pending: BTreeMap<(Entity, String), f32>,
+    shocks: VecDeque<ClusterImpact>,
 }
 
 pub(crate) fn reset(world: &mut World) {
@@ -186,6 +211,7 @@ fn impact_damage(world: &mut World) {
     let mut state = world.remove_resource::<ImpactState>().unwrap();
     let mut touching = BTreeSet::new();
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
+    let mut shocks = BTreeMap::<Entity, ClusterImpact>::new();
     let mut contact_count = 0;
     let mut max_impulse = 0.0_f32;
     for pair in world.resource::<ContactGraph>().iter_active_touching() {
@@ -194,8 +220,8 @@ fn impact_damage(world: &mut World) {
         } else {
             (pair.collider2, pair.collider1)
         };
-        touching.insert(key);
         if state.touching.contains(&key) {
+            touching.insert(key);
             continue;
         }
         let speed = pair
@@ -213,20 +239,74 @@ fn impact_damage(world: &mut World) {
             continue;
         }
         let mut structural_contact = false;
-        for (collider, impulse) in [(pair.collider1, -impulse), (pair.collider2, impulse)] {
+        for (collider, impulse, sign) in [
+            (pair.collider1, -impulse, -1.0),
+            (pair.collider2, impulse, 1.0),
+        ] {
             if let Some(identity) = world.get::<ChunkIdentity>(collider) {
-                *hits
-                    .entry((identity.building, identity.id.clone()))
-                    .or_default() += impulse;
+                let Some(instance) = world.get::<BuildingInstance>(identity.building) else {
+                    continue;
+                };
+                let chunk = &instance.chunks[&identity.id];
+                if !chunk.alive {
+                    continue;
+                }
+                let Some(body) = chunk.cluster else {
+                    continue;
+                };
+                let cluster = world.get::<Cluster>(body).unwrap();
+                if world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
+                    && cluster.chunks.len() > 1
+                {
+                    let asset = world
+                        .resource::<Assets<DestructibleAsset>>()
+                        .get(&instance.asset)
+                        .unwrap();
+                    let record = asset
+                        .manifest
+                        .chunks
+                        .iter()
+                        .find(|record| record.id == identity.id)
+                        .unwrap();
+                    let center = record
+                        .transform()
+                        .transform_point(record.center_of_mass.into())
+                        .as_dvec3();
+                    let origin = world.get::<Position>(body).unwrap().0;
+                    let inverse_rotation = world.get::<Rotation>(body).unwrap().0.conjugate();
+                    let shock = shocks.entry(body).or_insert_with(|| ClusterImpact {
+                        building: identity.building,
+                        chunks: cluster.chunks.clone(),
+                        loads: BTreeMap::new(),
+                    });
+                    let load = shock.loads.entry(identity.id.clone()).or_default();
+                    for manifold in &pair.manifolds {
+                        for point in &manifold.points {
+                            let impulse = (inverse_rotation
+                                * manifold.normal
+                                * (point.normal_impulse * sign))
+                                .as_dvec3();
+                            let contact = (inverse_rotation * (point.point - origin)).as_dvec3();
+                            load.linear += impulse;
+                            load.angular += (contact - center).cross(impulse);
+                        }
+                    }
+                } else {
+                    *hits
+                        .entry((identity.building, identity.id.clone()))
+                        .or_default() += impulse;
+                }
                 structural_contact = true;
             }
         }
         if structural_contact {
+            touching.insert(key);
             contact_count += 1;
             max_impulse = max_impulse.max(magnitude);
         }
     }
     state.touching = touching;
+    state.shocks.extend(shocks.into_values());
     for ((building, id), impulse) in hits {
         let Some(instance) = world.get::<BuildingInstance>(building) else {
             continue;
@@ -245,39 +325,16 @@ fn impact_damage(world: &mut World) {
             continue;
         };
         let impulse = world.get::<Rotation>(body).unwrap().0.conjugate() * impulse;
-        let bonds = asset
-            .manifest
-            .bonds
-            .iter()
-            .filter(|bond| (bond.a == id || bond.b == id) && instance.bonds[&bond.id])
-            .collect::<Vec<_>>();
-        let total_area = bonds.iter().map(|bond| bond.area).sum::<f32>();
-        for bond in bonds {
-            let material = |id: &str| &asset.manifest.materials[&instance.chunks[id].material];
-            let a = material(&bond.a);
-            let b = material(&bond.b);
-            let normal = Vec3::from(bond.normal);
-            let projected = impulse.dot(normal);
-            let tension = projected * if bond.a == id { -1.0 } else { 1.0 };
-            let normal_strength = if tension > 0.0 {
-                a.tension_strength.min(b.tension_strength)
-            } else {
-                a.compression_strength.min(b.compression_strength)
-            };
-            let normal_utilization =
-                tension.abs() / (total_area * IMPACT_DURATION * normal_strength);
-            let shear_utilization = (impulse - normal * projected).length()
-                / (total_area * IMPACT_DURATION * a.shear_strength.min(b.shear_strength));
-            let utilization = normal_utilization.max(shear_utilization);
-            if utilization >= 1.0 {
-                let pending = state
-                    .pending
-                    .entry((building, bond.id.clone()))
-                    .or_default();
-                *pending = pending.max(utilization);
-            }
-        }
+        queue_local_damage(
+            &asset.manifest,
+            instance,
+            building,
+            &id,
+            impulse,
+            &mut state.pending,
+        );
     }
+    let structural = process_dynamic_impact(world, &mut state);
     let mut pending = state
         .pending
         .iter()
@@ -311,6 +368,287 @@ fn impact_damage(world: &mut World) {
     stats.contacts += contact_count;
     stats.last_impulse = max_impulse;
     stats.max_impulse = stats.max_impulse.max(max_impulse);
+    if let Some(report) = structural {
+        stats.structural_solves += 1;
+        stats.structural_failures += u64::from(!report.valid);
+        stats.max_structural_solve_ms = stats.max_structural_solve_ms.max(report.elapsed_ms);
+        stats.max_force_balance_ratio = stats
+            .max_force_balance_ratio
+            .max(report.force_balance_ratio);
+        stats.max_moment_balance_ratio = stats
+            .max_moment_balance_ratio
+            .max(report.moment_balance_ratio);
+        stats.max_gauge_reaction_ratio = stats
+            .max_gauge_reaction_ratio
+            .max(report.gauge_reaction_ratio);
+    }
+    stats.pending_structural = state.shocks.len();
     stats.broken_bonds += broken.values().map(|ids| ids.len() as u64).sum::<u64>();
     world.insert_resource(state);
+}
+
+fn queue_local_damage(
+    manifest: &Manifest,
+    instance: &BuildingInstance,
+    building: Entity,
+    id: &str,
+    impulse: Vec3,
+    pending: &mut BTreeMap<(Entity, String), f32>,
+) {
+    let bonds = manifest
+        .bonds
+        .iter()
+        .filter(|bond| (bond.a == id || bond.b == id) && instance.bonds[&bond.id])
+        .collect::<Vec<_>>();
+    let total_area = bonds.iter().map(|bond| bond.area).sum::<f32>();
+    for bond in bonds {
+        let material = |id: &str| &manifest.materials[&instance.chunks[id].material];
+        let a = material(&bond.a);
+        let b = material(&bond.b);
+        let normal = Vec3::from(bond.normal);
+        let projected = impulse.dot(normal);
+        let tension = projected * if bond.a == id { -1.0 } else { 1.0 };
+        let normal_strength = if tension > 0.0 {
+            a.tension_strength.min(b.tension_strength)
+        } else {
+            a.compression_strength.min(b.compression_strength)
+        };
+        let normal_utilization = tension.abs() / (total_area * IMPACT_DURATION * normal_strength);
+        let shear_utilization = (impulse - normal * projected).length()
+            / (total_area * IMPACT_DURATION * a.shear_strength.min(b.shear_strength));
+        let utilization = normal_utilization.max(shear_utilization);
+        if utilization >= 1.0 {
+            let prior = pending.entry((building, bond.id.clone())).or_default();
+            *prior = prior.max(utilization);
+        }
+    }
+}
+
+struct InertialLoadCase {
+    loads: BTreeMap<String, NodeLoad>,
+    force_scale: f64,
+    moment_scale: f64,
+    force_balance_ratio: f64,
+    moment_balance_ratio: f64,
+}
+
+fn inertial_loads(
+    manifest: &Manifest,
+    chunks: &[String],
+    impulses: &BTreeMap<String, ImpulseLoad>,
+) -> Option<InertialLoadCase> {
+    let selected = chunks.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let records = manifest
+        .chunks
+        .iter()
+        .filter(|record| selected.contains(record.id.as_str()))
+        .collect::<Vec<_>>();
+    let mass = records
+        .iter()
+        .map(|record| f64::from(record.mass))
+        .sum::<f64>();
+    let center_of = |record: &crate::asset::ChunkRecord| {
+        record
+            .transform()
+            .transform_point(record.center_of_mass.into())
+            .as_dvec3()
+    };
+    let center = records
+        .iter()
+        .map(|record| center_of(record) * f64::from(record.mass))
+        .sum::<DVec3>()
+        / mass;
+    let inertia_of = |record: &crate::asset::ChunkRecord| {
+        let rotation = DMat3::from_cols_array(
+            &Mat3::from_quat(record.transform().rotation)
+                .to_cols_array()
+                .map(f64::from),
+        );
+        let local = DMat3::from_cols_array_2d(&record.inertia.map(|column| column.map(f64::from)));
+        rotation * local * rotation.transpose()
+    };
+    let mut inertia = DMat3::ZERO;
+    let mut linear = DVec3::ZERO;
+    let mut angular = DVec3::ZERO;
+    let mut force_scale = 0.0;
+    let mut moment_scale = 0.0;
+    for record in &records {
+        let r = center_of(record) - center;
+        let outer = DMat3::from_cols(r * r.x, r * r.y, r * r.z);
+        inertia += inertia_of(record)
+            + (DMat3::IDENTITY * r.length_squared() - outer) * f64::from(record.mass);
+        let impulse = impulses.get(&record.id).copied().unwrap_or_default();
+        linear += impulse.linear;
+        angular += impulse.angular + r.cross(impulse.linear);
+        force_scale += impulse.linear.length();
+        moment_scale += impulse.angular.length() + r.cross(impulse.linear).length();
+    }
+    if !inertia.is_finite() || inertia.determinant() <= 0.0 {
+        return None;
+    }
+    let delta_linear = linear / mass;
+    let delta_angular = inertia.inverse() * angular;
+    let duration = f64::from(IMPACT_DURATION);
+    force_scale = (force_scale / duration).max(1.0);
+    let length = (inertia.x_axis.x + inertia.y_axis.y + inertia.z_axis.z).sqrt() / mass.sqrt();
+    moment_scale = (moment_scale / duration).max(force_scale * length).max(1.0);
+    let mut loads = BTreeMap::new();
+    let mut force_residual = DVec3::ZERO;
+    let mut moment_residual = DVec3::ZERO;
+    for record in records {
+        let r = center_of(record) - center;
+        let impulse = impulses.get(&record.id).copied().unwrap_or_default();
+        let force = (impulse.linear
+            - (delta_linear + delta_angular.cross(r)) * f64::from(record.mass))
+            / duration;
+        let moment = (impulse.angular - inertia_of(record) * delta_angular) / duration;
+        force_residual += force;
+        moment_residual += r.cross(force) + moment;
+        loads.insert(
+            record.id.clone(),
+            NodeLoad {
+                force: force.to_array(),
+                moment: moment.to_array(),
+            },
+        );
+    }
+    Some(InertialLoadCase {
+        loads,
+        force_scale,
+        moment_scale,
+        force_balance_ratio: force_residual.length() / force_scale,
+        moment_balance_ratio: moment_residual.length() / moment_scale,
+    })
+}
+
+struct DynamicImpactReport {
+    valid: bool,
+    elapsed_ms: f64,
+    force_balance_ratio: f64,
+    moment_balance_ratio: f64,
+    gauge_reaction_ratio: f64,
+}
+
+fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
+    while let Some(shock) = state.shocks.pop_front() {
+        let Some(instance) = world.get::<BuildingInstance>(shock.building) else {
+            continue;
+        };
+        let mut groups = BTreeMap::<Entity, Vec<String>>::new();
+        for id in &shock.chunks {
+            if let Some(chunk) = instance.chunks.get(id).filter(|chunk| chunk.alive)
+                && let Some(body) = chunk.cluster
+            {
+                groups.entry(body).or_default().push(id.clone());
+            }
+        }
+        if groups.len() != 1
+            || groups
+                .values()
+                .next()
+                .is_none_or(|chunks| chunks.len() != shock.chunks.len())
+        {
+            for chunks in groups.into_values() {
+                let loads = shock
+                    .loads
+                    .iter()
+                    .filter(|(id, _)| chunks.contains(id))
+                    .map(|(id, load)| (id.clone(), *load))
+                    .collect::<BTreeMap<_, _>>();
+                if !loads.is_empty() {
+                    state.shocks.push_front(ClusterImpact {
+                        building: shock.building,
+                        chunks,
+                        loads,
+                    });
+                }
+            }
+            continue;
+        }
+        let Some(asset) = world
+            .resource::<Assets<DestructibleAsset>>()
+            .get(&instance.asset)
+        else {
+            continue;
+        };
+        if shock.chunks.len() < 2 {
+            continue;
+        }
+        let started = bevy::platform::time::Instant::now();
+        let Some(case) = inertial_loads(&asset.manifest, &shock.chunks, &shock.loads) else {
+            continue;
+        };
+        let mut report = DynamicImpactReport {
+            valid: false,
+            elapsed_ms: 0.0,
+            force_balance_ratio: case.force_balance_ratio,
+            moment_balance_ratio: case.moment_balance_ratio,
+            gauge_reaction_ratio: f64::INFINITY,
+        };
+        let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
+        for patch in instance
+            .patches
+            .iter()
+            .filter(|patch| shock.chunks.contains(&patch.a) && shock.chunks.contains(&patch.b))
+        {
+            sections.entry(patch.bond_id.clone()).or_default().extend(
+                patch
+                    .triangles
+                    .iter()
+                    .flat_map(|triangle| triangle.iter())
+                    .map(|point| point.to_array().map(f64::from)),
+            );
+        }
+        let result = if case.force_balance_ratio <= 1e-6 && case.moment_balance_ratio <= 1e-6 {
+            stress::solve_with_gauge(
+                &asset.manifest,
+                &shock.chunks,
+                &instance.bonds,
+                &case.loads,
+                &SolverSettings::default(),
+                Some(&sections),
+                &shock.chunks[0],
+            )
+        } else {
+            Err(stress::SolveError::InvalidModel(
+                "Unbalanced inertial impact loads".into(),
+            ))
+        };
+        match result {
+            Ok(solution) => {
+                let reaction = &solution.reactions[&shock.chunks[0]];
+                report.gauge_reaction_ratio = (DVec3::from_array(reaction.force).length()
+                    / case.force_scale)
+                    .max(DVec3::from_array(reaction.moment).length() / case.moment_scale);
+                if report.gauge_reaction_ratio <= 1e-5 {
+                    report.valid = true;
+                    for (id, bond) in solution.bonds {
+                        if bond.utilization >= 1.0 {
+                            let prior = state.pending.entry((shock.building, id)).or_default();
+                            *prior = prior.max(bond.utilization as f32);
+                        }
+                    }
+                }
+            }
+            Err(error) => warn!(
+                "Dynamic impact stress failed for {:?}: {error}",
+                shock.building
+            ),
+        }
+        if !report.valid {
+            for (id, load) in &shock.loads {
+                queue_local_damage(
+                    &asset.manifest,
+                    instance,
+                    shock.building,
+                    id,
+                    load.linear.as_vec3(),
+                    &mut state.pending,
+                );
+            }
+        }
+        report.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        return Some(report);
+    }
+    None
 }

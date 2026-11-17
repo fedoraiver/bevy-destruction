@@ -75,6 +75,121 @@ fn close(actual: f64, expected: f64, relative: f64) {
     );
 }
 
+#[test]
+fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
+    let manifest = fixture(&[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], &[(0, 1)], &[0, 1]);
+    let anchors = manifest
+        .anchors
+        .iter()
+        .map(|anchor| anchor.chunk.clone())
+        .collect::<Vec<_>>();
+    let loads = BTreeMap::from([
+        (
+            "node-000".into(),
+            NodeLoad {
+                force: [100.0, 20.0, -30.0],
+                moment: [0.0, 30.0, 20.0],
+            },
+        ),
+        (
+            "node-001".into(),
+            NodeLoad {
+                force: [-100.0, -20.0, 30.0],
+                moment: [0.0, 30.0, 20.0],
+            },
+        ),
+    ]);
+    let first = solve_with_gauge(
+        &manifest,
+        &ids(&manifest),
+        &bonds(&manifest),
+        &loads,
+        &SolverSettings::default(),
+        None,
+        "node-000",
+    )
+    .unwrap();
+    let second = solve_with_gauge(
+        &manifest,
+        &ids(&manifest),
+        &bonds(&manifest),
+        &loads,
+        &SolverSettings::default(),
+        None,
+        "node-001",
+    )
+    .unwrap();
+    for result in [&first, &second] {
+        close(result.bonds["bond-000"].force[0], -100.0, 1e-10);
+        for reaction in result.reactions.values() {
+            assert!(norm3(reaction.force) < 1e-8);
+            assert!(norm3(reaction.moment) < 1e-8);
+        }
+    }
+    for axis in 0..3 {
+        close(
+            first.bonds["bond-000"].force[axis],
+            second.bonds["bond-000"].force[axis],
+            1e-10,
+        );
+        close(
+            first.bonds["bond-000"].moment[axis],
+            second.bonds["bond-000"].moment[axis],
+            1e-10,
+        );
+    }
+    assert_eq!(
+        manifest
+            .anchors
+            .iter()
+            .map(|anchor| anchor.chunk.clone())
+            .collect::<Vec<_>>(),
+        anchors
+    );
+
+    let unbalanced_force = load(&manifest, 0, [1.0, 0.0, 0.0], [0.0; 3]);
+    assert!(matches!(
+        solve_with_gauge(
+            &manifest,
+            &ids(&manifest),
+            &bonds(&manifest),
+            &unbalanced_force,
+            &SolverSettings::default(),
+            None,
+            "node-000"
+        ),
+        Err(SolveError::InvalidModel(_))
+    ));
+    let unbalanced_moment = BTreeMap::from([
+        (
+            "node-000".into(),
+            NodeLoad {
+                force: [0.0, 1.0, 0.0],
+                ..Default::default()
+            },
+        ),
+        (
+            "node-001".into(),
+            NodeLoad {
+                force: [0.0, -1.0, 0.0],
+                ..Default::default()
+            },
+        ),
+    ]);
+    assert!(matches!(
+        solve_with_gauge(
+            &manifest,
+            &ids(&manifest),
+            &bonds(&manifest),
+            &unbalanced_moment,
+            &SolverSettings::default(),
+            None,
+            "node-000"
+        ),
+        Err(SolveError::InvalidModel(_))
+    ));
+}
+
 fn load(manifest: &Manifest, index: usize, force: V3, moment: V3) -> BTreeMap<String, NodeLoad> {
     BTreeMap::from([(
         manifest.chunks[index].id.clone(),
@@ -212,11 +327,12 @@ fn grid() -> Manifest {
 fn dense_reference(model: &Model) -> Vec<f64> {
     let n = model.load.len();
     let mut matrix = vec![vec![0.0; n]; n];
-    for (i, row) in model.rows.iter().enumerate() {
-        for (&j, block) in row {
+    for (i, offsets) in model.row_offsets.windows(2).enumerate() {
+        for block in &model.blocks[offsets[0]..offsets[1]] {
+            let j = block.column;
             for r in 0..6 {
                 for c in 0..6 {
-                    matrix[i * 6 + r][j * 6 + c] += block[r][c];
+                    matrix[i * 6 + r][j * 6 + c] += block.values[r][c];
                 }
             }
         }

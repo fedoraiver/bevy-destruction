@@ -104,9 +104,16 @@ struct Element {
 struct Model {
     nodes: Vec<Node>,
     elements: Vec<Element>,
-    rows: Vec<BTreeMap<usize, M6>>,
+    row_offsets: Vec<usize>,
+    blocks: Vec<StiffnessBlock>,
+    diagonal_blocks: Vec<Option<usize>>,
     load: Vec<f64>,
     length_scale: f64,
+}
+
+struct StiffnessBlock {
+    column: usize,
+    values: M6,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -119,6 +126,63 @@ pub fn solve(
     settings: &SolverSettings,
     section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
 ) -> Result<StressSolution, SolveError> {
+    validate_sections(section_vertices)?;
+    let model = assemble(manifest, chunks, active_bonds, gravity, external_loads)?;
+    let (x, iterations, relative_residual) = pcg(&model, settings)?;
+    Ok(model.recover(&x, iterations, relative_residual, section_vertices))
+}
+
+/// Solves balanced free-body loads; the gauge removes rigid modes, not a physical support.
+/// Asset anchors are ignored and remain unchanged.
+pub fn solve_with_gauge(
+    manifest: &Manifest,
+    chunks: &[String],
+    active_bonds: &BTreeMap<String, bool>,
+    external_loads: &BTreeMap<String, NodeLoad>,
+    settings: &SolverSettings,
+    section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
+    gauge: &str,
+) -> Result<StressSolution, SolveError> {
+    validate_sections(section_vertices)?;
+    let model = assemble_with_gauge(
+        manifest,
+        chunks,
+        active_bonds,
+        Vec3::ZERO,
+        external_loads,
+        Some(gauge),
+    )?;
+    let reference = scale3(
+        model
+            .nodes
+            .iter()
+            .fold([0.0; 3], |sum, node| add3(sum, node.center)),
+        1.0 / model.nodes.len() as f64,
+    );
+    let mut force = [0.0; 3];
+    let mut moment = [0.0; 3];
+    let mut force_scale = 0.0;
+    let mut moment_scale = 0.0;
+    for node in &model.nodes {
+        let offset = sub3(node.center, reference);
+        force = add3(force, node.load.force);
+        moment = add3(
+            moment,
+            add3(cross3(offset, node.load.force), node.load.moment),
+        );
+        force_scale += norm3(node.load.force);
+        moment_scale += norm3(offset) * norm3(node.load.force) + norm3(node.load.moment);
+    }
+    if norm3(force) > 1e-6 * force_scale || norm3(moment) > 1e-6 * moment_scale {
+        return invalid("Numerical gauge loads must balance force and moment");
+    }
+    let (x, iterations, relative_residual) = pcg(&model, settings)?;
+    Ok(model.recover(&x, iterations, relative_residual, section_vertices))
+}
+
+fn validate_sections(
+    section_vertices: Option<&BTreeMap<String, Vec<V3>>>,
+) -> Result<(), SolveError> {
     if section_vertices.is_some_and(|sections| {
         sections
             .values()
@@ -128,9 +192,7 @@ pub fn solve(
     }) {
         return invalid("Non-finite interface section vertices");
     }
-    let model = assemble(manifest, chunks, active_bonds, gravity, external_loads)?;
-    let (x, iterations, relative_residual) = pcg(&model, settings)?;
-    Ok(model.recover(&x, iterations, relative_residual, section_vertices))
+    Ok(())
 }
 
 fn assemble(
@@ -140,6 +202,24 @@ fn assemble(
     gravity: Vec3,
     external_loads: &BTreeMap<String, NodeLoad>,
 ) -> Result<Model, SolveError> {
+    assemble_with_gauge(
+        manifest,
+        chunks,
+        active_bonds,
+        gravity,
+        external_loads,
+        None,
+    )
+}
+
+fn assemble_with_gauge(
+    manifest: &Manifest,
+    chunks: &[String],
+    active_bonds: &BTreeMap<String, bool>,
+    gravity: Vec3,
+    external_loads: &BTreeMap<String, NodeLoad>,
+    gauge: Option<&str>,
+) -> Result<Model, SolveError> {
     if !gravity.is_finite() {
         return invalid("Gravity is not finite");
     }
@@ -148,12 +228,19 @@ fn assemble(
         .iter()
         .map(|record| (record.id.as_str(), record))
         .collect::<BTreeMap<_, _>>();
-    let anchors = manifest
-        .anchors
-        .iter()
-        .filter(|anchor| anchor.kind == "fixed")
-        .map(|anchor| anchor.chunk.as_str())
-        .collect::<BTreeSet<_>>();
+    if gauge.is_some_and(|id| !chunks.iter().any(|chunk| chunk == id)) {
+        return invalid("Numerical gauge must identify a solved chunk");
+    }
+    let anchors = if let Some(gauge) = gauge {
+        BTreeSet::from([gauge])
+    } else {
+        manifest
+            .anchors
+            .iter()
+            .filter(|anchor| anchor.kind == "fixed")
+            .map(|anchor| anchor.chunk.as_str())
+            .collect::<BTreeSet<_>>()
+    };
     let mut nodes = Vec::new();
     let mut indices = BTreeMap::new();
     let mut free_count = 0;
@@ -378,29 +465,46 @@ fn assemble(
             }
         }
     }
+    let mut row_offsets = Vec::with_capacity(rows.len() + 1);
+    let mut blocks = Vec::with_capacity(rows.iter().map(BTreeMap::len).sum());
+    let mut diagonal_blocks = Vec::with_capacity(rows.len());
+    row_offsets.push(0);
+    for (index, row) in rows.into_iter().enumerate() {
+        let mut diagonal = None;
+        for (column, values) in row {
+            if index == column {
+                diagonal = Some(blocks.len());
+            }
+            blocks.push(StiffnessBlock { column, values });
+        }
+        diagonal_blocks.push(diagonal);
+        row_offsets.push(blocks.len());
+    }
     Ok(Model {
         nodes,
         elements,
-        rows,
+        row_offsets,
+        blocks,
+        diagonal_blocks,
         load,
         length_scale,
     })
 }
 
 impl Model {
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut result = vec![0.0; x.len()];
-        for (i, row) in self.rows.iter().enumerate() {
+    fn multiply(&self, x: &[f64], result: &mut [f64]) {
+        for (i, offsets) in self.row_offsets.windows(2).enumerate() {
             let mut sum = [0.0; 6];
-            for (&j, block) in row {
-                let column: &V6 = x[j * 6..j * 6 + 6].try_into().unwrap();
-                for r in 0..6 {
-                    sum[r] += dot6(&block[r], column);
+            for block in &self.blocks[offsets[0]..offsets[1]] {
+                let column: &V6 = x[block.column * 6..block.column * 6 + 6]
+                    .try_into()
+                    .unwrap();
+                for (value, row) in sum.iter_mut().zip(&block.values) {
+                    *value += dot6(row, column);
                 }
             }
             result[i * 6..i * 6 + 6].copy_from_slice(&sum);
         }
-        result
     }
 
     fn recover(
@@ -556,11 +660,11 @@ fn pcg(model: &Model, settings: &SolverSettings) -> Result<(Vec<f64>, usize, f64
         return invalid("Relative solver tolerance must be between zero and one");
     }
     let mut factors = Vec::new();
-    for (index, row) in model.rows.iter().enumerate() {
-        let Some(diagonal) = row.get(&index) else {
+    for diagonal in &model.diagonal_blocks {
+        let Some(diagonal) = diagonal else {
             return invalid("Missing stiffness diagonal");
         };
-        let Some(factor) = cholesky6(*diagonal) else {
+        let Some(factor) = cholesky6(model.blocks[*diagonal].values) else {
             return invalid("Non-positive local stiffness block");
         };
         factors.push(factor);
@@ -571,11 +675,14 @@ fn pcg(model: &Model, settings: &SolverSettings) -> Result<(Vec<f64>, usize, f64
         return Ok((x, 0, 0.0));
     }
     let mut r = model.load.clone();
-    let mut z = precondition(&factors, &r);
+    let mut z = vec![0.0; r.len()];
+    precondition(&factors, &r, &mut z);
     let mut p = z.clone();
+    let mut ap = vec![0.0; r.len()];
+    let mut ax = vec![0.0; r.len()];
     let mut rz = dot(&r, &z);
     for iteration in 1..=settings.max_iterations {
-        let ap = model.multiply(&p);
+        model.multiply(&p, &mut ap);
         let curvature = dot(&p, &ap);
         if !curvature.is_finite() || curvature <= 0.0 || !rz.is_finite() || rz <= 0.0 {
             return Err(SolveError::NumericalBreakdown { iteration });
@@ -587,14 +694,16 @@ fn pcg(model: &Model, settings: &SolverSettings) -> Result<(Vec<f64>, usize, f64
         }
         let recursive_residual = dot(&r, &r).sqrt() / norm_b;
         if recursive_residual <= settings.relative_tolerance || iteration % 128 == 0 {
-            let ax = model.multiply(&x);
-            r = model.load.iter().zip(ax).map(|(b, ax)| b - ax).collect();
+            model.multiply(&x, &mut ax);
+            for ((residual, b), ax) in r.iter_mut().zip(&model.load).zip(&ax) {
+                *residual = b - ax;
+            }
             let true_residual = dot(&r, &r).sqrt() / norm_b;
             if true_residual <= settings.relative_tolerance {
                 return Ok((x, iteration, true_residual));
             }
         }
-        z = precondition(&factors, &r);
+        precondition(&factors, &r, &mut z);
         let next_rz = dot(&r, &z);
         let beta = next_rz / rz;
         for i in 0..p.len() {
@@ -602,7 +711,7 @@ fn pcg(model: &Model, settings: &SolverSettings) -> Result<(Vec<f64>, usize, f64
         }
         rz = next_rz;
     }
-    let ax = model.multiply(&x);
+    model.multiply(&x, &mut ax);
     let residual = model
         .load
         .iter()
@@ -617,9 +726,12 @@ fn pcg(model: &Model, settings: &SolverSettings) -> Result<(Vec<f64>, usize, f64
     })
 }
 
-fn precondition(factors: &[M6], residual: &[f64]) -> Vec<f64> {
-    let mut output = Vec::with_capacity(residual.len());
-    for (factor, rhs) in factors.iter().zip(residual.as_chunks::<6>().0) {
+fn precondition(factors: &[M6], residual: &[f64], output: &mut [f64]) {
+    for ((factor, rhs), result) in factors
+        .iter()
+        .zip(residual.as_chunks::<6>().0)
+        .zip(output.as_chunks_mut::<6>().0)
+    {
         let mut x = [0.0; 6];
         for i in 0..6 {
             x[i] = (rhs[i] - (0..i).map(|j| factor[i][j] * x[j]).sum::<f64>()) / factor[i][i];
@@ -627,9 +739,8 @@ fn precondition(factors: &[M6], residual: &[f64]) -> Vec<f64> {
         for i in (0..6).rev() {
             x[i] = (x[i] - (i + 1..6).map(|j| factor[j][i] * x[j]).sum::<f64>()) / factor[i][i];
         }
-        output.extend(x);
+        *result = x;
     }
-    output
 }
 
 fn cholesky6(matrix: M6) -> Option<M6> {

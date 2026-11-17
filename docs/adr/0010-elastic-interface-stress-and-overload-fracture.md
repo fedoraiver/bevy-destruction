@@ -75,7 +75,7 @@ eligible = damage >= 1 OR utilization >= 4
 - `src/stress_runtime.rs`：按实例缓存、诊断、固定步损伤、预算断键、失败重试与动态分量排除。
 - `src/stress_smoke.rs`：真实自重求解后，使用明确质量与几何的双柱混凝土梁验证支撑移除、仍连通时的过载、自动断键、下落和休眠，并验证刚性撞击物。
 - 纯求解测试已覆盖悬臂力/力矩、截面应力、闭环稠密参考解、对称与不同刚度路径分担、移除路径后的重分配、刚体零应变、遍历顺序、无效输入及未收敛。
-- 最新完整 Rust 验证已通过 `cargo test`：65 项通过、0 项失败；`cargo clippy --all-targets -- -D warnings` 和 `cargo fmt --check` 均通过。Blender 资产与接触精度相关 28 项测试通过。
+- 本阶段完整 Rust 验证已通过 `cargo test`：65 项通过、0 项失败；`cargo clippy --all-targets -- -D warnings` 和 `cargo fmt --check` 均通过。Blender 资产与接触精度相关 28 项测试通过。后续新增验证见 ADR 0013 至 0015。
 - 六种资产的完整自重均收敛且承载率低于 1。图形验收通过 `--scene <name> --stress-smoke-test output/acceptance/stress-<name>` 检查实际资产、下述持续过载梁及两种有限质量刚性撞击物；每次保存 7 张阶段截图和一份报告。
 - 六种场景的最终图形路径均通过：各报告 `errors=[]`，完整自重求解有效且相对残差不超过 `1e-8`；持续过载、自动断键、下落、休眠，以及球/方块真实碰撞后触发断裂且保持自身完整并改变速度的检查均通过。每条路径运行 1000 个验证帧，均生成 7 张阶段截图。
 
@@ -104,8 +104,8 @@ eligible = damage >= 1 OR utilization >= 4
 ## 未决问题与范围
 
 - 未实现大变形、屈曲、可见挠曲、各向异性木材、钢筋/钢接头专用模型或工程安全保证。
-- 动态残骸的瞬态内部应力和接触支撑反馈未实现；[ADR 0011](0011-building-catalog-and-rigid-impact-scenarios.md) 的撞击断裂使用独立的标定冲量判据，不能冒充动态应力求解。
-- 大图缓存复用、异步求解、长期损伤/疲劳、断裂能与材料玩法标定需后续验证。
+- 本记录首轮未实现动态内部载荷；后续 [ADR 0014](0014-inertial-cluster-impact-fracture.md) 已补充动态多块簇撞击的惯性平衡连接求解。完整瞬态应力波和接触支撑反馈仍未实现；静态建筑的局部冲量路径保留 [ADR 0011](0011-building-catalog-and-rigid-impact-scenarios.md) 的标定边界。
+- 分量结果缓存和连续稀疏存储已在 [ADR 0015](0015-structural-and-collision-runtime-performance.md) 实现并记录测量；异步求解、长期损伤/疲劳、断裂能与材料玩法标定仍需后续验证。
 - 资产制作中低于几何精度的线状接触已按 [ADR 0012](0012-resolvable-contact-sections.md) 排除；求解器仍拒绝真正退化或不可解的有效输入。
 
 ## 来源
