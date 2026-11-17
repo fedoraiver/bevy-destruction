@@ -143,6 +143,13 @@ fn subthreshold_speed_contacts_do_not_break_bonds_or_accumulate_resting_damage()
 }
 
 fn spawn_dropped_tower(app: &mut App) -> (Entity, Vec<String>) {
+    spawn_dropped_tower_at_height(app, None)
+}
+
+fn spawn_dropped_tower_at_height(
+    app: &mut App,
+    ground_clearance: Option<f32>,
+) -> (Entity, Vec<String>) {
     use crate::{
         asset::Manifest,
         scene::{BuildingBounds, ChunkInstance},
@@ -151,6 +158,28 @@ fn spawn_dropped_tower(app: &mut App) -> (Entity, Vec<String>) {
         "../assets/buildings/highrise_slab.destruction.json"
     ))
     .unwrap();
+    let offset = ground_clearance.map_or(0.0, |height| {
+        let lowest = manifest
+            .chunks
+            .iter()
+            .filter(|record| {
+                record
+                    .transform()
+                    .transform_point(record.center_of_mass.into())
+                    .y
+                    >= 16.0
+            })
+            .flat_map(|record| {
+                record.colliders.iter().flat_map(move |proxy| {
+                    proxy
+                        .vertices
+                        .iter()
+                        .map(move |&point| record.transform().transform_point(point.into()).y)
+                })
+            })
+            .fold(f32::INFINITY, f32::min);
+        height - lowest
+    });
     let asset = app
         .world_mut()
         .resource_mut::<Assets<DestructibleAsset>>()
@@ -160,7 +189,7 @@ fn spawn_dropped_tower(app: &mut App) -> (Entity, Vec<String>) {
         });
     let root = app
         .world_mut()
-        .spawn((Transform::IDENTITY, Visibility::Visible))
+        .spawn((Transform::from_xyz(0.0, offset, 0.0), Visibility::Visible))
         .id();
     let mut instance = BuildingInstance::pending(asset);
     instance.bounds = Some(BuildingBounds {
@@ -311,6 +340,16 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         .iter()
         .map(|body| app.world().get::<Cluster>(*body).unwrap().chunks.len())
         .collect::<Vec<_>>();
+    eprintln!(
+        "upper-tower landing: broken={} dynamic={} solves={} released={} invalidated={} pending={} peak_utilization={:.3} speed={max_speed:.3} impulse={max_impulse:.1} sizes={sizes:?}",
+        stats.broken_bonds,
+        stats.structural_broken_bonds,
+        stats.structural_solves,
+        stats.released_structural_events,
+        stats.invalidated_structural_events,
+        stats.pending_structural,
+        stats.max_structural_utilization,
+    );
     assert!(
         saw_fast_contact,
         "Drop did not reach an actual fast ground contact"
@@ -325,7 +364,28 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     assert!(stats.max_force_balance_ratio < 1e-6);
     assert!(stats.max_moment_balance_ratio < 1e-6);
     assert!(stats.max_gauge_reaction_ratio < 1e-5);
-    assert!(sizes.iter().max().unwrap() + 4 < upper.len());
+    assert_eq!(
+        stats.pending_structural, 0,
+        "Landing event work did not finish"
+    );
+    assert!(stats.released_structural_events > 0);
+    assert!(
+        sizes.iter().max().unwrap() + 4 < upper.len(),
+        "Landing left an almost intact tower: {} broken bonds ({} dynamic), {} solves, {} released events, {} pending, peak utilization {}, sizes {sizes:?}",
+        stats.broken_bonds,
+        stats.structural_broken_bonds,
+        stats.structural_solves,
+        stats.released_structural_events,
+        stats.pending_structural,
+        stats.max_structural_utilization,
+    );
+    assert!(
+        sizes.iter().any(|&size| size > 1),
+        "Landing atomized all {} chunks: {} broken bonds, {} solves, sizes {sizes:?}",
+        upper.len(),
+        stats.broken_bonds,
+        stats.structural_solves,
+    );
     assert!(
         app.world()
             .get::<BuildingInstance>(building)
@@ -342,6 +402,70 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         .get(&instance.asset)
         .unwrap()
         .manifest;
+    let records = manifest
+        .chunks
+        .iter()
+        .filter(|record| upper.contains(&record.id))
+        .map(|record| (record.id.as_str(), record))
+        .collect::<BTreeMap<_, _>>();
+    let source_y = |record: &crate::asset::ChunkRecord| {
+        record
+            .transform()
+            .transform_point(record.center_of_mass.into())
+            .y
+    };
+    let first_floor = records
+        .values()
+        .filter(|record| record.kind == "floor")
+        .min_by(|a, b| source_y(a).total_cmp(&source_y(b)))
+        .unwrap();
+    let first_level = first_floor.part_id.rsplit_once('-').unwrap().0;
+    let next_floor_y = records
+        .values()
+        .filter(|record| {
+            record.kind == "floor" && record.part_id.rsplit_once('-').unwrap().0 != first_level
+        })
+        .map(|record| source_y(record))
+        .min_by(f32::total_cmp)
+        .unwrap();
+    let roof_y = records
+        .values()
+        .filter(|record| record.kind == "roof")
+        .map(|record| source_y(record))
+        .min_by(f32::total_cmp)
+        .unwrap();
+    let main_body = *instance
+        .clusters
+        .iter()
+        .max_by_key(|&&body| app.world().get::<Cluster>(body).unwrap().chunks.len())
+        .unwrap();
+    assert!(
+        instance.clusters.iter().any(|&body| {
+            let cluster = app.world().get::<Cluster>(body).unwrap();
+            let has_lower_kind = |kind| {
+                cluster.chunks.iter().any(|id| {
+                    let record = records[id.as_str()];
+                    record.kind == kind && source_y(record) < next_floor_y
+                })
+            };
+            body != main_body
+                && cluster.chunks.len() > 1
+                && has_lower_kind("floor")
+                && has_lower_kind("wall")
+        }),
+        "Landing did not separate a connected lower-storey floor-and-wall section"
+    );
+    let broken_y = manifest
+        .bonds
+        .iter()
+        .filter(|bond| {
+            upper.contains(&bond.a) && upper.contains(&bond.b) && !instance.bonds[&bond.id]
+        })
+        .map(|bond| bond.center[1])
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), y| {
+            (min.min(y), max.max(y))
+        });
+    eprintln!("broken bond source_y={:.3}..{:.3}", broken_y.0, broken_y.1);
     let expected_mass = manifest
         .chunks
         .iter()
@@ -358,8 +482,145 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         manifest.bonds.iter().any(|bond| upper.contains(&bond.a)
             && upper.contains(&bond.b)
             && !instance.bonds[&bond.id]
-            && bond.center[1] > 20.0),
+            && bond.center[1] > 20.0
+            && bond.center[1] < roof_y
+            && records[bond.a.as_str()].kind != "roof"
+            && records[bond.b.as_str()].kind != "roof"),
         "Landing only chipped its directly contacting floor; no load reached internal upper-storey bonds"
+    );
+}
+
+#[test]
+fn tower_landing_fracture_responds_to_drop_height() {
+    let mut outcomes = Vec::new();
+    for height in [0.5, 16.0] {
+        let mut app = app();
+        app.insert_resource(Gravity(Vec3::NEG_Y * 9.81));
+        let (building, upper) = spawn_dropped_tower_at_height(&mut app, Some(height));
+        let mut max_speed = 0.0_f32;
+        for _ in 0..420 {
+            app.update();
+            for pair in app
+                .world()
+                .resource::<ContactGraph>()
+                .iter_active_touching()
+            {
+                if [pair.collider1, pair.collider2].iter().any(|&entity| {
+                    app.world()
+                        .get::<ChunkIdentity>(entity)
+                        .is_some_and(|identity| identity.building == building)
+                }) {
+                    max_speed = pair
+                        .manifolds
+                        .iter()
+                        .flat_map(|manifold| &manifold.points)
+                        .map(|point| -point.normal_speed)
+                        .fold(max_speed, f32::max);
+                }
+            }
+        }
+        let instance = app.world().get::<BuildingInstance>(building).unwrap();
+        let mut sizes = instance
+            .clusters
+            .iter()
+            .map(|&body| app.world().get::<Cluster>(body).unwrap().chunks.len())
+            .collect::<Vec<_>>();
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        let stats = app.world().resource::<ImpactStats>();
+        eprintln!(
+            "height={height}m speed={max_speed:.3}m/s broken={} dynamic={} solves={} released={} pending={} peak_utilization={:.3} sizes={sizes:?}",
+            stats.broken_bonds,
+            stats.structural_broken_bonds,
+            stats.structural_solves,
+            stats.released_structural_events,
+            stats.pending_structural,
+            stats.max_structural_utilization,
+        );
+        assert!(
+            max_speed > IMPACT_MIN_SPEED,
+            "Drop did not reach an eligible real impact"
+        );
+        assert_eq!(sizes.iter().sum::<usize>(), upper.len());
+        assert!(
+            sizes.iter().any(|&size| size > 1),
+            "Drop atomized the entire tower"
+        );
+        assert_eq!(stats.pending_structural, 0);
+        assert_eq!(stats.structural_failures, 0);
+        outcomes.push((stats.broken_bonds, sizes[0], max_speed));
+    }
+    assert!(outcomes[1].2 > outcomes[0].2 * 3.0);
+    assert!(
+        outcomes[1].0 > outcomes[0].0,
+        "A much faster landing caused no extra fracture: {outcomes:?}"
+    );
+    assert!(outcomes[1].1 < outcomes[0].1);
+}
+
+#[test]
+fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
+    let mut app = app();
+    let (building, upper) = spawn_dropped_tower(&mut app);
+    app.update();
+    let mut state = ImpactState::default();
+    state.shocks.push_back(ClusterImpact {
+        building,
+        chunks: upper.clone(),
+        loads: BTreeMap::from([(
+            upper[0].clone(),
+            ImpulseLoad {
+                linear: DVec3::Y * 1e7,
+                angular: DVec3::ZERO,
+            },
+        )]),
+    });
+    let detached = upper.last().unwrap();
+    let ids = {
+        let instance = app.world().get::<BuildingInstance>(building).unwrap();
+        app.world()
+            .resource::<Assets<DestructibleAsset>>()
+            .get(&instance.asset)
+            .unwrap()
+            .manifest
+            .bonds
+            .iter()
+            .filter(|bond| bond.a == *detached || bond.b == *detached)
+            .map(|bond| bond.id.clone())
+            .collect::<Vec<_>>()
+    };
+    {
+        let mut instance = app
+            .world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap();
+        for id in ids {
+            instance.bonds.insert(id, false);
+        }
+        instance.topology_dirty = true;
+    }
+    crate::physics::rebuild_clusters(app.world_mut());
+    let before = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .bonds
+        .clone();
+    assert!(
+        app.world()
+            .get::<BuildingInstance>(building)
+            .unwrap()
+            .clusters
+            .len()
+            > 1
+    );
+    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert_eq!(state.released, 1);
+    assert_eq!(state.invalidated, 0);
+    assert!(state.shocks.is_empty());
+    assert!(state.pending.is_empty());
+    assert_eq!(
+        app.world().get::<BuildingInstance>(building).unwrap().bonds,
+        before
     );
 }
 

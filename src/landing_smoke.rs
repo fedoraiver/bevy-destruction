@@ -39,6 +39,10 @@ struct LandingState {
     first_impact: Option<u32>,
     before_impact_broken: u64,
     largest_final: usize,
+    final_cluster_sizes: Vec<usize>,
+    final_sections: Vec<serde_json::Value>,
+    retained_internal_bonds: usize,
+    final_impacts: Option<ImpactStats>,
     internal_broken: usize,
     finite: bool,
     errors: Vec<String>,
@@ -207,6 +211,44 @@ fn drive(
             capture(&mut commands, &options, "02-free-fall.png");
         }
         500 => {
+            state.final_impacts = Some((*impacts).clone());
+            state.final_sections = selected_bodies
+                .iter()
+                .map(|body| {
+                    let mut source_min = Vec3::splat(f32::INFINITY);
+                    let mut source_max = Vec3::splat(f32::NEG_INFINITY);
+                    let mut world_min = source_min;
+                    let mut world_max = source_max;
+                    let mut parts = std::collections::BTreeMap::<String, usize>::new();
+                    for id in &body.0.chunks {
+                        let record = asset
+                            .manifest
+                            .chunks
+                            .iter()
+                            .find(|record| &record.id == id)
+                            .unwrap();
+                        *parts.entry(record.part_id.clone()).or_default() += 1;
+                        for vertex in record.colliders.iter().flat_map(|proxy| &proxy.vertices) {
+                            let source = record
+                                .transform()
+                                .transform_point(Vec3::from_array(*vertex));
+                            let world = body.1.0 + body.2.0 * source;
+                            source_min = source_min.min(source);
+                            source_max = source_max.max(source);
+                            world_min = world_min.min(world);
+                            world_max = world_max.max(world);
+                        }
+                    }
+                    serde_json::json!({"chunks":body.0.chunks,"parts":parts,"mass_kg":body.5.0,
+                    "source_min":source_min.to_array(),"source_max":source_max.to_array(),
+                    "world_min":world_min.to_array(),"world_max":world_max.to_array()})
+                })
+                .collect();
+            state.final_cluster_sizes = selected_bodies
+                .iter()
+                .map(|body| body.0.chunks.len())
+                .collect();
+            state.final_cluster_sizes.sort_unstable_by(|a, b| b.cmp(a));
             state.largest_final = selected_bodies
                 .iter()
                 .map(|body| body.0.chunks.len())
@@ -221,6 +263,16 @@ fn drive(
                         && state.upper.contains(&bond.b)
                         && bond.center[1] > state.cut + 4.0
                         && !instance.bonds[&bond.id]
+                })
+                .count();
+            state.retained_internal_bonds = asset
+                .manifest
+                .bonds
+                .iter()
+                .filter(|bond| {
+                    state.upper.contains(&bond.a)
+                        && state.upper.contains(&bond.b)
+                        && instance.bonds[&bond.id]
                 })
                 .count();
             if state.first_impact.is_none() || impacts.structural_solves == 0 {
@@ -238,6 +290,9 @@ fn drive(
                 state
                     .errors
                     .push("Upper tower remained one giant rigid cluster after impact".into());
+            }
+            if state.largest_final < 2 || state.retained_internal_bonds == 0 {
+                state.errors.push("Landing atomized the entire upper tower instead of retaining connected structural sections".into());
             }
             let mass = selected_bodies
                 .iter()
@@ -275,10 +330,15 @@ fn drive(
                     state.errors.push(format!("Missing screenshot {name}"));
                 }
             }
-            let report = serde_json::json!({"asset":options.asset,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
+            let impacts = state.final_impacts.as_ref().unwrap();
+            let report = serde_json::json!({"asset":options.asset,"snapshot_frame":500,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
                 "cut_height":state.cut,"initial_upper_mass":state.initial_mass,"first_impact_frame":state.first_impact,
                 "largest_final_cluster":state.largest_final,"internal_bonds_broken":state.internal_broken,"finite_body_state":state.finite,
+                "final_cluster_sizes":state.final_cluster_sizes,"retained_internal_bonds":state.retained_internal_bonds,
+                "final_sections":state.final_sections,
                 "impact_broken_bonds":impacts.broken_bonds,"structural_solves":impacts.structural_solves,"structural_failures":impacts.structural_failures,
+                "structural_broken_bonds":impacts.structural_broken_bonds,"released_structural_events":impacts.released_structural_events,
+                "invalidated_structural_events":impacts.invalidated_structural_events,"max_structural_utilization":impacts.max_structural_utilization,
                 "pending_structural":impacts.pending_structural,"max_structural_solve_ms":impacts.max_structural_solve_ms,
                 "max_force_balance_ratio":impacts.max_force_balance_ratio,"max_moment_balance_ratio":impacts.max_moment_balance_ratio,
                 "max_gauge_reaction_ratio":impacts.max_gauge_reaction_ratio,"metrics":metrics.json(),"errors":state.errors});

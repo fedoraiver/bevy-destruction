@@ -59,7 +59,7 @@ pub struct RigidProjectile {
     age: f32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub struct ImpactStats {
     pub launched: u64,
     pub contacts: u64,
@@ -73,6 +73,10 @@ pub struct ImpactStats {
     pub max_force_balance_ratio: f64,
     pub max_moment_balance_ratio: f64,
     pub max_gauge_reaction_ratio: f64,
+    pub structural_broken_bonds: u64,
+    pub released_structural_events: u64,
+    pub invalidated_structural_events: u64,
+    pub max_structural_utilization: f64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -92,6 +96,8 @@ struct ImpactState {
     touching: BTreeSet<(Entity, Entity)>,
     pending: BTreeMap<(Entity, String), f32>,
     shocks: VecDeque<ClusterImpact>,
+    released: u64,
+    invalidated: u64,
 }
 
 pub(crate) fn reset(world: &mut World) {
@@ -334,15 +340,30 @@ fn impact_damage(world: &mut World) {
             &mut state.pending,
         );
     }
-    let structural = process_dynamic_impact(world, &mut state);
+    let mut structural = process_dynamic_impact(world, &mut state);
+    let mut broken = BTreeMap::<Entity, Vec<String>>::new();
+    let mut budget = IMPACT_BREAK_LIMIT;
+    let mut structural_broken = 0;
+    if let Some(report) = &mut structural
+        && let Some((building, id)) = report.fracture.take()
+        && let Some(mut instance) = world.get_mut::<BuildingInstance>(building)
+        && instance.bonds.get(&id).copied().unwrap_or(false)
+    {
+        instance.bonds.insert(id.clone(), false);
+        instance.topology_dirty = true;
+        broken.entry(building).or_default().push(id);
+        structural_broken = 1;
+        budget -= 1;
+        if let Some(shock) = report.continuation.take() {
+            state.shocks.push_back(shock);
+        }
+    }
     let mut pending = state
         .pending
         .iter()
         .map(|(key, &utilization)| (key.clone(), utilization))
         .collect::<Vec<_>>();
     pending.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-    let mut broken = BTreeMap::<Entity, Vec<String>>::new();
-    let mut budget = IMPACT_BREAK_LIMIT;
     for ((building, id), _) in pending {
         let Some(mut instance) = world.get_mut::<BuildingInstance>(building) else {
             state.pending.remove(&(building, id));
@@ -381,8 +402,13 @@ fn impact_damage(world: &mut World) {
         stats.max_gauge_reaction_ratio = stats
             .max_gauge_reaction_ratio
             .max(report.gauge_reaction_ratio);
+        stats.max_structural_utilization =
+            stats.max_structural_utilization.max(report.max_utilization);
     }
     stats.pending_structural = state.shocks.len();
+    stats.structural_broken_bonds += structural_broken;
+    stats.released_structural_events = state.released;
+    stats.invalidated_structural_events = state.invalidated;
     stats.broken_bonds += broken.values().map(|ids| ids.len() as u64).sum::<u64>();
     world.insert_resource(state);
 }
@@ -527,6 +553,9 @@ struct DynamicImpactReport {
     force_balance_ratio: f64,
     moment_balance_ratio: f64,
     gauge_reaction_ratio: f64,
+    max_utilization: f64,
+    fracture: Option<(Entity, String)>,
+    continuation: Option<ClusterImpact>,
 }
 
 fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
@@ -542,27 +571,14 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                 groups.entry(body).or_default().push(id.clone());
             }
         }
-        if groups.len() != 1
-            || groups
-                .values()
-                .next()
-                .is_none_or(|chunks| chunks.len() != shock.chunks.len())
-        {
-            for chunks in groups.into_values() {
-                let loads = shock
-                    .loads
-                    .iter()
-                    .filter(|(id, _)| chunks.contains(id))
-                    .map(|(id, load)| (id.clone(), *load))
-                    .collect::<BTreeMap<_, _>>();
-                if !loads.is_empty() {
-                    state.shocks.push_front(ClusterImpact {
-                        building: shock.building,
-                        chunks,
-                        loads,
-                    });
-                }
-            }
+        if groups.values().map(Vec::len).sum::<usize>() != shock.chunks.len() {
+            state.invalidated += 1;
+            continue;
+        }
+        if groups.len() != 1 {
+            // The parent has unloaded across a new crack. Its already-applied contact
+            // impulse must not be injected into the smaller remaining bodies again.
+            state.released += 1;
             continue;
         }
         let Some(asset) = world
@@ -584,6 +600,9 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             force_balance_ratio: case.force_balance_ratio,
             moment_balance_ratio: case.moment_balance_ratio,
             gauge_reaction_ratio: f64::INFINITY,
+            max_utilization: 0.0,
+            fracture: None,
+            continuation: None,
         };
         let mut sections = BTreeMap::<String, Vec<[f64; 3]>>::new();
         for patch in instance
@@ -622,10 +641,14 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                     .max(DVec3::from_array(reaction.moment).length() / case.moment_scale);
                 if report.gauge_reaction_ratio <= 1e-5 {
                     report.valid = true;
-                    for (id, bond) in solution.bonds {
+                    if let Some((id, bond)) = solution.bonds.iter().min_by(|a, b| {
+                        b.1.utilization
+                            .total_cmp(&a.1.utilization)
+                            .then(a.0.cmp(b.0))
+                    }) {
+                        report.max_utilization = bond.utilization;
                         if bond.utilization >= 1.0 {
-                            let prior = state.pending.entry((shock.building, id)).or_default();
-                            *prior = prior.max(bond.utilization as f32);
+                            report.fracture = Some((shock.building, id.clone()));
                         }
                     }
                 }
@@ -646,6 +669,10 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                     &mut state.pending,
                 );
             }
+        }
+        if report.fracture.is_some() {
+            // Every further failure needs a fresh solution after rebuilding the graph.
+            report.continuation = Some(shock);
         }
         report.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
         return Some(report);
