@@ -78,6 +78,7 @@ pub struct ImpactStats {
     pub max_gauge_reaction_ratio: f64,
     pub structural_broken_bonds: u64,
     pub released_structural_events: u64,
+    pub rebound_fresh_structural_events: u64,
     pub invalidated_structural_events: u64,
     pub max_structural_utilization: f64,
 }
@@ -101,6 +102,7 @@ struct ImpactState {
     pending: BTreeMap<(Entity, String), f32>,
     shocks: VecDeque<ClusterImpact>,
     released: u64,
+    rebound_fresh: u64,
     invalidated: u64,
 }
 
@@ -447,6 +449,7 @@ fn impact_damage(world: &mut World) {
     stats.pending_structural = state.shocks.len();
     stats.structural_broken_bonds += structural_broken;
     stats.released_structural_events = state.released;
+    stats.rebound_fresh_structural_events = state.rebound_fresh;
     stats.invalidated_structural_events = state.invalidated;
     stats.broken_bonds += broken.values().map(|ids| ids.len() as u64).sum::<u64>();
     world.insert_resource(state);
@@ -615,6 +618,57 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         let Some(instance) = world.get::<BuildingInstance>(shock.building) else {
             continue;
         };
+        let Some(asset) = world
+            .resource::<Assets<DestructibleAsset>>()
+            .get(&instance.asset)
+        else {
+            continue;
+        };
+        if shock.prepared.is_none() {
+            let source_bodies = shock
+                .loads
+                .keys()
+                .map(|id| {
+                    instance
+                        .chunks
+                        .get(id)
+                        .filter(|chunk| chunk.alive)
+                        .and_then(|chunk| chunk.cluster)
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(source_bodies) = source_bodies.filter(|bodies| !bodies.is_empty()) else {
+                state.invalidated += 1;
+                continue;
+            };
+            let body = source_bodies[0];
+            if source_bodies.iter().any(|&source| source != body) {
+                state.released += 1;
+                continue;
+            }
+            let Some(cluster) = world.get::<Cluster>(body).filter(|cluster| {
+                cluster.building == shock.building
+                    && !cluster.anchored
+                    && world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
+            }) else {
+                state.released += 1;
+                continue;
+            };
+            if shock.loads.keys().any(|id| !cluster.chunks.contains(id)) {
+                state.invalidated += 1;
+                continue;
+            }
+            if cluster.chunks != shock.chunks {
+                let original = shock.chunks.iter().collect::<BTreeSet<_>>();
+                if cluster.chunks.iter().any(|id| !original.contains(id)) {
+                    state.invalidated += 1;
+                    continue;
+                }
+                // An independent hit has not been solved yet. Bind its unchanged
+                // contact loads to the one current child that contains every source.
+                shock.chunks = cluster.chunks.clone();
+                state.rebound_fresh += 1;
+            }
+        }
         let mut groups = BTreeMap::<Entity, Vec<String>>::new();
         for id in &shock.chunks {
             if let Some(chunk) = instance.chunks.get(id).filter(|chunk| chunk.alive)
@@ -628,17 +682,11 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             continue;
         }
         if groups.len() != 1 {
-            // The parent has unloaded across a new crack. Its already-applied contact
-            // impulse must not be injected into the smaller remaining bodies again.
+            // A solved parent response ends at separation. Only an independent,
+            // never-solved hit may bind once to its current source-containing child.
             state.released += 1;
             continue;
         }
-        let Some(asset) = world
-            .resource::<Assets<DestructibleAsset>>()
-            .get(&instance.asset)
-        else {
-            continue;
-        };
         if shock.chunks.len() < 2 {
             continue;
         }

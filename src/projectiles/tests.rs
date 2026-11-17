@@ -154,10 +154,12 @@ fn spawn_dropped_tower_at_height(
         asset::Manifest,
         scene::{BuildingBounds, ChunkInstance},
     };
-    let manifest: Manifest = serde_json::from_str(include_str!(
-        "../../assets/buildings/highrise_slab.destruction.json"
-    ))
-    .unwrap();
+    let contents = std::env::var_os("DESTRUCTION_LANDING_ASSET")
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .unwrap_or_else(|| {
+            include_str!("../../assets/buildings/highrise_slab.destruction.json").into()
+        });
+    let manifest: Manifest = serde_json::from_str(&contents).unwrap();
     let offset = ground_clearance.map_or(0.0, |height| {
         let lowest = manifest
             .chunks
@@ -270,6 +272,17 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     let mut app = app();
     app.insert_resource(Gravity(Vec3::NEG_Y * 9.81));
     let (building, upper) = spawn_dropped_tower(&mut app);
+    let trace = std::env::var_os("DESTRUCTION_LANDING_TRACE").is_some();
+    if trace {
+        app.insert_resource(ForceCapture { enabled: true })
+            .init_resource::<ForceSamples>()
+            .add_systems(
+                PhysicsSchedule,
+                trace_landing_contact_speeds
+                    .after(PhysicsStepSystems::NarrowPhase)
+                    .before(PhysicsStepSystems::Solver),
+            );
+    }
     app.update();
     let first_body = app
         .world()
@@ -285,8 +298,26 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     let mut saw_fast_contact = false;
     let mut max_impulse = 0.0_f32;
     let mut max_speed = 0.0_f32;
+    let mut trace_at = -1.0;
+    let mut trace_released = 0;
+    let mut previous_bonds = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .bonds
+        .clone();
     for tick in 0..300 {
         app.update();
+        if trace {
+            trace_landing_step(
+                app.world(),
+                building,
+                tick,
+                &mut trace_at,
+                &mut trace_released,
+                &mut previous_bonds,
+            );
+        }
         let graph = app.world().resource::<ContactGraph>();
         for pair in graph.iter_active_touching() {
             if [pair.body1, pair.body2].contains(&Some(first_body)) {
@@ -419,12 +450,10 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         .filter(|record| record.kind == "floor")
         .min_by(|a, b| source_y(a).total_cmp(&source_y(b)))
         .unwrap();
-    let first_level = first_floor.part_id.rsplit_once('-').unwrap().0;
+    let first_level = &first_floor.part_id;
     let next_floor_y = records
         .values()
-        .filter(|record| {
-            record.kind == "floor" && record.part_id.rsplit_once('-').unwrap().0 != first_level
-        })
+        .filter(|record| record.kind == "floor" && &record.part_id != first_level)
         .map(|record| source_y(record))
         .min_by(f32::total_cmp)
         .unwrap();
@@ -488,6 +517,190 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
             && records[bond.b.as_str()].kind != "roof"),
         "Landing only chipped its directly contacting floor; no load reached internal upper-storey bonds"
     );
+}
+
+fn trace_landing_step(
+    world: &World,
+    building: Entity,
+    tick: usize,
+    last_capture: &mut f64,
+    last_released: &mut u64,
+    previous_bonds: &mut BTreeMap<String, bool>,
+) {
+    let instance = world.get::<BuildingInstance>(building).unwrap();
+    let manifest = &world
+        .resource::<Assets<DestructibleAsset>>()
+        .get(&instance.asset)
+        .unwrap()
+        .manifest;
+    let newly_broken = instance
+        .bonds
+        .iter()
+        .filter(|(id, active)| !**active && previous_bonds.get(*id) == Some(&true))
+        .map(|(id, _)| id.as_str())
+        .collect::<Vec<_>>();
+    let sample = world
+        .resource::<ForceSamples>()
+        .dynamic
+        .iter()
+        .max_by(|a, b| a.captured_at.total_cmp(&b.captured_at))
+        .filter(|sample| sample.captured_at > *last_capture);
+    let stats = world.resource::<ImpactStats>();
+    if newly_broken.is_empty()
+        && sample.is_none()
+        && stats.released_structural_events == *last_released
+    {
+        return;
+    }
+    let records = manifest
+        .chunks
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<BTreeMap<_, _>>();
+    *last_released = stats.released_structural_events;
+    let groups = instance
+        .clusters
+        .iter()
+        .map(|body| {
+            let cluster = world.get::<Cluster>(*body).unwrap();
+            (
+                cluster.chunks.len(),
+                world.get::<Mass>(*body).unwrap().0,
+                world.get::<LinearVelocity>(*body).unwrap().y,
+                world.get::<AngularVelocity>(*body).unwrap().length(),
+                (cluster.chunks.len() <= 4).then(|| cluster.chunks.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
+    eprintln!(
+        "TRACE tick={tick} broken={} released={} fresh_rebound={} groups={groups:?}",
+        stats.broken_bonds, stats.released_structural_events, stats.rebound_fresh_structural_events,
+    );
+    for id in newly_broken {
+        let bond = manifest.bonds.iter().find(|bond| bond.id == id).unwrap();
+        let a = records[bond.a.as_str()];
+        let b = records[bond.b.as_str()];
+        eprintln!(
+            "BREAK {id} y={} area={} facets={} a={}({},{:.1}kg) b={}({},{:.1}kg)",
+            bond.center[1],
+            bond.area,
+            bond.patches.len(),
+            a.id,
+            a.kind,
+            a.mass,
+            b.id,
+            b.kind,
+            b.mass
+        );
+    }
+    if let Some(sample) = sample {
+        *last_capture = sample.captured_at;
+        let mut ranked = sample.bonds.iter().collect::<Vec<_>>();
+        ranked.sort_by(|a, b| b.1.utilization.total_cmp(&a.1.utilization));
+        for (id, stress) in ranked.into_iter().take(6) {
+            let bond = manifest.bonds.iter().find(|bond| &bond.id == id).unwrap();
+            eprintln!(
+                "FIELD {id} U={:.6e} t={:.4e} c={:.4e} s={:.4e} F={:.4e} M={:.4e} area={:.4e} facets={:?} y={} a={} b={}",
+                stress.utilization,
+                stress.tension,
+                stress.compression,
+                stress.shear,
+                DVec3::from_array(stress.force).length(),
+                DVec3::from_array(stress.moment).length(),
+                bond.area,
+                bond.patches
+                    .iter()
+                    .map(|patch| patch.area)
+                    .collect::<Vec<_>>(),
+                bond.center[1],
+                bond.a,
+                bond.b
+            );
+        }
+        let shocks = world
+            .resource::<ImpactState>()
+            .shocks
+            .iter()
+            .map(|shock| {
+                (
+                    shock.chunks.len(),
+                    shock.prepared.is_some(),
+                    shock
+                        .loads
+                        .iter()
+                        .map(|(id, impulse)| (id.clone(), impulse.linear.length()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        eprintln!("QUEUED {shocks:?}");
+    }
+    *previous_bonds = instance.bonds.clone();
+}
+
+fn trace_landing_contact_speeds(world: &mut World) {
+    let state = world.resource::<ImpactState>();
+    let point_velocity = |body: Option<Entity>, point: Vec3| {
+        body.map_or(Vec3::ZERO, |body| {
+            let linear = world
+                .get::<LinearVelocity>(body)
+                .map_or(Vec3::ZERO, |v| v.0);
+            let angular = world
+                .get::<AngularVelocity>(body)
+                .map_or(Vec3::ZERO, |v| v.0);
+            let position = world.get::<Position>(body).map_or(Vec3::ZERO, |p| p.0);
+            let rotation = world.get::<Rotation>(body).map_or(Quat::IDENTITY, |r| r.0);
+            let local_center = world
+                .get::<ComputedCenterOfMass>(body)
+                .map_or(Vec3::ZERO, |c| c.0);
+            linear + angular.cross(point - position - rotation * local_center)
+        })
+    };
+    for pair in world.resource::<ContactGraph>().iter_active_touching() {
+        let structural = [pair.collider1, pair.collider2]
+            .into_iter()
+            .filter_map(|collider| {
+                world
+                    .get::<ChunkIdentity>(collider)
+                    .map(|chunk| chunk.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        if structural.is_empty() {
+            continue;
+        }
+        let mut speed = 0.0_f32;
+        for manifold in &pair.manifolds {
+            for point in &manifold.points {
+                speed = speed.max(
+                    -(point_velocity(pair.body2, point.point)
+                        - point_velocity(pair.body1, point.point))
+                    .dot(manifold.normal),
+                );
+            }
+        }
+        if speed < IMPACT_MIN_SPEED {
+            continue;
+        }
+        let key = if pair.collider1 < pair.collider2 {
+            (pair.collider1, pair.collider2)
+        } else {
+            (pair.collider2, pair.collider1)
+        };
+        let stored = pair
+            .manifolds
+            .iter()
+            .flat_map(|manifold| &manifold.points)
+            .map(|point| -point.normal_speed)
+            .fold(0.0_f32, f32::max);
+        let motions = [pair.body1, pair.body2].map(|body| {
+            body.and_then(|body| world.get::<LinearVelocity>(body).map(|v| (body, v.0)))
+        });
+        eprintln!(
+            "PRE_CONTACT time={:.6} suppressed={} actual_speed={speed:.6} stored_speed={stored:.6} chunks={structural:?} linear={motions:?}",
+            world.resource::<Time<Fixed>>().elapsed_secs_f64(),
+            state.touching.contains(&key)
+        );
+    }
 }
 
 #[test]
@@ -623,6 +836,193 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
     assert_eq!(state.invalidated, 0);
     assert!(state.shocks.is_empty());
     assert!(state.pending.is_empty());
+    assert_eq!(
+        app.world().get::<BuildingInstance>(building).unwrap().bonds,
+        before
+    );
+}
+
+#[test]
+fn force_capture_preserves_the_solved_impact_and_fracture_choice() {
+    let mut app = app();
+    let (building, upper) = spawn_dropped_tower(&mut app);
+    app.update();
+    let state_for = || {
+        let mut state = ImpactState::default();
+        state.shocks.push_back(ClusterImpact {
+            building,
+            chunks: upper.clone(),
+            loads: BTreeMap::from([(
+                upper[0].clone(),
+                ImpulseLoad {
+                    linear: DVec3::Y * 1e7,
+                    angular: DVec3::ZERO,
+                },
+            )]),
+            prepared: None,
+        });
+        state
+    };
+    let baseline = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    assert!(baseline.valid);
+    assert!(baseline.force_sample.is_none());
+    app.insert_resource(ForceCapture { enabled: true });
+    let captured = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    assert_eq!(captured.fracture, baseline.fracture);
+    assert_eq!(captured.max_utilization, baseline.max_utilization);
+    assert_eq!(captured.gauge_reaction_ratio, baseline.gauge_reaction_ratio);
+    let sample = captured.force_sample.unwrap();
+    assert_eq!(sample.chunks, upper);
+    assert!(!sample.bonds.is_empty());
+    assert!(
+        sample
+            .bonds
+            .values()
+            .any(|bond| DVec3::from_array(bond.force).length() > 0.0)
+    );
+    assert!(sample.bonds.values().all(|bond| {
+        bond.force
+            .into_iter()
+            .chain(bond.moment)
+            .all(f64::is_finite)
+    }));
+}
+
+fn split_free_beam_for_queued_hit() -> (App, Entity, Vec<String>, Vec<String>) {
+    let mut app = app();
+    let building = spawn_beam(app.world_mut(), Vec3::ZERO);
+    let asset = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .asset
+        .clone();
+    app.world_mut()
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .get_mut(&asset)
+        .unwrap()
+        .manifest
+        .anchors
+        .clear();
+    app.update();
+    let original = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .chunks
+        .keys()
+        .cloned()
+        .collect();
+    {
+        let mut instance = app
+            .world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap();
+        instance.bonds.insert(RIGHT_BOND.into(), false);
+        instance.topology_dirty = true;
+    }
+    crate::physics::rebuild_clusters(app.world_mut());
+    let body = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .chunks[BEAM]
+        .cluster
+        .unwrap();
+    let current = app.world().get::<Cluster>(body).unwrap().chunks.clone();
+    assert_eq!(current.len(), 2);
+    (app, building, original, current)
+}
+
+#[test]
+fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impulse() {
+    let (mut app, building, original, current) = split_free_beam_for_queued_hit();
+    let loads = BTreeMap::from([(
+        BEAM.into(),
+        ImpulseLoad {
+            linear: DVec3::Y * 1e6,
+            angular: DVec3::ZERO,
+        },
+    )]);
+    let state_for = |chunks| ImpactState {
+        shocks: VecDeque::from([ClusterImpact {
+            building,
+            chunks,
+            loads: loads.clone(),
+            prepared: None,
+        }]),
+        ..default()
+    };
+    let body = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .chunks[BEAM]
+        .cluster
+        .unwrap();
+    let velocity = app.world().get::<LinearVelocity>(body).unwrap().0;
+    let mut state = state_for(original);
+    let mut rebound = process_dynamic_impact(app.world(), &mut state).unwrap();
+    let direct = process_dynamic_impact(app.world(), &mut state_for(current.clone())).unwrap();
+    assert!(rebound.valid && direct.valid);
+    assert_eq!(rebound.fracture, direct.fracture);
+    assert_eq!(rebound.max_utilization, direct.max_utilization);
+    assert_eq!(rebound.force_balance_ratio, direct.force_balance_ratio);
+    assert_eq!(rebound.moment_balance_ratio, direct.moment_balance_ratio);
+    assert!(rebound.gauge_reaction_ratio < 1e-5);
+    assert_eq!(state.rebound_fresh, 1);
+    assert_eq!(app.world().get::<LinearVelocity>(body).unwrap().0, velocity);
+    let continuation = rebound.continuation.take().unwrap();
+    assert_eq!(continuation.chunks, current);
+    assert!(continuation.prepared.is_some());
+    state.shocks.push_back(continuation);
+    {
+        let mut instance = app
+            .world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap();
+        instance.bonds.insert(LEFT_BOND.into(), false);
+        instance.topology_dirty = true;
+    }
+    crate::physics::rebuild_clusters(app.world_mut());
+    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert_eq!(state.released, 1);
+    assert_eq!(state.rebound_fresh, 1);
+    assert!(state.shocks.is_empty() && state.pending.is_empty());
+}
+
+#[test]
+fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
+    let (app, building, original, _) = split_free_beam_for_queued_hit();
+    let before = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .bonds
+        .clone();
+    let mut state = ImpactState {
+        shocks: VecDeque::from([ClusterImpact {
+            building,
+            chunks: original,
+            loads: [BEAM, crate::stress_smoke::RIGHT_SUPPORT]
+                .map(|id| {
+                    (
+                        id.into(),
+                        ImpulseLoad {
+                            linear: DVec3::Y * 1e6,
+                            angular: DVec3::ZERO,
+                        },
+                    )
+                })
+                .into(),
+            prepared: None,
+        }]),
+        ..default()
+    };
+    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert_eq!(state.released, 1);
+    assert_eq!(state.rebound_fresh, 0);
+    assert!(state.shocks.is_empty() && state.pending.is_empty());
     assert_eq!(
         app.world().get::<BuildingInstance>(building).unwrap().bonds,
         before
@@ -838,50 +1238,4 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
     for (key, value) in pending {
         assert!((value - second[&key]).abs() < 1e-6);
     }
-}
-
-#[test]
-fn force_capture_preserves_the_solved_impact_and_fracture_choice() {
-    let mut app = app();
-    let (building, upper) = spawn_dropped_tower(&mut app);
-    app.update();
-    let state_for = || {
-        let mut state = ImpactState::default();
-        state.shocks.push_back(ClusterImpact {
-            building,
-            chunks: upper.clone(),
-            loads: BTreeMap::from([(
-                upper[0].clone(),
-                ImpulseLoad {
-                    linear: DVec3::Y * 1e7,
-                    angular: DVec3::ZERO,
-                },
-            )]),
-            prepared: None,
-        });
-        state
-    };
-    let baseline = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
-    assert!(baseline.valid);
-    assert!(baseline.force_sample.is_none());
-    app.insert_resource(ForceCapture { enabled: true });
-    let captured = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
-    assert_eq!(captured.fracture, baseline.fracture);
-    assert_eq!(captured.max_utilization, baseline.max_utilization);
-    assert_eq!(captured.gauge_reaction_ratio, baseline.gauge_reaction_ratio);
-    let sample = captured.force_sample.unwrap();
-    assert_eq!(sample.chunks, upper);
-    assert!(!sample.bonds.is_empty());
-    assert!(
-        sample
-            .bonds
-            .values()
-            .any(|bond| DVec3::from_array(bond.force).length() > 0.0)
-    );
-    assert!(sample.bonds.values().all(|bond| {
-        bond.force
-            .into_iter()
-            .chain(bond.moment)
-            .all(f64::is_finite)
-    }));
 }
