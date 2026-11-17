@@ -40,6 +40,24 @@ const CAPTURES: [&str; 4] = [
     "04-final-collapse.png",
 ];
 
+fn contacted_static_support<'a>(
+    bulk: Entity,
+    supports: &[(&'a str, Entity, Entity)],
+    contacts: impl IntoIterator<Item = ([Option<Entity>; 2], [Entity; 2], f32)>,
+) -> Option<&'a str> {
+    contacts
+        .into_iter()
+        .filter(|(_, _, impulse)| *impulse > 0.0)
+        .find_map(|(bodies, colliders, _)| {
+            if !bodies.contains(&Some(bulk)) {
+                return None;
+            }
+            supports.iter().find_map(|&(id, collider, body)| {
+                (bodies.contains(&Some(body)) && colliders.contains(&collider)).then_some(id)
+            })
+        })
+}
+
 pub(crate) struct CollapseSelection {
     pub removed: Vec<String>,
     pub support_path: Vec<String>,
@@ -472,29 +490,33 @@ fn drive(
             state.first_release.get_or_insert(frame);
             state.largest_released_upper = state.largest_released_upper.max(upper_chunks);
             let body = instance.chunks[&cluster.chunks[0]].cluster.unwrap();
-            if let Some(stub) = state
+            let static_supports = state
                 .support_path
                 .iter()
-                .find(|id| {
-                    instance.chunks[id.as_str()].cluster.is_some_and(|body| {
-                        bodies
-                            .get(body)
-                            .is_ok_and(|entry| *entry.1 == RigidBody::Static)
-                    })
+                .filter_map(|id| {
+                    let chunk = &instance.chunks[id.as_str()];
+                    if !chunk.alive {
+                        return None;
+                    }
+                    let support = chunk.cluster?;
+                    bodies
+                        .get(support)
+                        .is_ok_and(|entry| *entry.1 == RigidBody::Static)
+                        .then_some((id.as_str(), chunk.entity, support))
                 })
-                .cloned()
-                && let Some(support) = instance.chunks[stub.as_str()].cluster
-                && bodies
-                    .get(support)
-                    .is_ok_and(|entry| *entry.1 == RigidBody::Static)
-                && contacts.iter_active_touching().any(|pair| {
-                    [pair.body1, pair.body2].contains(&Some(body))
-                        && [pair.body1, pair.body2].contains(&Some(support))
-                        && [pair.collider1, pair.collider2]
-                            .contains(&instance.chunks[stub.as_str()].entity)
-                        && pair.total_normal_impulse_magnitude() > 0.0
-                })
-            {
+                .collect::<Vec<_>>();
+            if let Some(stub) = contacted_static_support(
+                body,
+                &static_supports,
+                contacts.iter_active_touching().map(|pair| {
+                    (
+                        [pair.body1, pair.body2],
+                        [pair.collider1, pair.collider2],
+                        pair.total_normal_impulse_magnitude(),
+                    )
+                }),
+            ) {
+                let stub = stub.to_owned();
                 state.residual_support_contact = true;
                 state.static_stub = stub;
             }

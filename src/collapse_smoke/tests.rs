@@ -1,4 +1,41 @@
 use super::*;
+
+#[test]
+fn upper_static_support_contact_is_detected_when_the_lower_member_has_no_impulse() {
+    let mut world = World::new();
+    let bulk = world.spawn_empty().id();
+    let static_body = world.spawn_empty().id();
+    let other_body = world.spawn_empty().id();
+    let lower = world.spawn_empty().id();
+    let upper = world.spawn_empty().id();
+    let bulk_collider = world.spawn_empty().id();
+    let supports = [("0004", lower, static_body), ("0005", upper, static_body)];
+    let contact = ([Some(bulk), Some(static_body)], [bulk_collider, upper], 3.0);
+    assert_eq!(
+        contacted_static_support(bulk, &supports, [contact]),
+        Some("0005")
+    );
+    assert_eq!(
+        contacted_static_support(bulk, &supports, [(contact.0, contact.1, 0.0)]),
+        None
+    );
+    assert_eq!(
+        contacted_static_support(
+            bulk,
+            &supports,
+            [([Some(other_body), Some(static_body)], contact.1, 3.0)]
+        ),
+        None
+    );
+    assert_eq!(
+        contacted_static_support(
+            bulk,
+            &supports,
+            [([Some(bulk), Some(other_body)], contact.1, 3.0)]
+        ),
+        None
+    );
+}
 use crate::{
     physics::DestructionPhysicsPlugin,
     scene::{BuildingBounds, ChunkIdentity, ChunkInstance},
