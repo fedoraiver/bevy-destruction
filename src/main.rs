@@ -2,6 +2,8 @@ mod asset;
 mod camera;
 mod catalog;
 mod collapse_smoke;
+mod contact_mask;
+mod contact_smoke;
 mod debug;
 mod diagnostics;
 mod dust_material;
@@ -35,6 +37,7 @@ pub struct DemoOptions {
     pub physics_smoke_output: Option<std::path::PathBuf>,
     pub stress_smoke_output: Option<std::path::PathBuf>,
     pub material_smoke_output: Option<std::path::PathBuf>,
+    pub contact_smoke_output: Option<std::path::PathBuf>,
     pub force_smoke_output: Option<std::path::PathBuf>,
     pub landing_smoke_output: Option<std::path::PathBuf>,
     pub collapse_smoke_output: Option<std::path::PathBuf>,
@@ -54,6 +57,7 @@ impl Default for DemoOptions {
             physics_smoke_output: None,
             stress_smoke_output: None,
             material_smoke_output: None,
+            contact_smoke_output: None,
             force_smoke_output: None,
             landing_smoke_output: None,
             collapse_smoke_output: None,
@@ -73,6 +77,7 @@ impl DemoOptions {
             || self.physics_smoke_output.is_some()
             || self.stress_smoke_output.is_some()
             || self.material_smoke_output.is_some()
+            || self.contact_smoke_output.is_some()
             || self.force_smoke_output.is_some()
             || self.landing_smoke_output.is_some()
             || self.collapse_smoke_output.is_some()
@@ -129,6 +134,13 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 );
             }
+            "--contact-smoke-test" => {
+                options.contact_smoke_output = Some(
+                    args.next()
+                        .ok_or("--contact-smoke-test requires an output directory")?
+                        .into(),
+                );
+            }
             "--landing-smoke-test" => {
                 options.landing_smoke_output = Some(
                     args.next()
@@ -145,7 +157,7 @@ fn options() -> Result<DemoOptions, String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: forces | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --contact-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: forces | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -163,6 +175,7 @@ fn options() -> Result<DemoOptions, String> {
         options.physics_smoke_output.is_some(),
         options.stress_smoke_output.is_some(),
         options.material_smoke_output.is_some(),
+        options.contact_smoke_output.is_some(),
         options.force_smoke_output.is_some(),
         options.landing_smoke_output.is_some(),
         options.collapse_smoke_output.is_some(),
@@ -240,6 +253,7 @@ fn main() -> AppExit {
             stress_smoke::StressSmokePlugin,
             catalog::CatalogPlugin,
             material_smoke::MaterialSmokePlugin,
+            contact_smoke::ContactSmokePlugin,
             landing_smoke::LandingSmokePlugin,
             collapse_smoke::CollapseSmokePlugin,
             force_smoke::ForceSmokePlugin,

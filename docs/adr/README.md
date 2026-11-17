@@ -39,5 +39,6 @@
 | [0022](0022-rust-module-layout.md) | Rust 模块目录、集中测试与 v2-only 资产 | 已采用并实现，验证范围见记录 |
 | [0023](0023-source-mesh-and-contact-surface-overlays.md) | 保留源网格与真实接触面的断面显示 | 已实现，六目录覆盖及最终矩形点击/受力/倾倒检查通过 |
 | [0024](0024-fresh-impact-event-rebinding.md) | 独立接触事件绑定与落地时序诊断 | 新事件绑定已实现；大块落地耦合未解决，失败实验未采用 |
+| [0025](0025-single-owner-fracture-surface-shading.md) | 消除 grid/断面闪烁的单次片元着色 | 已实现，8 组/40 张真实 GPU 对照及材质运动回归通过 |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。

@@ -6,16 +6,30 @@ use bevy::{
     mesh::VertexAttributeValues,
     pbr::{ExtendedMaterial, MaterialExtension, gltf::standard_material_from_gltf_material},
     prelude::*,
-    render::render_resource::{AsBindGroup, ShaderType},
+    render::{
+        render_resource::{AsBindGroup, ShaderType},
+        storage::ShaderBuffer,
+    },
     shader::ShaderRef,
 };
 
 pub type BuildingMaterial = ExtendedMaterial<StandardMaterial, BuildingSurface>;
 
+const EMPTY_CONTACT_MASK: Handle<ShaderBuffer> =
+    bevy::asset::uuid_handle!("d5c5e270-46af-40d0-9904-9220b6a4603b");
+
 pub struct BuildingMaterialPlugin;
 
 impl Plugin for BuildingMaterialPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<Assets<ShaderBuffer>>()
+            .world_mut()
+            .resource_mut::<Assets<ShaderBuffer>>()
+            .insert(
+                EMPTY_CONTACT_MASK.id(),
+                ShaderBuffer::from(vec![Vec4::ZERO]),
+            )
+            .expect("Reserved contact-mask buffer ID");
         app.init_resource::<SurfaceMeshCache>()
             .add_plugins(MaterialPlugin::<BuildingMaterial>::default())
             .add_systems(Update, release_surface_meshes);
@@ -27,6 +41,7 @@ pub struct SurfaceSettings {
     pub grid: Vec4,
     pub fracture: Vec4,
     pub fracture_color: Vec4,
+    pub fracture_surface: Vec4,
 }
 
 impl Default for SurfaceSettings {
@@ -35,14 +50,26 @@ impl Default for SurfaceSettings {
             grid: Vec4::new(0.2, 1.0, 0.8, 1.8),
             fracture: Vec4::new(0.0, 0.0022, 30.0, 180.0),
             fracture_color: Vec4::new(0.54, 0.50, 0.43, 1.0),
+            fracture_surface: Vec4::new(0.98, 0.0, 0.0, 0.0),
         }
     }
 }
 
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct BuildingSurface {
     #[uniform(100)]
     pub settings: SurfaceSettings,
+    #[storage(101, read_only)]
+    pub contacts: Handle<ShaderBuffer>,
+}
+
+impl Default for BuildingSurface {
+    fn default() -> Self {
+        Self {
+            settings: SurfaceSettings::default(),
+            contacts: EMPTY_CONTACT_MASK,
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -118,18 +145,20 @@ pub fn building_material(
         .map(standard_material_from_gltf_material)
         .unwrap_or_default();
     let mut settings = SurfaceSettings::default();
+    let (color, bump, roughness) = match material_id {
+        "steel" => (Vec3::new(0.31, 0.34, 0.37), 0.0007, 0.72),
+        "wood" | "timber" => (Vec3::new(0.43, 0.27, 0.12), 0.0016, 0.94),
+        "brick" | "masonry" => (Vec3::new(0.52, 0.27, 0.18), 0.0025, 0.98),
+        _ => (Vec3::new(0.54, 0.50, 0.43), 0.0022, 0.98),
+    };
+    let metallic = if material_id == "steel" { 0.65 } else { 0.0 };
+    settings.fracture.y = bump;
+    settings.fracture_color = color.extend(1.0);
+    settings.fracture_surface = Vec4::new(roughness, metallic, 0.0, 0.0);
     if fracture {
         settings.fracture.x = 1.0;
-        let (color, bump, roughness) = match material_id {
-            "steel" => (Vec3::new(0.31, 0.34, 0.37), 0.0007, 0.72),
-            "wood" | "timber" => (Vec3::new(0.43, 0.27, 0.12), 0.0016, 0.94),
-            "brick" | "masonry" => (Vec3::new(0.52, 0.27, 0.18), 0.0025, 0.98),
-            _ => (Vec3::new(0.54, 0.50, 0.43), 0.0022, 0.98),
-        };
-        settings.fracture.y = bump;
-        settings.fracture_color = color.extend(1.0);
         base.perceptual_roughness = roughness;
-        base.metallic = if material_id == "steel" { 0.65 } else { 0.0 };
+        base.metallic = metallic;
     } else {
         base.base_color = Color::srgb(0.78, 0.80, 0.81);
         base.perceptual_roughness = 0.88;
@@ -141,7 +170,10 @@ pub fn building_material(
     base.metallic_roughness_texture = None;
     BuildingMaterial {
         base,
-        extension: BuildingSurface { settings },
+        extension: BuildingSurface {
+            settings,
+            ..default()
+        },
     }
 }
 
@@ -149,12 +181,6 @@ pub fn rim_material(material_id: &str) -> BuildingMaterial {
     let mut material = building_material(None, true, material_id);
     material.extension.settings.fracture.x = 2.0;
     material.extension.settings.fracture.y *= 1.25;
-    material
-}
-
-pub fn contact_material(material_id: &str) -> BuildingMaterial {
-    let mut material = building_material(None, true, material_id);
-    material.base.depth_bias = 2.0;
     material
 }
 

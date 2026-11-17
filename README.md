@@ -49,18 +49,19 @@ cargo run -- --scene bridge
 
 进一步优化复用同一撞击事件的平衡载荷，直接读取 v2 面片并移除旧截面表构建，跳过补偿计算中精确为零的系数；烟尘使用共享材质和固定大小的实例缓冲。替换分块前的独立程序交替对照中，同一 L 形高楼落地场景平均墙钟帧耗时约 `74.24 → 53.53 ms`，四次运行的破坏结果一致。这是历史几何的测量，不能用来推算新复合代理场景的帧率；完整协议和限制见 [ADR 0019](docs/adr/0019-performance-hot-paths.md)。
 
-破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。规范接触面上的粗糙断面显示层随所属碎块运动；源网格保持不变，邻块移走后断面自然显露。暴露侧另有可选的闭合骨料边带。显示层和边带都不改变碰撞或质量，见 [ADR 0023](docs/adr/0023-source-mesh-and-contact-surface-overlays.md)。
+破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。源三角形按规范接触区域直接选择 grid 或粗糙断面材质，邻块移走后断面自然显露；不再以共面显示层竞争深度，避免两种材质闪烁。暴露侧另有可选的闭合骨料边带，两者都不改变碰撞或质量，见 [ADR 0025](docs/adr/0025-single-owner-fracture-surface-shading.md)。
 
 Rust 二进制入口保留 `src/main.rs`，其余模块统一使用 `src/<module>/mod.rs`，模块测试集中于相邻 `tests.rs`。布局与旧资产兼容移除见 [ADR 0022](docs/adr/0022-rust-module-layout.md)。
 
 ## 验证
 
-最终制作端的 63 项不同 Blender 测试及独立插件安装/启停通过；六个正式 v2 目录的清单、GLB 哈希/材质、真实接触覆盖、自重平衡均通过。最终矩形楼点击破坏、偏侧支撑倾倒及五阶段受力图均通过实际画面验证。Rust 完整回归为 114 通过、1 项上文的落地破坏程度失败、0 忽略；正常构建、严格 Clippy 和格式检查通过。各次验证对应的资产快照和范围见 [ADR 0020](docs/adr/0020-production-irregular-fracture.md) 至 [ADR 0024](docs/adr/0024-fresh-impact-event-rebinding.md)；旧资产的历史性能及画面数据不能替代新资产验收。
+制作端的 63 项不同 Blender 测试及独立插件安装/启停通过；六个正式 v2 目录的清单、GLB 哈希/材质、真实接触覆盖、自重平衡均通过。矩形楼点击破坏、偏侧支撑倾倒及五阶段受力图已有实际画面验证。断面闪烁修复通过 8 组/40 张真实 GPU 对照及原材质运动检查。当前 Rust 完整回归为 124 通过、1 项上文的落地破坏程度失败、0 忽略；正常构建、严格 Clippy 和格式检查通过。各次验证对应的资产快照和范围见 [ADR 0020](docs/adr/0020-production-irregular-fracture.md) 至 [ADR 0025](docs/adr/0025-single-owner-fracture-surface-shading.md)；旧资产的历史性能及画面数据不能替代新资产验收。
 
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+cargo run -- --contact-smoke-test output/acceptance/contact-surfaces
 cargo run -- --scene rectangle --force-smoke-test output/acceptance/forces
 cargo run -- --material-smoke-test output/acceptance/material-attached
 cargo run -- --scene rectangle --collapse-smoke-test output/acceptance/support-tipping
@@ -95,6 +96,8 @@ cargo run -- --asset buildings/courtyard.destruction.json --physics-smoke-test o
 `--collapse-smoke-test` 使用默认矩形楼，从当前几何中选择偏侧支撑路径并移除其他首层支撑，检查强度断裂后大块上部下降、倾斜及其与静态残墙的真实接触冲量，不注入速度或力矩。输出四张阶段图、可回放的 `damage.json` 和数值/质量报告。
 
 `--force-smoke-test` 验证真实自重内力、断键后标记消失、刚球命中的真实法向接触冲量，以及关闭后清空；保存五张截图和含资产身份/逻辑块数/凸代理数的报告。
+
+`--contact-smoke-test` 对照纯断面参考、旧共面显示层与源网格单次着色，检查透视深度精度、移动视角、深度预通道、接触范围外 grid 和前方遮挡。
 
 验证包含 0.05 / 0.15 / 0.4 / 1 / 3 秒分阶段画面，以及烟尘散尽后的破口近景。可用以下参数做同路径比较：
 

@@ -18,10 +18,39 @@ struct SurfaceSettings {
     grid: vec4<f32>,
     fracture: vec4<f32>,
     fracture_color: vec4<f32>,
+    fracture_surface: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
 var<uniform> surface: SurfaceSettings;
+
+@group(constants::MATERIAL_BIND_GROUP) @binding(101)
+var<storage, read> contact_mask: array<vec4<f32>>;
+
+fn inside_contact(position: vec3<f32>, encoded_header: f32) -> bool {
+    if encoded_header < 0.5 {
+        return false;
+    }
+    let header = u32(round(encoded_header));
+    let count = u32(contact_mask[header].x);
+    for (var i = 0u; i < count; i += 1u) {
+        let polygon = u32(contact_mask[header + 1u + i].x);
+        let info = contact_mask[polygon];
+        let relative = position - info.xyz;
+        var inside = true;
+        for (var edge = 0u; edge < u32(info.w); edge += 1u) {
+            let halfspace = contact_mask[polygon + 1u + edge];
+            if dot(halfspace.xyz, relative) + halfspace.w < -0.0000005 {
+                inside = false;
+                break;
+            }
+        }
+        if inside {
+            return true;
+        }
+    }
+    return false;
+}
 
 fn hash3(p: vec3<f32>) -> f32 {
     let q = fract(p * vec3<f32>(0.1031, 0.11369, 0.13787));
@@ -70,17 +99,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let world_dy = dpdy(in.world_position.xyz);
     let normal = unit(cross(rest_dx, rest_dy));
 
-    if surface.fracture.x < 0.5 {
-        let horizontal = cross(vec3<f32>(0.0, 1.0, 0.0), normal);
-        let wall_tangent = horizontal / max(length(horizontal), 0.00001);
-        let tangent = select(vec3<f32>(1.0, 0.0, 0.0), wall_tangent, abs(normal.y) < 0.999);
-        let bitangent = select(vec3<f32>(0.0, 0.0, 1.0), normalize(cross(normal, tangent)), abs(normal.y) < 0.999);
-        let plane_position = vec2<f32>(dot(position, tangent), dot(position, bitangent));
-        let minor = grid_coverage(plane_position, surface.grid.x, surface.grid.z);
-        let major = grid_coverage(plane_position, surface.grid.y, surface.grid.w);
+    // Derivatives must precede the per-fragment contact mask branch.
+    let horizontal = cross(vec3<f32>(0.0, 1.0, 0.0), normal);
+    let wall_tangent = horizontal / max(length(horizontal), 0.00001);
+    let tangent = select(vec3<f32>(1.0, 0.0, 0.0), wall_tangent, abs(normal.y) < 0.999);
+    let bitangent = select(vec3<f32>(0.0, 0.0, 1.0), normalize(cross(normal, tangent)), abs(normal.y) < 0.999);
+    let plane_position = vec2<f32>(dot(position, tangent), dot(position, bitangent));
+    let minor = grid_coverage(plane_position, surface.grid.x, surface.grid.z);
+    let major = grid_coverage(plane_position, surface.grid.y, surface.grid.w);
+
+    if surface.fracture.x < 0.5 && !inside_contact(position, in.uv_b.y) {
         let with_minor = mix(pbr.material.base_color.rgb, vec3<f32>(0.34, 0.39, 0.41), minor * (1.0 - major) * 0.62);
         pbr.material.base_color = vec4<f32>(mix(with_minor, vec3<f32>(0.065, 0.085, 0.095), major * 0.88), 1.0);
     } else {
+        pbr.material.perceptual_roughness = surface.fracture_surface.x;
+        pbr.material.metallic = surface.fracture_surface.y;
         let aggregate = noise3(position * surface.fracture.z);
         let pores = noise3(position * surface.fracture.w + vec3<f32>(7.3, 1.7, 9.1));
         let variation = 0.72 + 0.40 * aggregate - 0.13 * smoothstep(0.67, 0.91, pores);

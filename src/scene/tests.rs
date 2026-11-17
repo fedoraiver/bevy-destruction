@@ -1,5 +1,5 @@
 use super::*;
-use crate::fracture_detail::RimEdge;
+use crate::{asset::ChunkRecord, fracture_detail::RimEdge};
 use bevy::mesh::VertexAttributeValues;
 
 fn mask_record() -> ChunkRecord {
@@ -26,168 +26,70 @@ fn mask_asset(value: u128) -> AssetId<DestructibleAsset> {
 }
 
 #[test]
-fn contact_masks_share_handles_and_keep_rest_coordinates_after_local_conversion() {
+fn source_masks_share_asset_buffers_and_keep_exact_source_geometry() {
     let patches = shared_patches();
     let record = mask_record();
     let mut cache = GeometryCache::default();
     let mut meshes = Assets::<Mesh>::default();
-    let mut materials = Assets::<BuildingMaterial>::default();
-    let first = cache
-        .contact_surface(
+    let mut buffers = Assets::<ShaderBuffer>::default();
+    let local = Transform::from_matrix(record.transform().to_matrix().inverse());
+    let source = meshes.add(
+        crate::fracture_detail::contact_surface_mesh(&patches, "a")
+            .unwrap()
+            .transformed_by(local),
+    );
+    let original = mesh_triangles(meshes.get(&source).unwrap()).unwrap();
+    let sources = || [(0, source.clone(), record.transform(), record.id.clone())];
+    let prepared = cache
+        .prepare_surface_masks(
             mask_asset(1),
-            0,
-            &record,
+            sources(),
             &patches,
             &mut meshes,
-            &mut materials,
+            &mut buffers,
         )
         .unwrap();
-    let repeated = cache
-        .contact_surface(
+    let first = (
+        prepared.meshes[&(0, source.id())].clone(),
+        prepared.buffer.clone(),
+    );
+    let prepared = cache
+        .prepare_surface_masks(
             mask_asset(1),
-            0,
-            &record,
+            sources(),
             &patches,
             &mut meshes,
-            &mut materials,
+            &mut buffers,
         )
         .unwrap();
-    assert_eq!(first, repeated);
-    let other_asset = cache
-        .contact_surface(
+    assert_eq!(first.0, prepared.meshes[&(0, source.id())]);
+    assert_eq!(first.1, prepared.buffer);
+    let prepared = cache
+        .prepare_surface_masks(
             mask_asset(2),
-            0,
-            &record,
+            sources(),
             &patches,
             &mut meshes,
-            &mut materials,
+            &mut buffers,
         )
         .unwrap();
-    assert_ne!(first.0, other_asset.0);
-    assert_eq!(first.1, other_asset.1);
-    assert_eq!((meshes.len(), materials.len()), (2, 1));
+    assert_ne!(first.0, prepared.meshes[&(0, source.id())]);
+    assert_ne!(first.1, prepared.buffer);
+    assert_eq!((meshes.len(), buffers.len()), (3, 2));
     let mesh = meshes.get(&first.0).unwrap();
-    let VertexAttributeValues::Float32x3(positions) =
-        mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
-    else {
-        panic!()
-    };
-    let VertexAttributeValues::Float32x2(xy) = mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap() else {
-        panic!()
-    };
+    assert_eq!(mesh_triangles(mesh).unwrap(), original);
     let VertexAttributeValues::Float32x2(z) = mesh.attribute(Mesh::ATTRIBUTE_UV_1).unwrap() else {
         panic!()
     };
-    let expected = patches
-        .iter()
-        .flat_map(|patch| patch.triangles.iter().flatten())
-        .copied()
-        .collect::<Vec<_>>();
-    assert_eq!(positions.len(), expected.len());
-    for ((position, xy), z) in positions.iter().zip(xy).zip(z) {
-        let rest = Vec3::new(xy[0], xy[1], z[0]);
-        assert!(expected.contains(&rest));
-        assert!(
-            (record
-                .transform()
-                .transform_point(Vec3::from_array(*position))
-                - rest)
-                .length()
-                < 2e-6
-        );
-        assert_eq!(z[1], 0.0);
+    assert!(z.iter().all(|uv| uv[1] > 0.0));
+    for triangle in z.as_chunks::<3>().0 {
+        assert_eq!(triangle[0][1], triangle[1][1]);
+        assert_eq!(triangle[0][1], triangle[2][1]);
     }
-    assert_eq!(materials.get(&first.1).unwrap().base.depth_bias, 2.0);
 }
 
 #[test]
-fn contact_surface_is_independent_of_rims_and_inherits_chunk_motion_and_hiding() {
-    use bevy::{
-        asset::AssetPlugin, camera::visibility::VisibilityPlugin, ecs::system::RunSystemOnce,
-        mesh::MeshPlugin,
-    };
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        AssetPlugin::default(),
-        MeshPlugin,
-        TransformPlugin,
-        VisibilityPlugin,
-    ))
-    .init_resource::<Assets<BuildingMaterial>>()
-    .insert_resource(DemoOptions {
-        no_detail: true,
-        ..default()
-    });
-    let record = mask_record();
-    let mut cache = GeometryCache::default();
-    let handles = app
-        .world_mut()
-        .resource_scope(|world, mut meshes: Mut<Assets<Mesh>>| {
-            let mut materials = world.resource_mut::<Assets<BuildingMaterial>>();
-            cache
-                .contact_surface(
-                    mask_asset(1),
-                    0,
-                    &record,
-                    &shared_patches(),
-                    &mut meshes,
-                    &mut materials,
-                )
-                .unwrap()
-        });
-    let parent = app
-        .world_mut()
-        .spawn((record.transform(), Visibility::Visible))
-        .id();
-    let overlay = app
-        .world_mut()
-        .run_system_once(move |mut commands: Commands| {
-            spawn_contact_surface(&mut commands, parent, handles.0.clone(), handles.1.clone())
-        })
-        .unwrap();
-    app.update();
-    assert!(app.world().resource::<DemoOptions>().no_detail);
-    assert_eq!(
-        app.world().get::<ChildOf>(overlay).unwrap().parent(),
-        parent
-    );
-    assert!(app.world().get::<NotShadowCaster>(overlay).is_some());
-    assert!(app.world().get::<Collider>(overlay).is_none());
-    assert!(app.world().get::<ChunkIdentity>(overlay).is_none());
-    assert!(
-        app.world()
-            .get::<InheritedVisibility>(overlay)
-            .unwrap()
-            .get()
-    );
-    assert_eq!(
-        *app.world().get::<Transform>(overlay).unwrap(),
-        Transform::IDENTITY
-    );
-    let moved = Transform::from_xyz(-4.0, 2.0, 7.0).with_rotation(Quat::from_rotation_z(0.9));
-    *app.world_mut().get_mut::<Transform>(parent).unwrap() = moved;
-    app.update();
-    assert_eq!(
-        app.world()
-            .get::<GlobalTransform>(overlay)
-            .unwrap()
-            .to_matrix(),
-        moved.to_matrix()
-    );
-    *app.world_mut().get_mut::<Visibility>(parent).unwrap() = Visibility::Hidden;
-    app.update();
-    assert!(
-        !app.world()
-            .get::<InheritedVisibility>(overlay)
-            .unwrap()
-            .get()
-    );
-    assert!(app.world().get::<Mesh3d>(overlay).is_some());
-}
-
-#[test]
-fn contact_geometry_cache_evicts_only_removed_or_modified_assets() {
+fn contact_geometry_cache_evicts_only_removed_or_modified_asset_domains() {
     let mut app = App::new();
     app.init_resource::<GeometryCache>()
         .add_message::<AssetEvent<DestructibleAsset>>()
@@ -196,28 +98,27 @@ fn contact_geometry_cache_evicts_only_removed_or_modified_assets() {
         let mut cache = app.world_mut().resource_mut::<GeometryCache>();
         for asset in [mask_asset(1), mask_asset(2)] {
             cache.patches.insert(asset, shared_patches());
-            cache
-                .contact_meshes
-                .insert((asset, 0), Some(Handle::default()));
+            cache.surface_masks.insert(
+                asset,
+                SurfaceMasks {
+                    meshes: BTreeMap::new(),
+                    buffer: Handle::default(),
+                },
+            );
         }
-        cache
-            .contact_materials
-            .insert("concrete".into(), Handle::default());
     }
     app.world_mut()
         .write_message(AssetEvent::Removed { id: mask_asset(1) });
     app.update();
     let cache = app.world().resource::<GeometryCache>();
     assert!(!cache.patches.contains_key(&mask_asset(1)));
-    assert!(!cache.contact_meshes.contains_key(&(mask_asset(1), 0)));
-    assert!(cache.contact_meshes.contains_key(&(mask_asset(2), 0)));
-    assert_eq!(cache.contact_materials.len(), 1);
+    assert!(!cache.surface_masks.contains_key(&mask_asset(1)));
+    assert!(cache.surface_masks.contains_key(&mask_asset(2)));
     app.world_mut()
         .write_message(AssetEvent::Modified { id: mask_asset(2) });
     app.update();
     let cache = app.world().resource::<GeometryCache>();
-    assert!(cache.patches.is_empty() && cache.contact_meshes.is_empty());
-    assert_eq!(cache.contact_materials.len(), 1);
+    assert!(cache.patches.is_empty() && cache.surface_masks.is_empty());
 }
 
 fn detail_app() -> App {

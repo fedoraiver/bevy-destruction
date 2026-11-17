@@ -18,27 +18,34 @@ fn material_keeps_gltf_double_sided_and_uses_material_class_for_fracture() {
 }
 
 #[test]
-fn contact_overlay_keeps_material_fracture_response_and_renders_above_source_faces() {
-    let steel = contact_material("steel");
-    let wood = contact_material("wood");
-    for material in [&steel, &wood] {
-        assert_eq!(material.base.depth_bias, 2.0);
-        assert_eq!(material.extension.settings.fracture.x, 1.0);
+fn masked_grid_uses_the_same_physical_material_as_a_full_fracture_face() {
+    for id in ["steel", "wood", "brick", "concrete"] {
+        let grid = building_material(None, false, id);
+        let fracture = building_material(None, true, id);
+        assert_eq!(grid.base.depth_bias, 0.0);
+        assert_eq!(fracture.base.depth_bias, 0.0);
+        assert_eq!(grid.extension.contacts, EMPTY_CONTACT_MASK);
+        assert_eq!(grid.extension.settings.fracture.x, 0.0);
+        assert_eq!(fracture.extension.settings.fracture.x, 1.0);
         assert_eq!(
-            material.extension.settings.grid,
-            SurfaceSettings::default().grid
+            grid.extension.settings.fracture.y,
+            fracture.extension.settings.fracture.y
         );
-        assert!(material.base.base_color_texture.is_none());
-        assert!(material.base.normal_map_texture.is_none());
+        assert_eq!(
+            grid.extension.settings.fracture_color,
+            fracture.extension.settings.fracture_color
+        );
+        assert_eq!(
+            grid.extension.settings.fracture_surface.x,
+            fracture.base.perceptual_roughness
+        );
+        assert_eq!(
+            grid.extension.settings.fracture_surface.y,
+            fracture.base.metallic
+        );
+        assert_eq!(grid.base.perceptual_roughness, 0.88);
+        assert_eq!(grid.base.metallic, 0.0);
     }
-    assert!(steel.base.metallic > wood.base.metallic);
-    assert!(steel.base.perceptual_roughness < wood.base.perceptual_roughness);
-    assert!(steel.extension.settings.fracture.y < wood.extension.settings.fracture.y);
-    assert_ne!(
-        steel.extension.settings.fracture_color,
-        wood.extension.settings.fracture_color
-    );
-    assert_eq!(building_material(None, true, "steel").base.depth_bias, 0.0);
 }
 
 fn positions(mesh: &Mesh) -> &Vec<[f32; 3]> {

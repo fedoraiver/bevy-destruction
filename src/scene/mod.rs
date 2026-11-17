@@ -6,22 +6,20 @@ use bevy::{
     camera::visibility::NoFrustumCulling,
     core_pipeline::prepass::DepthPrepass,
     gltf::*,
-    light::NotShadowCaster,
     mesh::PrimitiveTopology,
     prelude::*,
+    render::storage::ShaderBuffer,
 };
 
 use crate::{
     DemoOptions,
-    asset::{ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
+    asset::{DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
     camera::{Crosshair, FreeCamera},
+    contact_mask::ContactMaskBuilder,
     debug::fracture_edges,
-    fracture_detail::{
-        ContactPatch, SurfaceGeometry, build_patches, contact_surface_mesh, detail_mesh,
-    },
+    fracture_detail::{ContactPatch, SurfaceGeometry, build_patches, detail_mesh},
     material::{
-        BuildingMaterial, SurfaceMeshCache, building_material, contact_material, rim_material,
-        surface_coordinates,
+        BuildingMaterial, SurfaceMeshCache, building_material, rim_material, surface_coordinates,
     },
 };
 
@@ -119,60 +117,38 @@ pub struct RemovedChunk;
 #[derive(Resource, Default)]
 pub(crate) struct GeometryCache {
     patches: BTreeMap<AssetId<DestructibleAsset>, Arc<Vec<ContactPatch>>>,
-    contact_meshes: BTreeMap<(AssetId<DestructibleAsset>, usize), Option<Handle<Mesh>>>,
-    contact_materials: BTreeMap<String, Handle<BuildingMaterial>>,
+    surface_masks: BTreeMap<AssetId<DestructibleAsset>, SurfaceMasks>,
+}
+
+struct SurfaceMasks {
+    meshes: BTreeMap<(usize, AssetId<Mesh>), Handle<Mesh>>,
+    buffer: Handle<ShaderBuffer>,
 }
 
 impl GeometryCache {
-    fn contact_surface(
+    fn prepare_surface_masks(
         &mut self,
         asset: AssetId<DestructibleAsset>,
-        index: usize,
-        record: &ChunkRecord,
+        sources: impl IntoIterator<Item = (usize, Handle<Mesh>, Transform, String)>,
         patches: &[ContactPatch],
         meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<BuildingMaterial>,
-    ) -> Option<(Handle<Mesh>, Handle<BuildingMaterial>)> {
-        let mesh = self
-            .contact_meshes
-            .entry((asset, index))
-            .or_insert_with(|| {
-                contact_surface_mesh(patches, &record.id).map(|mesh| {
-                    let local = Transform::from_matrix(record.transform().to_matrix().inverse());
-                    meshes.add(surface_coordinates(mesh, Transform::IDENTITY).transformed_by(local))
-                })
-            })
-            .clone()?;
-        let material = self
-            .contact_materials
-            .entry(record.material.clone())
-            .or_insert_with(|| materials.add(contact_material(&record.material)))
-            .clone();
-        Some((mesh, material))
+        buffers: &mut Assets<ShaderBuffer>,
+    ) -> Result<&SurfaceMasks, String> {
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.surface_masks.entry(asset) {
+            let mut builder = ContactMaskBuilder::default();
+            let mut prepared = BTreeMap::new();
+            for (index, source, transform, chunk) in sources {
+                let mesh = surface_coordinates(meshes.get(&source).unwrap().clone(), transform);
+                let masked = builder.mask_mesh(mesh, patches, &chunk)?;
+                prepared.insert((index, source.id()), meshes.add(masked));
+            }
+            entry.insert(SurfaceMasks {
+                meshes: prepared,
+                buffer: buffers.add(ShaderBuffer::from(builder.data().to_vec())),
+            });
+        }
+        Ok(&self.surface_masks[&asset])
     }
-}
-
-#[derive(Component)]
-pub struct ContactFractureSurface;
-
-fn spawn_contact_surface(
-    commands: &mut Commands,
-    parent: Entity,
-    mesh: Handle<Mesh>,
-    material: Handle<BuildingMaterial>,
-) -> Entity {
-    commands
-        .spawn((
-            Name::new("Contact fracture surface"),
-            ContactFractureSurface,
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::IDENTITY,
-            Visibility::Inherited,
-            NotShadowCaster,
-            ChildOf(parent),
-        ))
-        .id()
 }
 
 fn release_geometry_cache(
@@ -182,7 +158,7 @@ fn release_geometry_cache(
     for event in events.read() {
         if let AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
             cache.patches.remove(id);
-            cache.contact_meshes.retain(|(asset, _), _| asset != id);
+            cache.surface_masks.remove(id);
         }
     }
 }
@@ -346,6 +322,7 @@ pub(crate) fn instantiate_pending(
     mut rim_materials: ResMut<RimMaterials>,
     mut stats: ResMut<DetailStats>,
     mut surface_meshes: ResMut<SurfaceMeshCache>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     for (root, mut instance) in &mut instances {
         if instance.bounds.is_some() || instance.error.is_some() {
@@ -455,6 +432,37 @@ pub(crate) fn instantiate_pending(
                 continue;
             }
         };
+        let mask_started = bevy::platform::time::Instant::now();
+        let sources = prepared.iter().flat_map(|(chunk, _, _)| {
+            let record = &asset.manifest.chunks[chunk.record_index];
+            chunk
+                .primitives
+                .iter()
+                .filter(|primitive| primitive.surface_role == SurfaceRole::Exterior)
+                .map(move |primitive| {
+                    (
+                        chunk.record_index,
+                        primitive.mesh.clone(),
+                        record.transform(),
+                        record.id.clone(),
+                    )
+                })
+        });
+        let masks = match cache.prepare_surface_masks(
+            instance.asset.id(),
+            sources,
+            &patches,
+            &mut meshes,
+            &mut buffers,
+        ) {
+            Ok(masks) => masks,
+            Err(error) => {
+                error!("Invalid contact surface mask: {error}");
+                instance.error = Some("Building contact surface could not be prepared.".into());
+                continue;
+            }
+        };
+        stats.cache_build_ms += mask_started.elapsed().as_secs_f64() * 1000.0;
         let mut material_cache = BTreeMap::new();
         for (chunk, collider, edges) in prepared {
             let record = &asset.manifest.chunks[chunk.record_index];
@@ -483,32 +491,28 @@ pub(crate) fn instantiate_pending(
                 let material = material_cache
                     .entry(key)
                     .or_insert_with(|| {
-                        materials.add(building_material(
+                        let mut material = building_material(
                             primitive
                                 .material
                                 .as_ref()
                                 .and_then(|h| gltf_materials.get(h)),
                             fracture,
                             &record.material,
-                        ))
+                        );
+                        material.extension.contacts = masks.buffer.clone();
+                        materials.add(material)
                     })
                     .clone();
-                let mesh = surface_meshes.get_or_create(&primitive.mesh, transform, &mut meshes);
+                let mesh = if fracture {
+                    surface_meshes.get_or_create(&primitive.mesh, transform, &mut meshes)
+                } else {
+                    masks.meshes[&(chunk.record_index, primitive.mesh.id())].clone()
+                };
                 let primitive_name = format!("{} primitive {i}", record.id);
                 let primitive_entity = commands.spawn_scene(bsn! {
                     Name::new(primitive_name) Mesh3d(mesh) MeshMaterial3d::<BuildingMaterial>(material) Transform::IDENTITY
                 }).insert(ChildOf(entity)).id();
                 primitives.push(primitive_entity);
-            }
-            if let Some((mesh, material)) = cache.contact_surface(
-                instance.asset.id(),
-                chunk.record_index,
-                record,
-                &patches,
-                &mut meshes,
-                &mut materials,
-            ) {
-                spawn_contact_surface(&mut commands, entity, mesh, material);
             }
             instance.chunks.insert(
                 record.id.clone(),
