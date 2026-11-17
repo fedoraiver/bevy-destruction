@@ -18,6 +18,10 @@ use crate::{
 #[path = "stress_runtime_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "collapse_tests.rs"]
+mod collapse_tests;
+
 pub struct StressRuntimePlugin;
 
 impl Plugin for StressRuntimePlugin {

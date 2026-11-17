@@ -5,6 +5,7 @@
 - 已采用，首轮实现与已完成验证分别记录于下文。
 - 日期：2026-11-17。
 - 采用 [ADR 0003](0003-structural-loads-and-progressive-fracture.md) 的六自由度小变形连接图方向；明确本轮构成关系、求解器、失效规则与范围，不声称完整 FEM 或工程安全分析。
+- 后续 [ADR 0016](0016-damaged-structure-solver-and-support-release.md) 修正困难受损图的数值路径及无效 HUD。下述原分块 Jacobi 策略和首轮验收保留为历史；当前对困难图增加稀疏因子与补偿残差修正，精度目标和物理模型保持。
 
 ## 背景
 

@@ -494,8 +494,15 @@ fn update_hint(
             .filter(|report| report.valid)
             .map(|report| report.max_displacement)
             .fold(0.0_f64, f64::max);
-        text.push_str(&format!("\nStress: {:.2} capacity | {} overload breaks | {} solver errors | {:.3} mm elastic estimate",
-            stress.max_utilization, stress.broken_total, invalid, max_displacement * 1000.0));
+        if invalid > 0 && invalid == stress.reports.len() {
+            text.push_str(&format!(
+                "\nStress: unavailable (retrying) | {} overload breaks | {invalid} unsolved components",
+                stress.broken_total
+            ));
+        } else {
+            text.push_str(&format!("\nStress: {:.2} capacity | {} overload breaks | {} unsolved components | {:.3} mm elastic estimate",
+                stress.max_utilization, stress.broken_total, invalid, max_displacement * 1000.0));
+        }
     }
     for mut hint in &mut hints {
         if hint.0 != text {

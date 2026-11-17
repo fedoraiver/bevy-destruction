@@ -1,6 +1,7 @@
 mod asset;
 mod camera;
 mod catalog;
+mod collapse_smoke;
 mod debug;
 mod diagnostics;
 mod dust_material;
@@ -32,6 +33,7 @@ pub struct DemoOptions {
     pub stress_smoke_output: Option<std::path::PathBuf>,
     pub material_smoke_output: Option<std::path::PathBuf>,
     pub landing_smoke_output: Option<std::path::PathBuf>,
+    pub collapse_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
     pub no_stress: bool,
     pub no_detail: bool,
@@ -49,6 +51,7 @@ impl Default for DemoOptions {
             stress_smoke_output: None,
             material_smoke_output: None,
             landing_smoke_output: None,
+            collapse_smoke_output: None,
             no_vfx: false,
             no_stress: false,
             no_detail: false,
@@ -66,6 +69,7 @@ impl DemoOptions {
             || self.stress_smoke_output.is_some()
             || self.material_smoke_output.is_some()
             || self.landing_smoke_output.is_some()
+            || self.collapse_smoke_output.is_some()
     }
 }
 
@@ -119,9 +123,16 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 );
             }
+            "--collapse-smoke-test" => {
+                options.collapse_smoke_output = Some(
+                    args.next()
+                        .ok_or("--collapse-smoke-test requires an output directory")?
+                        .into(),
+                );
+            }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --landing-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -140,6 +151,7 @@ fn options() -> Result<DemoOptions, String> {
         options.stress_smoke_output.is_some(),
         options.material_smoke_output.is_some(),
         options.landing_smoke_output.is_some(),
+        options.collapse_smoke_output.is_some(),
     ]
     .into_iter()
     .filter(|enabled| *enabled)
@@ -209,6 +221,7 @@ fn main() -> AppExit {
             catalog::CatalogPlugin,
             material_smoke::MaterialSmokePlugin,
             landing_smoke::LandingSmokePlugin,
+            collapse_smoke::CollapseSmokePlugin,
         ))
         .add_systems(Update, close_on_escape);
     if smoke_test {

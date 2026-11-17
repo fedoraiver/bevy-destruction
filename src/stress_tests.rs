@@ -378,6 +378,18 @@ fn closed_network_matches_dense_reference_and_redistributes_after_path_removal()
     for (&actual, &expected) in iterative.iter().zip(&dense) {
         close(actual, expected, 1e-12);
     }
+    let (refined, _, residual) = refine(
+        &model,
+        &SolverSettings::default(),
+        vec![0.0; model.load.len()],
+        0,
+        dot(&model.load, &model.load).sqrt(),
+    )
+    .unwrap();
+    assert!(residual <= 1e-8);
+    for (&actual, &expected) in refined.iter().zip(&dense) {
+        close(actual, expected, 1e-12);
+    }
     let first = solve(
         &manifest,
         &ids(&manifest),
@@ -518,6 +530,218 @@ fn support_loss_invalid_geometry_and_budget_exhaustion_are_explicit_failures() {
         ),
         Err(SolveError::Underconstrained(_))
     ));
+}
+
+#[test]
+fn damaged_rectangle_with_one_remaining_support_interface_converges() {
+    let manifest: Manifest = serde_json::from_str(include_str!(
+        "../assets/buildings/rectangle.destruction.json"
+    ))
+    .unwrap();
+    let centers = manifest
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk.position[1]))
+        .collect::<BTreeMap<_, _>>();
+    let active = manifest
+        .bonds
+        .iter()
+        .map(|bond| {
+            let crosses_cut = (centers[bond.a.as_str()] < 1.0) != (centers[bond.b.as_str()] < 1.0);
+            (
+                bond.id.clone(),
+                !crosses_cut || bond.id == "bond_da333b7d157787cb4b2d6145",
+            )
+        })
+        .collect();
+    let solution = solve(
+        &manifest,
+        &ids(&manifest),
+        &active,
+        Vec3::new(0.0, -9.81, 0.0),
+        &BTreeMap::new(),
+        &SolverSettings::default(),
+        None,
+    )
+    .unwrap();
+    assert!(solution.relative_residual <= 1e-8);
+    assert_recovered_equilibrium(
+        &assemble(
+            &manifest,
+            &ids(&manifest),
+            &active,
+            Vec3::new(0.0, -9.81, 0.0),
+            &BTreeMap::new(),
+        )
+        .unwrap(),
+        &solution,
+    );
+    let total_weight = manifest
+        .chunks
+        .iter()
+        .map(|chunk| f64::from(chunk.mass))
+        .sum::<f64>()
+        * 9.81;
+    close(
+        solution
+            .reactions
+            .values()
+            .map(|reaction| reaction.force[1])
+            .sum(),
+        total_weight,
+        1e-6,
+    );
+    assert!(
+        solution
+            .bonds
+            .values()
+            .all(|bond| bond.utilization.is_finite())
+    );
+}
+
+fn assert_recovered_equilibrium(model: &Model, solution: &StressSolution) {
+    let mut internal = vec![NodeLoad::default(); model.nodes.len()];
+    for element in &model.elements {
+        let stress = &solution.bonds[&element.id];
+        assert!(stress.utilization.is_finite());
+        for (index, sign) in [(element.a, -1.0), (element.b, 1.0)] {
+            let force = scale3(stress.force, sign);
+            let moment = add3(
+                scale3(stress.moment, sign),
+                cross3(sub3(element.center, model.nodes[index].center), force),
+            );
+            internal[index].force = add3(internal[index].force, force);
+            internal[index].moment = add3(internal[index].moment, moment);
+        }
+    }
+    let mut squared = 0.0;
+    for (node, internal) in model.nodes.iter().zip(internal) {
+        if !node.fixed {
+            squared += norm3(sub3(internal.force, node.load.force)).powi(2);
+            squared +=
+                (norm3(sub3(internal.moment, node.load.moment)) / model.length_scale).powi(2);
+        }
+    }
+    assert!(solution.relative_residual <= 1e-8);
+    assert!(squared.sqrt() / dot(&model.load, &model.load).sqrt() <= 1e-8);
+    let mut force = [0.0; 3];
+    let mut moment = [0.0; 3];
+    let mut force_scale = 0.0;
+    let mut moment_scale = 0.0;
+    for node in &model.nodes {
+        let reaction = solution
+            .reactions
+            .get(&node.id)
+            .copied()
+            .unwrap_or_default();
+        let load_force = add3(node.load.force, reaction.force);
+        force = add3(force, load_force);
+        moment = add3(
+            moment,
+            add3(
+                add3(node.load.moment, reaction.moment),
+                cross3(node.center, load_force),
+            ),
+        );
+        force_scale += norm3(node.load.force);
+        moment_scale += norm3(node.load.moment) + norm3(node.center) * norm3(node.load.force);
+    }
+    assert!(norm3(force) <= 1e-7 * force_scale);
+    assert!(norm3(moment) <= 1e-7 * moment_scale);
+}
+
+#[test]
+fn narrow_wall_jamb_transfers_the_upper_building_weight_and_moment() {
+    let manifest: Manifest = serde_json::from_str(include_str!(
+        "../assets/buildings/rectangle.destruction.json"
+    ))
+    .unwrap();
+    let gravity = Vec3::new(0.0, -9.81, 0.0);
+    for narrow_jamb in [true, false] {
+        let chunks = manifest
+            .chunks
+            .iter()
+            .filter(|chunk| {
+                !(chunk.part_id.contains("-l00")
+                    && if narrow_jamb {
+                        chunk.part_id != "wall-inner-0-l00-p0000-z00"
+                    } else {
+                        chunk.position[0] < 4.04
+                    })
+            })
+            .map(|chunk| chunk.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(chunks.len(), if narrow_jamb { 194 } else { 217 });
+        let alive = chunks.iter().collect::<BTreeSet<_>>();
+        let active = manifest
+            .bonds
+            .iter()
+            .map(|bond| {
+                (
+                    bond.id.clone(),
+                    alive.contains(&bond.a) && alive.contains(&bond.b),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let model = assemble(&manifest, &chunks, &active, gravity, &BTreeMap::new()).unwrap();
+        let solution = solve(
+            &manifest,
+            &chunks,
+            &active,
+            gravity,
+            &BTreeMap::new(),
+            &SolverSettings::default(),
+            None,
+        )
+        .unwrap();
+        assert_recovered_equilibrium(&model, &solution);
+        if !narrow_jamb {
+            assert!(
+                solution
+                    .bonds
+                    .values()
+                    .all(|stress| stress.utilization < 1.0)
+            );
+            continue;
+        }
+        let bridge = model
+            .elements
+            .iter()
+            .find(|element| element.id == "bond_afddaa5aa6e3105729db1b11")
+            .unwrap();
+        let mut upper = BTreeSet::from([bridge.b]);
+        loop {
+            let before = upper.len();
+            for element in &model.elements {
+                if element.id != bridge.id
+                    && (upper.contains(&element.a) || upper.contains(&element.b))
+                {
+                    upper.insert(element.a);
+                    upper.insert(element.b);
+                }
+            }
+            if upper.len() == before {
+                break;
+            }
+        }
+        assert_eq!(upper.len(), 150);
+        assert!(!upper.iter().any(|&index| model.nodes[index].fixed));
+        let mut force = [0.0; 3];
+        let mut moment = [0.0; 3];
+        for &index in &upper {
+            let node = &model.nodes[index];
+            force = add3(force, node.load.force);
+            moment = add3(
+                moment,
+                cross3(sub3(node.center, bridge.center), node.load.force),
+            );
+        }
+        let stress = &solution.bonds[&bridge.id];
+        assert!(norm3(sub3(stress.force, force)) <= 1e-7 * norm3(force));
+        assert!(norm3(sub3(stress.moment, moment)) <= 1e-7 * norm3(moment));
+        assert!(stress.compression >= norm3(force) / bridge.area * (1.0 - 1e-6));
+        assert!(stress.utilization > 4.0);
+    }
 }
 
 #[test]

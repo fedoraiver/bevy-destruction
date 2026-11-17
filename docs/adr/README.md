@@ -30,5 +30,6 @@
 | [0013](0013-object-attached-procedural-surfaces.md) | 随碎块运动的程序化网格与断面材质 | 已采用（已实现并完成图像对照） |
 | [0014](0014-inertial-cluster-impact-fracture.md) | 惯性平衡的动态簇撞击与内部断裂 | 已采用（已实现，验证范围见记录） |
 | [0015](0015-structural-and-collision-runtime-performance.md) | 结构缓存、求解与碎片碰撞性能 | 已采用（已实现，测量范围见记录） |
+| [0016](0016-damaged-structure-solver-and-support-release.md) | 受损结构稳健求解与窄支撑释放 | 已采用（已实现，验证范围见记录） |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。
