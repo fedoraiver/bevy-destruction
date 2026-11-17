@@ -1,5 +1,6 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_functions::get_tag,
     mesh_view_bindings::view,
     view_transformations::depth_ndc_to_view_z,
 };
@@ -14,7 +15,7 @@ struct DustSettings {
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0)
-var<uniform> dust: DustSettings;
+var<storage, read> dust_instances: array<DustSettings>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1)
 var atlas: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2)
@@ -28,6 +29,7 @@ fn frame_sample(uv: vec2<f32>, frame: f32, variant: f32) -> vec4<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> FragmentOutput {
+    let dust = dust_instances[get_tag(in.instance_index)];
     let progress = clamp(dust.time.x / max(dust.time.y, 0.001), 0.0, 1.0);
     let sine = sin(dust.shape.x);
     let cosine = cos(dust.shape.x);

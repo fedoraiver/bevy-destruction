@@ -194,6 +194,11 @@ fn main() -> AppExit {
                     primary_window: Some(Window {
                         title: "Bevy Destruction · Physical fracture".into(),
                         resolution: (1280, 900).into(),
+                        present_mode: if profile {
+                            bevy::window::PresentMode::AutoNoVsync
+                        } else {
+                            default()
+                        },
                         ..default()
                     }),
                     ..default()
@@ -230,6 +235,7 @@ fn main() -> AppExit {
         ));
     }
     if profile {
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
         app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
             .add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }

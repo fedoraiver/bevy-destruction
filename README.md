@@ -43,11 +43,13 @@ cargo run -- --scene bridge
 
 默认开发构建针对结构求解与碰撞依赖启用优化，并缓存未变化的锚定结构。此前板楼初始应力求解优化约 `357 → 30 ms`，相同 300 步无图形落地测试约 `10.04 → 2.30 s`；这些是 [ADR 0015](docs/adr/0015-structural-and-collision-runtime-performance.md) 阶段的测量，不是渲染帧率保证。当前稳健求解增加原始单元残差校验，测量和验证边界见 ADR 0016。
 
+进一步优化复用同一撞击事件的载荷与截面输入，跳过补偿计算中精确为零的系数；烟尘改为一个共享材质及固定大小的实例缓冲。独立程序交替对照中，同一 L 形高楼落地场景的平均墙钟帧耗时约 `74.24 → 53.53 ms`，四次运行的最终破坏结果一致；这不是稳定帧率保证，完整协议、CPU 阶段计时和限制见 [ADR 0019](docs/adr/0019-performance-hot-paths.md)。
+
 破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。邻块消失或连接断开后，暴露侧生成带骨料材质的闭合棱角边带，并随所属碎块运动；完整建筑和其他实例不提前显露裂缝。碰撞仍使用资产的凸代理近似，新增边带不改变碰撞形状。
 
 ## 验证
 
-当前已通过 82 项 Rust 测试；此前资产流程已通过 28 项 Blender 测试及六个场景的应力/刚性撞击图形验收。验证范围分别见 [ADR 0010](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0013 材质附着](docs/adr/0013-object-attached-procedural-surfaces.md)、[ADR 0016 受损支撑](docs/adr/0016-damaged-structure-solver-and-support-release.md)、[ADR 0017 选择性撞击断裂](docs/adr/0017-progressive-impact-unloading.md)。
+当前已通过 83 项 Rust 测试及自然不规则分区原型的 7 项 Blender 测试；此前正式资产流程已通过 28 项 Blender 测试及六个场景的应力/刚性撞击图形验收。验证范围分别见 [ADR 0010](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0013 材质附着](docs/adr/0013-object-attached-procedural-surfaces.md)、[ADR 0016 受损支撑](docs/adr/0016-damaged-structure-solver-and-support-release.md)、[ADR 0017 选择性撞击断裂](docs/adr/0017-progressive-impact-unloading.md)、ADR 0018 和 ADR 0019。
 
 ```powershell
 cargo test
@@ -94,7 +96,7 @@ cargo run -- --smoke-test output/baseline --no-vfx --no-detail --no-soft-particl
 cargo run --release -- --smoke-test output/profile --profile
 ```
 
-`--capture-replay` 另存 30fps 的 PNG 序列到 `replay`。`--profile` 关闭截图，记录实际墙钟帧间隔、VFX 生成/更新、边带缓存/更新及渲染通道 CPU/GPU 时间（GPU 项取决于设备支持）；固定模拟时间不作为帧率测量。`--no-detail` 单独关闭新增边带，`--no-soft-particles` 关闭深度预通道和交界淡出。粒子总量限 640，边带显示几何限 180,000 三角形；这些数量上限不代表 60fps 保证。
+`--capture-replay` 另存 30fps 的 PNG 序列到 `replay`。`--profile` 关闭截图，启用无垂直同步的连续更新，记录实际墙钟帧间隔、VFX 生成/更新、边带缓存/更新及渲染通道 CPU/GPU 时间（GPU 项取决于设备支持）；固定模拟时间不作为帧率测量，正常运行保留默认窗口更新设置。`--no-detail` 单独关闭新增边带，`--no-soft-particles` 关闭深度预通道和交界淡出。粒子总量限 640，边带显示几何限 180,000 三角形；这些数量上限不代表 60fps 保证。
 
 Blender 资产测试与插件使用方法见[工具说明](tools/blender/README.md)。
 

@@ -2,12 +2,16 @@ use std::time::Instant;
 
 use avian3d::prelude::*;
 use bevy::{
-    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling, light::NotShadowCaster,
-    mesh::PrimitiveTopology, prelude::*,
+    asset::RenderAssetUsages,
+    camera::visibility::NoFrustumCulling,
+    light::NotShadowCaster,
+    mesh::{MeshTag, PrimitiveTopology},
+    prelude::*,
+    render::storage::ShaderBuffer,
 };
 
 use crate::{
-    dust_material::{DustMaterial, dust_atlas, dust_material},
+    dust_material::{DustMaterial, DustSettings, dust_atlas, dust_material, dust_settings},
     scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
 };
 
@@ -23,6 +27,7 @@ pub struct VfxPlugin;
 impl Plugin for VfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BreakBurst>()
+            .init_resource::<Assets<ShaderBuffer>>()
             .init_resource::<VfxStats>()
             .init_resource::<VfxSettings>()
             .add_systems(Startup, setup)
@@ -134,9 +139,9 @@ struct VfxAssets {
     billboard: Handle<Mesh>,
     debris: Vec<Handle<Mesh>>,
     solids: Vec<Vec<Handle<StandardMaterial>>>,
-    dust: Vec<Handle<DustMaterial>>,
+    dust: Handle<DustMaterial>,
+    dust_instances: Handle<ShaderBuffer>,
     free_dust: Vec<usize>,
-    _prewarm_material: Handle<DustMaterial>,
 }
 
 #[derive(Component)]
@@ -229,14 +234,18 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut dust_materials: ResMut<Assets<DustMaterial>>,
+    mut dust_buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     let root = commands
         .spawn_scene(bsn! { Name::new("VfxRoot") Transform::IDENTITY Visibility::Visible })
         .id();
     let atlas = images.add(dust_atlas());
-    let dust = (0..DUST_POOL_SIZE)
-        .map(|_| dust_materials.add(dust_material(atlas.clone(), "concrete")))
-        .collect();
+    let dust_instances = dust_buffers.add(ShaderBuffer::from(vec![
+        dust_settings("concrete")
+            .packed();
+        DUST_POOL_SIZE + 1
+    ]));
+    let dust = dust_materials.add(dust_material(atlas, dust_instances.clone()));
     let solids: Vec<Vec<Handle<StandardMaterial>>> = (0..4)
         .map(|palette| {
             let [r, g, b] = palette_color(palette);
@@ -266,16 +275,17 @@ fn setup(
     let debris = (1..=8)
         .map(|seed| meshes.add(debris_mesh(seed * 104729)))
         .collect::<Vec<_>>();
-    let mut material = dust_material(atlas, "concrete");
-    material.update(0.0, 1.0, 0, 0.0, 0.0);
-    let prewarm_material = dust_materials.add(material);
+    let mut warmup_settings = dust_settings("concrete");
+    warmup_settings.update(0.0, 1.0, 0, 0.0, 0.0);
     commands.spawn((
         Name::new("Dust pipeline warmup"),
         PipelineWarmup(90),
         NoFrustumCulling,
         NotShadowCaster,
         Mesh3d(billboard.clone()),
-        MeshMaterial3d(prewarm_material.clone()),
+        MeshMaterial3d(dust.clone()),
+        warmup_settings,
+        MeshTag::new(DUST_POOL_SIZE as u32),
         Transform::from_xyz(0.0, 0.0, -1.0).with_scale(Vec3::splat(0.00001)),
         Visibility::Visible,
     ));
@@ -297,8 +307,8 @@ fn setup(
         debris,
         solids,
         dust,
+        dust_instances,
         free_dust: (0..DUST_POOL_SIZE).rev().collect(),
-        _prewarm_material: prewarm_material,
     });
 }
 
@@ -481,7 +491,7 @@ fn spawn_bursts(
     mut commands: Commands,
     mut bursts: MessageReader<BreakBurst>,
     mut assets: ResMut<VfxAssets>,
-    mut dust_materials: ResMut<Assets<DustMaterial>>,
+    mut dust_buffers: ResMut<Assets<ShaderBuffer>>,
     settings: Res<VfxSettings>,
     mut stats: ResMut<VfxStats>,
     particles: Query<(Entity, &Particle, &Transform), Without<DemoCamera>>,
@@ -621,18 +631,25 @@ fn spawn_bursts(
                 } else {
                     let slot = assets.free_dust.pop().unwrap();
                     particle.dust_slot = Some(slot);
-                    let material = assets.dust[slot].clone();
-                    if let Some(mut dust) = dust_materials.get_mut(&material) {
-                        *dust = dust_material(dust.atlas.clone(), &burst.material);
-                        dust.update(
-                            0.0,
-                            particle.lifetime,
-                            particle.variant,
-                            particle.opacity,
-                            particle.roll,
-                        );
-                    }
-                    entity.insert((Mesh3d(assets.billboard.clone()), MeshMaterial3d(material)));
+                    let mut dust = dust_settings(&burst.material);
+                    dust.update(
+                        0.0,
+                        particle.lifetime,
+                        particle.variant,
+                        particle.opacity,
+                        particle.roll,
+                    );
+                    dust_buffers
+                        .get_mut(&assets.dust_instances)
+                        .unwrap()
+                        .cast_slice_mut::<[[f32; 4]; 4]>()
+                        .unwrap()[slot] = dust.packed();
+                    entity.insert((
+                        Mesh3d(assets.billboard.clone()),
+                        MeshMaterial3d(assets.dust.clone()),
+                        dust,
+                        MeshTag::new(slot as u32),
+                    ));
                 }
                 let resident = Resident {
                     entity: entity.id(),
@@ -675,7 +692,7 @@ fn animate_particles(
     time: Res<Time>,
     settings: Res<VfxSettings>,
     mut assets: ResMut<VfxAssets>,
-    mut dust_materials: ResMut<Assets<DustMaterial>>,
+    mut dust_buffers: ResMut<Assets<ShaderBuffer>>,
     mut stats: ResMut<VfxStats>,
     spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
@@ -690,6 +707,7 @@ fn animate_particles(
             &mut Transform,
             &mut Visibility,
             Option<&mut MeshMaterial3d<StandardMaterial>>,
+            Option<&mut DustSettings>,
         ),
         Without<DemoCamera>,
     >,
@@ -704,8 +722,8 @@ fn animate_particles(
     let mut collision_queries = 0;
     let mut collision_candidates = particles
         .iter()
-        .filter(|(_, p, _, _, _)| p.layer == Layer::Debris && !p.settled && p.age + dt >= 0.0)
-        .map(|(entity, _, _, _, _)| entity)
+        .filter(|(_, p, _, _, _, _)| p.layer == Layer::Debris && !p.settled && p.age + dt >= 0.0)
+        .map(|(entity, _, _, _, _, _)| entity)
         .collect::<Vec<_>>();
     collision_candidates.sort_by_key(|entity| entity.to_bits());
     if !collision_candidates.is_empty() {
@@ -732,7 +750,14 @@ fn animate_particles(
             .and_then(|collider| bodies.get(collider.body).ok())
             .is_some_and(|body| *body == RigidBody::Static)
     };
-    for (entity, mut particle, mut transform, mut visibility, solid) in &mut particles {
+    let has_dust = particles
+        .iter()
+        .any(|(_, particle, _, _, _, _)| particle.dust_slot.is_some());
+    let mut buffer = has_dust.then(|| dust_buffers.get_mut(&assets.dust_instances).unwrap());
+    let mut packed = buffer
+        .as_mut()
+        .map(|buffer| buffer.cast_slice_mut::<[[f32; 4]; 4]>().unwrap());
+    for (entity, mut particle, mut transform, mut visibility, solid, dust) in &mut particles {
         let old_age = particle.age;
         particle.age += dt;
         if !settings.enabled || particle.age >= particle.lifetime {
@@ -835,16 +860,17 @@ fn animate_particles(
                 _ => 1.0 + fraction * 1.4,
             };
             transform.scale = Vec3::splat(particle.size * growth);
-            if let Some(slot) = particle.dust_slot
-                && let Some(mut material) = dust_materials.get_mut(&assets.dust[slot])
-            {
-                material.update(
+            if let Some(mut dust) = dust {
+                dust.update(
                     particle.age,
                     particle.lifetime,
                     particle.variant,
                     particle.opacity,
                     particle.roll,
                 );
+                if let Some(packed) = packed.as_mut() {
+                    packed[particle.dust_slot.unwrap()] = dust.packed();
+                }
             }
         }
     }
@@ -896,6 +922,58 @@ mod tests {
                 normal: Vec3::Z,
             }],
         }
+    }
+
+    fn check_dust_instances(world: &mut World) -> usize {
+        let mut query = world.query::<(
+            &Particle,
+            &DustSettings,
+            &MeshTag,
+            &MeshMaterial3d<DustMaterial>,
+        )>();
+        let shared = world.resource::<VfxAssets>();
+        let buffer = world
+            .resource::<Assets<ShaderBuffer>>()
+            .get(&shared.dust_instances)
+            .unwrap();
+        let packed = buffer.cast_slice::<[[f32; 4]; 4]>().unwrap();
+        let mut tags = std::collections::BTreeSet::new();
+        for (particle, settings, tag, material) in query.iter(world) {
+            assert_ne!(particle.layer, Layer::Debris);
+            assert_eq!(material.0, shared.dust);
+            assert!(tags.insert(tag.value));
+            assert_eq!(tag.value as usize, particle.dust_slot.unwrap());
+            assert_eq!(packed[tag.value as usize], settings.packed());
+        }
+        assert_eq!(world.resource::<Assets<DustMaterial>>().len(), 1);
+        tags.len()
+    }
+
+    #[test]
+    fn shared_dust_material_preserves_instance_data_across_reuse_and_removal() {
+        let mut app = app();
+        for (seed, material) in [(1, "steel"), (2, "wood")] {
+            let mut event = burst(seed);
+            event.material = material.into();
+            app.world_mut().write_message(event);
+        }
+        app.update();
+        assert!(check_dust_instances(app.world_mut()) > 0);
+        for _ in 0..30 {
+            app.update();
+        }
+        for seed in 3..7 {
+            app.world_mut().write_message(burst(seed));
+        }
+        app.update();
+        assert!(check_dust_instances(app.world_mut()) > 0);
+        app.world_mut().resource_mut::<VfxSettings>().enabled = false;
+        app.update();
+        assert_eq!(check_dust_instances(app.world_mut()), 0);
+        app.world_mut().resource_mut::<VfxSettings>().enabled = true;
+        app.world_mut().write_message(burst(7));
+        app.update();
+        assert!(check_dust_instances(app.world_mut()) > 0);
     }
 
     #[test]

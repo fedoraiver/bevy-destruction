@@ -8,6 +8,7 @@ use bevy::{
         AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
         TextureDimension, TextureFormat,
     },
+    render::storage::ShaderBuffer,
     shader::ShaderRef,
 };
 
@@ -23,7 +24,7 @@ impl Plugin for DustMaterialPlugin {
     }
 }
 
-#[derive(Clone, Debug, ShaderType)]
+#[derive(Component, Clone, Debug, ShaderType)]
 pub struct DustSettings {
     pub color: Vec4,
     pub time: Vec4,
@@ -33,17 +34,26 @@ pub struct DustSettings {
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct DustMaterial {
-    #[uniform(0)]
-    pub settings: DustSettings,
+    #[storage(0, read_only)]
+    pub instances: Handle<ShaderBuffer>,
     #[texture(1)]
     #[sampler(2)]
     pub atlas: Handle<Image>,
 }
 
-impl DustMaterial {
+impl DustSettings {
     pub fn update(&mut self, age: f32, lifetime: f32, variant: u32, opacity: f32, roll: f32) {
-        self.settings.time = Vec4::new(age, lifetime, (variant % DUST_VARIANTS) as f32, opacity);
-        self.settings.shape.x = roll;
+        self.time = Vec4::new(age, lifetime, (variant % DUST_VARIANTS) as f32, opacity);
+        self.shape.x = roll;
+    }
+
+    pub fn packed(&self) -> [[f32; 4]; 4] {
+        [
+            self.color.to_array(),
+            self.time.to_array(),
+            self.shape.to_array(),
+            self.light.to_array(),
+        ]
     }
 }
 
@@ -75,21 +85,22 @@ impl Material for DustMaterial {
     }
 }
 
-pub fn dust_material(atlas: Handle<Image>, material_id: &str) -> DustMaterial {
+pub fn dust_material(atlas: Handle<Image>, instances: Handle<ShaderBuffer>) -> DustMaterial {
+    DustMaterial { instances, atlas }
+}
+
+pub fn dust_settings(material_id: &str) -> DustSettings {
     let color = match material_id {
         "steel" => Color::srgb(0.47, 0.49, 0.51),
         "wood" | "timber" => Color::srgb(0.65, 0.47, 0.27),
         "brick" | "masonry" => Color::srgb(0.66, 0.38, 0.27),
         _ => Color::srgb(0.68, 0.64, 0.55),
     };
-    DustMaterial {
-        settings: DustSettings {
-            color: color.to_linear().to_vec4(),
-            time: Vec4::new(0.0, 1.0, 0.0, 0.0),
-            shape: Vec4::new(0.0, 0.12, 0.08, 0.3),
-            light: Vec4::new(-0.48, 0.67, 0.57, 0.55),
-        },
-        atlas,
+    DustSettings {
+        color: color.to_linear().to_vec4(),
+        time: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        shape: Vec4::new(0.0, 0.12, 0.08, 0.3),
+        light: Vec4::new(-0.48, 0.67, 0.57, 0.55),
     }
 }
 
