@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "name": "bridge",
+  "seed": 47,
+  "footprint": [
+    [
+      0,
+      0
+    ],
+    [
+      28,
+      0
+    ],
+    [
+      28,
+      6
+    ],
+    [
+      0,
+      6
+    ]
+  ],
+  "fracture_size": 3.0,
+  "parts": [
+    {
+      "id": "deck",
+      "kind": "floor",
+      "material": "concrete",
+      "polygon": [
+        [
+          0,
+          0
+        ],
+        [
+          28,
+          0
+        ],
+        [
+          28,
+          6
+        ],
+        [
+          0,
+          6
+        ]
+      ],
+      "bottom": 6,
+      "top": 6.7
+    },
+    {
+      "id": "girder-0",
+      "kind": "beam",
+      "material": "steel",
+      "polygon": [
+        [
+          0,
+          0.8
+        ],
+        [
+          28,
+          0.8
+        ],
+        [
+          28,
+          1.6
+        ],
+        [
+          0,
+          1.6
+        ]
+      ],
+      "bottom": 5.2,
+      "top": 6
+    },
+    {
+      "id": "pier-0-0",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          0.8,
+          0.6000000000000001
+        ],
+        [
+          2.2,
+          0.6000000000000001
+        ],
+        [
+          2.2,
+          1.8
+        ],
+        [
+          0.8,
+          1.8
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "pier-1-0",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          13.3,
+          0.6000000000000001
+        ],
+        [
+          14.7,
+          0.6000000000000001
+        ],
+        [
+          14.7,
+          1.8
+        ],
+        [
+          13.3,
+          1.8
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "pier-2-0",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          25.8,
+          0.6000000000000001
+        ],
+        [
+          27.2,
+          0.6000000000000001
+        ],
+        [
+          27.2,
+          1.8
+        ],
+        [
+          25.8,
+          1.8
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "girder-1",
+      "kind": "beam",
+      "material": "steel",
+      "polygon": [
+        [
+          0,
+          4.4
+        ],
+        [
+          28,
+          4.4
+        ],
+        [
+          28,
+          5.2
+        ],
+        [
+          0,
+          5.2
+        ]
+      ],
+      "bottom": 5.2,
+      "top": 6
+    },
+    {
+      "id": "pier-0-1",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          0.8,
+          4.2
+        ],
+        [
+          2.2,
+          4.2
+        ],
+        [
+          2.2,
+          5.4
+        ],
+        [
+          0.8,
+          5.4
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "pier-1-1",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          13.3,
+          4.2
+        ],
+        [
+          14.7,
+          4.2
+        ],
+        [
+          14.7,
+          5.4
+        ],
+        [
+          13.3,
+          5.4
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "pier-2-1",
+      "kind": "pier",
+      "material": "concrete",
+      "polygon": [
+        [
+          25.8,
+          4.2
+        ],
+        [
+          27.2,
+          4.2
+        ],
+        [
+          27.2,
+          5.4
+        ],
+        [
+          25.8,
+          5.4
+        ]
+      ],
+      "bottom": 0,
+      "top": 5.2
+    },
+    {
+      "id": "parapet-left",
+      "kind": "wall",
+      "material": "concrete",
+      "polygon": [
+        [
+          0,
+          0
+        ],
+        [
+          28,
+          0
+        ],
+        [
+          28,
+          0.18
+        ],
+        [
+          0,
+          0.18
+        ]
+      ],
+      "bottom": 6.7,
+      "top": 7.45
+    },
+    {
+      "id": "parapet-right",
+      "kind": "wall",
+      "material": "concrete",
+      "polygon": [
+        [
+          0,
+          5.82
+        ],
+        [
+          28,
+          5.82
+        ],
+        [
+          28,
+          6
+        ],
+        [
+          0,
+          6
+        ]
+      ],
+      "bottom": 6.7,
+      "top": 7.45
+    }
+  ]
+}

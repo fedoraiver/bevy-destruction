@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 EPS = 1e-8
@@ -260,6 +260,7 @@ class BuildingSpec:
     openings: list
     inner_walls: list
     schema_version: int = 1
+    parts: list = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data):
@@ -325,6 +326,47 @@ class BuildingSpec:
             for other in spec.holes[:i]:
                 if _rings_touch(hole, other) or _inside(hole[0], other) or _inside(other[0], hole):
                     raise ValueError("Courtyard holes must not touch, overlap or contain one another")
+        raw_parts = data.get("parts", [])
+        if not isinstance(raw_parts, list):
+            raise ValueError("parts must be an array of convex prisms")
+        if raw_parts:
+            if any(data.get(key) for key in ("holes", "openings", "inner_walls")):
+                raise ValueError("Explicit parts cannot be combined with holes, openings or inner_walls")
+            identifiers = set()
+            for i, part in enumerate(raw_parts):
+                label = f"parts[{i}]"
+                _keys(part, {"id", "kind", "material", "polygon", "bottom", "top"}, label)
+                identifier = part.get("id")
+                if (not isinstance(identifier, str) or not identifier or identifier in identifiers or
+                        any(not (c.isalnum() or c in "_-") for c in identifier)):
+                    raise ValueError(f"{label}.id must be a unique nonempty stable identifier")
+                identifiers.add(identifier)
+                kind = part.get("kind", "beam")
+                if not isinstance(kind, str) or not kind:
+                    raise ValueError(f"{label}.kind must be a nonempty string")
+                material = part.get("material", "concrete")
+                if not isinstance(material, str) or material not in materials:
+                    raise ValueError(f"{label}.material must reference a declared material")
+                polygon = _ccw(_ring(part.get("polygon"), f"{label}.polygon"))
+                if any(_cross(polygon[j - 1], p, polygon[(j + 1) % len(polygon)]) <= EPS
+                       for j, p in enumerate(polygon)):
+                    raise ValueError(f"{label}.polygon must be convex")
+                covered = sum(abs(_area(_intersection(polygon, triangle)))
+                              for triangle in _triangulate(spec.footprint))
+                if (not all(_inside(p, spec.footprint) for p in polygon) or
+                        abs(covered - abs(_area(polygon))) > 1e-6):
+                    raise ValueError(f"{label}.polygon must be inside footprint")
+                bottom = _number(part.get("bottom"), f"{label}.bottom", 0, True)
+                top = _number(part.get("top"), f"{label}.top")
+                if top - bottom <= 1e-4:
+                    raise ValueError(f"{label}.top must exceed bottom by more than 0.0001m")
+                for other in spec.parts:
+                    if (min(top, other["top"]) - max(bottom, other["bottom"]) > EPS and
+                            abs(_area(_intersection(polygon, other["polygon"]))) > EPS):
+                        raise ValueError(f"Explicit parts {identifier} and {other['id']} overlap in volume")
+                spec.parts.append(dict(id=identifier, kind=kind, material=material,
+                                       polygon=polygon, bottom=bottom, top=top))
+            return spec
         inset = _offset_ring(spec.footprint, spec.wall_thickness)
         if abs(_area(inset)) >= abs(_area(spec.footprint)) - EPS or not all(_inside(p, spec.footprint, False) for p in inset):
             raise ValueError("wall_thickness consumes or folds the footprint interior")
@@ -416,7 +458,10 @@ class BuildingSpec:
         return spec
 
     def to_dict(self):
-        return copy.deepcopy({key: getattr(self, key) for key in self.__dataclass_fields__})
+        result = copy.deepcopy({key: getattr(self, key) for key in self.__dataclass_fields__})
+        if not self.parts:
+            del result["parts"]
+        return result
 
 
 def load_spec(path):

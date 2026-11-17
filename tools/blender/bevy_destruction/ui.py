@@ -171,6 +171,7 @@ def _default_openings(data):
 def _spec_from_settings(settings, depsgraph):
     data = json.loads(settings.imported_spec_json) if settings.imported_spec_json else {}
     if settings.source_mode == "OUTLINE":
+        data.pop("parts", None)
         data["footprint"], data["holes"] = outline_from_object(settings.outline_object, depsgraph)
     elif not settings.imported_spec_json:
         raise ValueError("请先导入 JSON 配置。")
@@ -318,8 +319,14 @@ class BD_PT_Authoring(bpy.types.Panel):
             layout.label(text=Path(settings.imported_spec_path).name, icon="FILE_TEXT")
         layout.operator("bd.import_spec", icon="IMPORT")
         layout.separator()
+        explicit_parts = (settings.source_mode == "JSON" and
+                          bool(json.loads(settings.imported_spec_json or "{}").get("parts")))
+        if explicit_parts:
+            layout.label(text="构件模式：形状和高度由 JSON 定义")
         for key in ("name", "levels", "floor_height", "wall_thickness", "slab_thickness", "fracture_size", "seed"):
-            layout.prop(settings, key)
+            row = layout.row()
+            row.enabled = not explicit_parts or key in {"name", "fracture_size", "seed"}
+            row.prop(settings, key)
         layout.operator("bd.generate", icon="MOD_EXPLODE")
         layout.separator()
         layout.prop(settings, "export_directory")

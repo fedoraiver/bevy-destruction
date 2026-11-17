@@ -77,6 +77,11 @@ def generate_building(spec, collection):
         obj["bd_material"] = material
         parts.append(Part(identifier, kind, material, obj))
 
+    if spec.parts:
+        for part in spec.parts:
+            prism(part["id"], part["kind"], part["material"], part["polygon"], part["bottom"], part["top"])
+        return parts
+
     floor_regions = _floor_regions(spec)
     for level in range(spec.levels):
         z = level * spec.floor_height

@@ -50,6 +50,19 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 | [rectangle.json](examples/rectangle.json) | 矩形两层、内墙、门窗及框 |
 | [l_shape.json](examples/l_shape.json) | L 形三层、内墙门、多层窗 |
 | [courtyard.json](examples/courtyard.json) | 庭院两层、庭院门窗、内墙 |
+| [highrise_slab.json](examples/highrise_slab.json) | 十层板式高楼，14×8 m 平面、32 m 标高 |
+| [highrise_l.json](examples/highrise_l.json) | 八层 L 形高楼，14×12 m 外包络、26.4 m 标高 |
+| [bridge.json](examples/bridge.json) | 28×6 m 桥面、双钢主梁、三组共六根独立混凝土桥墩 |
+
+后三个物理验证资产可一次重建：
+
+```powershell
+& 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' `
+  --background --factory-startup --python-exit-code 1 `
+  --python tools/blender/build_catalog.py -- --output assets/buildings
+```
+
+`--asset highrise_slab`、`--asset highrise_l` 或 `--asset bridge` 可只重建指定资产。高楼使用较粗的 3.8 / 4 m 碎块尺度，分别导出 455 / 433 块；桥梁使用 3 m 尺度，导出 71 块。数量是当前种子与配置的结果，不是任意高层建筑的性能承诺。
 
 最简配置：
 
@@ -83,6 +96,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 - `wall_material`、`floor_material`、`roof_material`：各类构件的材质 ID；内置 concrete、steel、wood。默认物理值用于游戏原型标定，不是工程承载保证，木材暂按各向同性近似。
 - `fracture_size`：目标空间尺度；种子数量按凸构件 AABB 有效维度估计，薄墙与楼板同样会破碎。它不是最大碎块直径；尺度越小，计算与数据量越大。
 - `seed`：固定输入和种子可复现结构 ID、碎块与拓扑摘要。拓扑改变后需视为新的资产版本。
+- `parts`：可选的显式凸棱柱构件数组，用于桥梁等不适合从逐层围墙生成的结构。每项定义唯一 `id`、`kind`、材质 ID `material`、凸平面轮廓 `polygon` 和 Blender Z-up 的 `bottom` / `top` 标高。构件可共面接触，禁止体积重叠；全部轮廓必须位于顶层 `footprint` 内。此模式不自动生成楼板、屋顶或墙，也不能同时指定庭院、门窗或内墙。形状与高度由构件定义，面板中的楼层/墙厚参数会禁用，名称、碎块尺度和种子仍可调整。桥梁示例的桥墩之间有真实可通行净空，不是连续围墙。
 
 所有未知字段、非有限数字、自交、过窄墙厚、重叠开口、越界门窗和无效引用都会明确报错。凹转角或过窄通道无法维持指定墙厚时，需要修改轮廓或厚度。
 
@@ -92,7 +106,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 
 此分类只改显示网格的面划分和材质，不重新计算或移动凸碰撞代理、质量、质心和连接。切分后的数值重复点在 0.000001 米内焊接，并检查封闭性、凸性、体积与质心。碰撞代理是通过封闭性和凸性验证的碎块独立网格副本，避免对凹物体整体包凸包而封住门窗。
 
-连接来自实际共面接触区域，不按距离猜测；共边或共点不会形成有面积的连接。接触容差为 0.00002 米。底部接触 Z=0 的碎块导出固定锚点，工具检查所有碎块是否可通过连接到达锚点。
+连接来自实际共面接触区域，不按距离猜测；共边或共点不会形成有面积的连接。接触容差为 0.00002 米，接触多边形的最小平面宽度不超过该容差时也按边接触处理，避免狭长数值重叠被误认为能承受弯曲的连接。底部接触 Z=0 的碎块导出固定锚点，工具检查所有碎块是否可通过连接到达锚点。
 
 重生成只替换当前场景中对应的成功建筑集合，出错保留旧结果。用户加入的物体、子集合及另行链接到其他集合的物体会保留。
 
@@ -107,6 +121,7 @@ $blenderExecutable = 'C:\Program Files\Blender Foundation\Blender 5.2\blender.ex
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_asset_tool.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_surfaces.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_bundled_surfaces.py
+& $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_catalog.py
 ```
 
 测试覆盖几何封闭与凸性、独立重叠检查、门窗通行、解析体积与惯性、碎块重组、种子复现、连接面积和截面矩、部分接触与斜向接触的内外表面面积、GLB 材质角色及清单坐标一致性、跨场景隔离、UI 曲线生成与导出、用户数据保留，以及失败发布回滚。
@@ -115,7 +130,7 @@ $blenderExecutable = 'C:\Program Files\Blender Foundation\Blender 5.2\blender.ex
 
 ## 当前边界
 
-- 验证范围为米制小型建筑，单构件最多 256 个 Voronoi 单元、单建筑最多 2048；超限会报错，不能静默减少碎块。
+- 验证范围包含米制两至十层建筑和离散桥墩桥梁样例；单构件最多 256 个 Voronoi 单元、单资产最多 2048，超限会报错，不能静默减少碎块。
 - 极端细长、微小或高坐标精度不足的几何可能被拒绝；请加大碎块尺度、调整种子或清理轮廓。不会丢弃失败碎块假装成功。
 - 支持平直竖墙、水平楼板与平顶；房间规划、楼梯和斜屋顶不自动推断。
 - 当前是独立资产烘焙工具，尚无 Geometry Nodes 实时预览、任意外部模型凹分解或运行时网格切割。
