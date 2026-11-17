@@ -9,7 +9,7 @@
 - **已采用**：已作出的设计决策；实现和验证进度仍需单独说明。
 - **已被取代**：保留历史，并链接替代它的新记录。
 
-截至 2026-11-17，Blender 工具已实现轮廓生成、Voronoi 预破碎、凸代理、连接和物理数据，以及面板/后台 GLB+JSON 导出。Rust 已接入 Bevy 0.20 / Avian 0.8，实现 BSN 导入、程序化网格、调试边界、局部删块、自由飞行相机，以及分层烟尘/碰撞碎屑和按实例暴露的真实破口边带。在此基础上，已实现刚性连接图合簇、固定锚点判定、失支撑刚体下落与动态拆簇；具体设定、实现和已完成验证分别见 ADR 0007、0008、0009。结构承载、过载断裂与碰撞驱动二次破坏仍待实现。
+截至 2026-11-17，Blender 工具已实现轮廓和显式凸棱柱构件生成、Voronoi 预破碎、凸代理、有限面积连接、完整质量属性与 GLB+JSON 导出，并提供矩形、L 形、庭院、两种高楼及桥梁共六个场景。Rust 已实现资产导入、自由飞行、局部删块、烟尘和破口边带、刚体簇失支撑下落与拆分，并接入六自由度准静态自重承载、渐进过载断裂、有限质量刚性球/方块及接触冲量驱动的局部断裂。决策、实现和已完成验证分别记录于 ADR 0007 至 0012；动态内部应力、大变形和可见挠曲仍待后续实现。
 
 ## 索引
 
@@ -17,12 +17,15 @@
 | --- | --- | --- |
 | [0001](0001-prefractured-graph-and-clusters.md) | 预破碎资产、结构连接图与刚体簇 | 部分已采用（刚性图、锚点与动态簇已实现） |
 | [0002](0002-avian-backend-and-fixed-step.md) | Avian 物理后端与固定步进 | 部分已采用（固定步与动态簇接入已实现） |
-| [0003](0003-structural-loads-and-progressive-fracture.md) | 结构承载、连接损伤与渐进断裂 | 提议（待原型验证） |
+| [0003](0003-structural-loads-and-progressive-fracture.md) | 结构承载、连接损伤与渐进断裂 | 部分已采用（六自由度界面、自重与过载已实现，详见 0010） |
 | [0004](0004-authoring-performance-and-delivery.md) | 资产制作、性能边界与分阶段交付 | 提议（待原型验证） |
 | [0005](0005-blender-procedural-building-pipeline.md) | Blender 建筑轮廓生成、预破碎与碰撞资产流程 | 部分已采用（Blender 已确定，流程提议待验证） |
 | [0006](0006-blender-authoring-tool-and-asset-format.md) | Blender 资产工具实现与导出格式 | 已采用（已实现，验证范围见记录） |
 | [0007](0007-bevy-bsn-fracture-interaction-demo.md) | BSN 建筑导入、网格材质与点击破坏演示 | 已采用（已实现，验证范围见记录） |
 | [0008](0008-destruction-vfx-and-exposed-edge-detail.md) | 破坏 VFX 的冲击感与暴露破口边缘细节 | 部分已采用（分层 VFX 与暴露边带已实现，验证范围见记录） |
 | [0009](0009-support-release-and-dynamic-clusters.md) | 失支撑释放、动态刚体簇与运动继承 | 已采用（已实现，验证范围见记录） |
+| [0010](0010-elastic-interface-stress-and-overload-fracture.md) | 六自由度界面应力、自重承载与过载断裂 | 已采用（已实现，验证范围见记录） |
+| [0011](0011-building-catalog-and-rigid-impact-scenarios.md) | 高层建筑、桥梁资产与刚性撞击场景 | 已采用（已实现，验证范围见记录） |
+| [0012](0012-resolvable-contact-sections.md) | 可分辨接触截面与资产重烘焙 | 已采用（已实现，验证范围见记录） |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。

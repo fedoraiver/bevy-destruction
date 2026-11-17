@@ -2,7 +2,7 @@
 
 面向 Bevy 0.20 + Avian 0.8 的建筑物理破坏插件项目。
 
-已实现 [Blender 资产工具](tools/blender/README.md)、[ADR 0007 交互演示](docs/adr/0007-bevy-bsn-fracture-interaction-demo.md)、[ADR 0008 破坏表现](docs/adr/0008-destruction-vfx-and-exposed-edge-detail.md)及 [ADR 0009 动态刚体簇](docs/adr/0009-support-release-and-dynamic-clusters.md)：BSN 建筑导入、自由飞行相机、程序化网格、预破碎边界、点击删块、分层烟尘碎屑、暴露边带，以及失去固定支撑后的真实刚体下落。
+已实现建筑资产导入、自由飞行、点击破坏、分层烟尘与暴露破口、失支撑刚体下落，并接入六自由度连接应力、自重承载、渐进过载断裂与刚性撞击物。设计和验证边界见 [ADR 0010 应力与过载](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0011 场景目录与撞击物](docs/adr/0011-building-catalog-and-rigid-impact-scenarios.md)。
 
 ## 运行
 
@@ -10,30 +10,56 @@
 
 ```powershell
 cargo run
+cargo run -- --scene highrise_slab
+cargo run -- --scene bridge
 ```
 
 `WASD` 沿相机前后左右移动，鼠标转向，`Space` 沿世界竖直方向上升，左/右 `Ctrl` 下降。视角采用透视投影，加载完成后只取景一次，此后由用户自由移动。
 
-窗口获得控制时隐藏并锁定鼠标，画面中央显示准星；左键破坏准星指向的建筑。`Tab` 释放或重新锁定鼠标；失去窗口焦点时暂停移动并释放鼠标，重新点击窗口恢复控制，这次点击不触发破坏。主键盘 `0` 或数字小键盘 `0` 切换橙色预破碎边界，`Esc` 退出。
+窗口获得控制时隐藏并锁定鼠标，画面中央显示准星。左键删除准星指向的局部碎块；右键发射刚性球，`R` 发射刚性方块。`Tab` 释放或重新锁定鼠标；失去窗口焦点时暂停移动并释放鼠标，重新点击窗口恢复控制，这次点击不触发破坏。主键盘 `0` 或数字小键盘 `0` 切换橙色预破碎边界，`Esc` 退出。
 
-仓库包含重新烘焙的矩形、L 形及庭院资产，切换示例：
+`F1` 至 `F6` 切换场景并重新取景；也可用 `--scene` 指定启动场景：
 
-```powershell
-cargo run -- --asset buildings/l_shape.destruction.json
-cargo run -- --asset buildings/courtyard.destruction.json
-```
+| 按键 | 场景名 | 内容 |
+| --- | --- | --- |
+| F1 | `rectangle` | 矩形两层建筑 |
+| F2 | `highrise_slab` | 十层板式高楼 |
+| F3 | `highrise_l` | 八层 L 形高楼 |
+| F4 | `bridge` | 28 m 桥面、双钢主梁、六根独立桥墩 |
+| F5 | `courtyard` | 庭院两层建筑 |
+| F6 | `l_shape` | L 形三层建筑 |
 
-新资产由 Blender 工具导出到 `assets/buildings`，以 `.destruction.json` 为加载入口；对应 GLB 需保留在同目录，内容哈希错误会拒绝加载。运行资产根目录固定为构建时仓库的 `assets`，直接运行生成的可执行文件也使用同一目录。
+两种撞击物均为有限质量 8 t、初速 55 m/s 的动态刚体，会受重力及碰撞影响并交换动量，自身保持刚性且不破碎。球半径为 0.65 m，方块边长为 1.2 m；同时最多保留 12 个，寿命为 20 秒。
 
-左键按已有碎块删除局部几何，每次最多 6 块，并断开关联连接。每个完整连通分量对应一个刚体：仍包含有效固定锚点的分量保持静态，失去全部锚点的部分转为动态残骸，在重力下下落、与地面和建筑碰撞并进入休眠。残骸可再次点击破坏，拆分继承原运动；接触或休眠不会把它重新固定到世界。结构承载、细柱过载断裂和碰撞驱动二次破坏仍属于后续功能。
+新资产由 [Blender 工具](tools/blender/README.md)导出到 `assets/buildings`，以 `.destruction.json` 为加载入口；自定义文件通过 `--asset buildings/name.destruction.json` 加载。对应 GLB 需保留在同目录，内容哈希错误会拒绝加载。运行资产根目录固定为构建时仓库的 `assets`，直接运行生成的可执行文件也使用同一目录。
+
+应力计算默认启用：对仍与地基连接的结构求解自重和外加载荷，恢复连接拉、压、剪应力及弯曲、扭转影响，持续过载会积累损伤并断开连接。HUD 显示最大承载率、过载断键数、无效求解数量和毫米级弹性位移估计；位移估计用于承载诊断，可见建筑仍按刚体簇运动。失败的求解会标为无效并重试，其结果不驱动断裂。`--no-stress` 可关闭此承载路径，保留直接点击与撞击破坏。
+
+左键每次最多删除 6 个碎块。失去全部固定锚点的连通部分会转为动态残骸，在重力下下落、与地面和建筑碰撞并休眠；运动中仍可点击拆分并继承原速度。撞击会根据实际接触冲量触发独立的局部断裂判据，接触或休眠不会生成永久锚点。当前使用小变形弹性连接近似和单独标定的撞击判据；完整动态内部应力、大变形和可见挠曲属于后续范围。
 
 破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。邻块消失或连接断开后，暴露侧生成带骨料材质的闭合棱角边带，并随所属碎块运动；完整建筑和其他实例不提前显露裂缝。碰撞仍使用资产的凸代理近似，新增边带不改变碰撞形状。
 
 ## 验证
 
+当前已通过 65 项 Rust 测试、28 项 Blender 测试及六个场景的应力/刚性撞击图形验收，结果与范围见 [ADR 0010](docs/adr/0010-elastic-interface-stress-and-overload-fracture.md)。
+
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+cargo run -- --scene rectangle --stress-smoke-test output/acceptance/stress-rectangle
+cargo run -- --scene highrise_slab --stress-smoke-test output/acceptance/stress-highrise_slab
+cargo run -- --scene highrise_l --stress-smoke-test output/acceptance/stress-highrise_l
+cargo run -- --scene bridge --stress-smoke-test output/acceptance/stress-bridge
+cargo run -- --scene courtyard --stress-smoke-test output/acceptance/stress-courtyard
+cargo run -- --scene l_shape --stress-smoke-test output/acceptance/stress-l_shape
+```
+
+`--stress-smoke-test` 先检查所选真实资产的完整自重求解，再用具有明确 SI 质量和截面的双柱混凝土梁检查支撑移除、仍连通时的过载、自动断键、下落与休眠，最后发射球和方块验证真实碰撞、撞击断裂与撞击物保持完整。输出 7 张阶段截图和 `report.json`，失败返回非零退出码。验证以固定 60 Hz 接收预定输入，截图由引擎直接生成；正常运行使用实际时间和输入。
+
+原交互与刚体簇路径保留独立验证入口：
+
+```powershell
 cargo run -- --smoke-test output/acceptance/rectangle
 cargo run -- --asset buildings/l_shape.destruction.json --smoke-test output/acceptance/l_shape
 cargo run -- --asset buildings/courtyard.destruction.json --smoke-test output/acceptance/courtyard
@@ -44,7 +70,7 @@ cargo run -- --asset buildings/courtyard.destruction.json --physics-smoke-test o
 
 `--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、相机控制、鼠标点击、连续破坏与特效回收检查，保存截图和 `report.json`，然后退出；失败返回非零退出码。验证模式只接收预定的控制输入，正常运行使用实际时间和实际输入。截图由引擎直接生成，无需桌面自动化。
 
-`--physics-smoke-test` 是独立的物理验证路径：资产和簇就绪后先预热 150 帧，再选取屋顶仍相连的两块，清除直接相邻且未锚定的屋顶/上部墙体以提供下落净空，保留固定锚点，并在报告中记录清除 ID。随后断开外围连接，验证双块作为一个动态簇真实下落，再于半空中断开内部连接，在下一次物理求解开始前检查两个新簇的世界位姿、质量与速度继承，最后检查残骸在实际支撑面（包括下层楼板）上停止并休眠、剩余锚定建筑保持静止。该模式保存阶段截图及 `report.json`，失败返回非零退出码；不能与 `--smoke-test` 同时使用。它不代表承载求解、撞击断裂或大规模坍塌性能已经验证。
+`--physics-smoke-test` 独立检查屋顶双块失支撑下落、运动中再次拆分、质量/位姿/速度继承及接触后休眠，保存 3 张阶段截图和报告。三种烟测模式互斥；原表现对照可加 `--no-stress`。
 
 验证包含 0.05 / 0.15 / 0.4 / 1 / 3 秒分阶段画面，以及烟尘散尽后的破口近景。可用以下参数做同路径比较：
 

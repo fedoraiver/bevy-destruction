@@ -460,21 +460,38 @@ pub(crate) fn instantiate_pending(
     }
 }
 
-fn update_hint(instances: Query<&BuildingInstance>, mut hints: Query<&mut Text, With<Hint>>) {
-    let Some(instance) = instances.iter().next() else {
+fn update_hint(
+    instances: Query<(
+        &BuildingInstance,
+        Option<&crate::stress_runtime::StressState>,
+    )>,
+    mut hints: Query<&mut Text, With<Hint>>,
+) {
+    let Some((instance, stress)) = instances.iter().next() else {
         return;
     };
-    let text = if let Some(error) = &instance.error {
+    let mut text = if let Some(error) = &instance.error {
         format!("Building error: {error}")
     } else if instance.bounds.is_some() {
         format!(
-            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft click: break | 0: edges | Esc: exit     {}/{} chunks",
+            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | Esc: exit     {}/{} chunks",
             instance.chunks.values().filter(|chunk| chunk.alive).count(),
             instance.chunks.len()
         )
     } else {
         "Loading building…".into()
     };
+    if let Some(stress) = stress {
+        let invalid = stress.reports.iter().filter(|report| !report.valid).count();
+        let max_displacement = stress
+            .reports
+            .iter()
+            .filter(|report| report.valid)
+            .map(|report| report.max_displacement)
+            .fold(0.0_f64, f64::max);
+        text.push_str(&format!("\nStress: {:.2} capacity | {} overload breaks | {} solver errors | {:.3} mm elastic estimate",
+            stress.max_utilization, stress.broken_total, invalid, max_displacement * 1000.0));
+    }
     for mut hint in &mut hints {
         if hint.0 != text {
             hint.0 = text.clone();

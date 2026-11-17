@@ -1,5 +1,6 @@
 mod asset;
 mod camera;
+mod catalog;
 mod debug;
 mod diagnostics;
 mod dust_material;
@@ -8,9 +9,13 @@ mod interaction;
 mod material;
 mod physics;
 mod physics_smoke;
+mod projectiles;
 mod rim_profile;
 mod scene;
 mod smoke;
+mod stress;
+mod stress_runtime;
+mod stress_smoke;
 mod structure;
 mod vfx;
 
@@ -22,7 +27,9 @@ pub struct DemoOptions {
     pub asset: String,
     pub smoke_output: Option<std::path::PathBuf>,
     pub physics_smoke_output: Option<std::path::PathBuf>,
+    pub stress_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
+    pub no_stress: bool,
     pub no_detail: bool,
     pub no_soft_particles: bool,
     pub capture_replay: bool,
@@ -35,7 +42,9 @@ impl Default for DemoOptions {
             asset: "buildings/rectangle.destruction.json".into(),
             smoke_output: None,
             physics_smoke_output: None,
+            stress_smoke_output: None,
             no_vfx: false,
+            no_stress: false,
             no_detail: false,
             no_soft_particles: false,
             capture_replay: false,
@@ -50,6 +59,15 @@ fn options() -> Result<DemoOptions, String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--asset" => options.asset = args.next().ok_or("--asset requires an asset path")?,
+            "--scene" => {
+                let name = args.next().ok_or("--scene requires a scene name")?;
+                options.asset = catalog::SCENES
+                    .iter()
+                    .find(|scene| scene.0 == name)
+                    .ok_or_else(|| format!("Unknown scene: {name}"))?
+                    .1
+                    .into();
+            }
             "--smoke-test" => {
                 options.smoke_output = Some(
                     args.next()
@@ -64,13 +82,21 @@ fn options() -> Result<DemoOptions, String> {
                         .into(),
                 )
             }
+            "--stress-smoke-test" => {
+                options.stress_smoke_output = Some(
+                    args.next()
+                        .ok_or("--stress-smoke-test requires an output directory")?
+                        .into(),
+                )
+            }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--asset buildings/rectangle.destruction.json] [--smoke-test output/demo] [--physics-smoke-test output/physics]\nValidation: --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor | Left click: break | 0: edges | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | Esc: exit"
                 );
                 std::process::exit(0);
             }
             "--no-vfx" => options.no_vfx = true,
+            "--no-stress" => options.no_stress = true,
             "--no-detail" => options.no_detail = true,
             "--no-soft-particles" => options.no_soft_particles = true,
             "--capture-replay" => options.capture_replay = true,
@@ -78,8 +104,17 @@ fn options() -> Result<DemoOptions, String> {
             _ => return Err(format!("Unknown option: {arg}")),
         }
     }
-    if options.smoke_output.is_some() && options.physics_smoke_output.is_some() {
-        return Err("Choose either --smoke-test or --physics-smoke-test".into());
+    if [
+        options.smoke_output.is_some(),
+        options.physics_smoke_output.is_some(),
+        options.stress_smoke_output.is_some(),
+    ]
+    .into_iter()
+    .filter(|enabled| *enabled)
+    .count()
+        > 1
+    {
+        return Err("Choose one smoke-test mode".into());
     }
     Ok(options)
 }
@@ -89,15 +124,22 @@ fn main() -> AppExit {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    let smoke_test = options.smoke_output.is_some() || options.physics_smoke_output.is_some();
+    let smoke_test = options.smoke_output.is_some()
+        || options.physics_smoke_output.is_some()
+        || options.stress_smoke_output.is_some();
     let profile = options.profile;
     let vfx_settings = vfx::VfxSettings {
         enabled: !options.no_vfx,
         ..default()
     };
+    let stress_settings = stress_runtime::StressSettings {
+        enabled: !options.no_stress,
+        ..default()
+    };
     let mut app = App::new();
     app.insert_resource(options)
         .insert_resource(vfx_settings)
+        .insert_resource(stress_settings)
         .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins(
@@ -129,6 +171,12 @@ fn main() -> AppExit {
             vfx::VfxPlugin,
             smoke::SmokePlugin,
             physics_smoke::PhysicsSmokePlugin,
+        ))
+        .add_plugins((
+            stress_runtime::StressRuntimePlugin,
+            projectiles::ProjectilePlugin,
+            stress_smoke::StressSmokePlugin,
+            catalog::CatalogPlugin,
         ))
         .add_systems(Update, close_on_escape);
     if smoke_test {

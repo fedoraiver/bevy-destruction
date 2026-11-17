@@ -6,7 +6,7 @@
 
 ## 背景
 
-2026-11-17 更新：依赖、静态凸代理射线查询和 60 Hz 固定步边界已经在 [ADR 0007](0007-bevy-bsn-fracture-interaction-demo.md) 演示中实现并验证。[ADR 0009](0009-support-release-and-dynamic-clusters.md) 进一步采用并实现可识别子 Collider、固定步前批量换属、显式资产质量汇总、动态簇及拆分速度场继承；新功能的已完成验证以该记录为准。下文保留早期集成提议；承载、接触反馈与弱连接仍待实现。
+2026-11-17 更新：依赖、静态凸代理射线查询和 60 Hz 固定步边界已经在 [ADR 0007](0007-bevy-bsn-fracture-interaction-demo.md) 演示中实现并验证。[ADR 0009](0009-support-release-and-dynamic-clusters.md) 接入子 Collider、固定步换属、显式质量、动态簇和运动继承；[ADR 0010](0010-elastic-interface-stress-and-overload-fracture.md) 接入准静态承载与过载，[ADR 0011](0011-building-catalog-and-rigid-impact-scenarios.md) 接入求解后接触冲量和局部撞击断裂。下文保留早期完整集成提议；动态内部应力、接触形成临时承载和弱连接仍待实现。
 
 本项目拟实现面向 Bevy 的建筑实时物理破坏插件。结构图决定连接是否断裂以及如何拆簇，物理后端负责簇之间的运动、接触和碰撞。完整刚性簇内部不应依靠大量刚体关节维持形状。
 

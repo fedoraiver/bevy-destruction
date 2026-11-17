@@ -49,3 +49,5 @@ Geometry Nodes 预览可以后续接入同一数据流程。当前先采用可�
 | courtyard | 353 | 1183 | 50 |
 
 本记录证明离线资产工具的上述功能，不表示 Rust 运行时导入、承载或动态坍塌已经实现。
+
+2026-11-17 后续更新：[ADR 0012](0012-resolvable-contact-sections.md) 排除低于制作精度的线状接触，并按相同配置重新发布原三份清单，当前 Bond 数分别为 845、1654、1176；上表保留首次导出验收数量作为历史记录。[ADR 0011](0011-building-catalog-and-rigid-impact-scenarios.md) 增加高楼、桥梁和显式凸棱柱构件输入；运行时承载的实际实现与验证见 ADR 0010。

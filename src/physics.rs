@@ -63,7 +63,7 @@ impl Motion {
     }
 }
 
-fn global_transform(world: &World, entity: Entity) -> GlobalTransform {
+pub(crate) fn global_transform(world: &World, entity: Entity) -> GlobalTransform {
     let mut ancestors = vec![entity];
     let mut parent = world.get::<ChildOf>(entity);
     while let Some(child_of) = parent {
