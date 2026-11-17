@@ -1,6 +1,6 @@
 """Geometry exchanged between the authoring stages, in Blender meters/Z-up."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -23,3 +23,8 @@ class Chunk:
     volume: float
     center: tuple[float, float, float]
     inertia: list[list[float]]
+    colliders: list[Any] = field(default_factory=list)
+
+    @property
+    def collision_objects(self):
+        return self.colliders or [self.collider]

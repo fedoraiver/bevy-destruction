@@ -1,12 +1,12 @@
 # Blender 建筑破坏资产工具
 
-从平面轮廓生成有厚度的建筑、门窗开口与框、确定性 Voronoi 碎块、凸碰撞代理、接触连接和物理数据。提供 Blender 中文面板与后台批处理入口。
+从平面轮廓生成有厚度的建筑、门窗开口与框、确定性的自然不规则碎块、精确复合凸碰撞代理、分面接触连接和物理数据。提供 Blender 中文面板与后台批处理入口。正式生成器默认使用新的共享分区，不需要另开实验模式；运行时碎块保持刚性。
 
 实际验证版本：**Blender 5.2.3 LTS**。无需安装第三方 Python 包、Cell Fracture 或其他建筑扩展。
 
 ## 在 Blender 中使用
 
-1. 在仓库根目录执行 `python tools/blender/package_addon.py`，得到 `output/blender/bevy_destruction-0.2.0.zip`。
+1. 在仓库根目录执行 `python tools/blender/package_addon.py`，得到 `output/blender/bevy_destruction-0.3.0.zip`。
 2. 在 Blender 的偏好设置中选择插件的“从磁盘安装”，选择 ZIP 并启用 **Bevy Destruction Authoring**。
 3. 在三维视图按 `N` 打开侧栏，进入 **Destruction**。
 4. 选择无挤出和倒角的闭合水平曲线，或带明确边界的平面网格；点击“使用选中轮廓”。庭院采用同一物体里的内环。
@@ -43,7 +43,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 
 ## 输入配置
 
-可直接修改三个示例：
+可直接修改六个示例：
 
 | 示例 | 内容 |
 | --- | --- |
@@ -54,7 +54,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 | [highrise_l.json](examples/highrise_l.json) | 八层 L 形高楼，14×12 m 外包络、26.4 m 标高 |
 | [bridge.json](examples/bridge.json) | 28×6 m 桥面、双钢主梁、三组共六根独立混凝土桥墩 |
 
-后三个物理验证资产可一次重建：
+六个正式场景可一次重建：
 
 ```powershell
 & 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' `
@@ -62,7 +62,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
   --python tools/blender/build_catalog.py -- --output assets/buildings
 ```
 
-`--asset highrise_slab`、`--asset highrise_l` 或 `--asset bridge` 可只重建指定资产。高楼使用较粗的 3.8 / 4 m 碎块尺度，分别导出 455 / 433 块；桥梁使用 3 m 尺度，导出 71 块。数量是当前种子与配置的结果，不是任意高层建筑的性能承诺。
+`--asset rectangle`、`--asset highrise_slab` 等可只重建指定资产。高楼使用较粗的 3.8 / 4 m 碎块尺度；桥梁使用 3 m 尺度。逻辑碎块、凸代理和分面数量会随真实几何及种子改变，需分别统计；代理数不是刚体数，也不代表任意高层建筑的性能承诺。
 
 最简配置：
 
@@ -94,7 +94,7 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 - `inner_walls`：`start`、`end` 平面坐标，可覆盖 `thickness` 与 `material`。相交内墙按构件顺序分区，异材质交汇需明确拒绝以避免隐含覆盖。
 - `materials`：以 ID 为键的材质表，支持 `density`、`color`、`tension_strength`、`compression_strength`、`shear_strength`、`young_modulus`、`poisson_ratio`。密度单位 kg/m³，强度和弹性模量单位 Pa。
 - `wall_material`、`floor_material`、`roof_material`：各类构件的材质 ID；内置 concrete、steel、wood。默认物理值用于游戏原型标定，不是工程承载保证，木材暂按各向同性近似。
-- `fracture_size`：目标空间尺度；种子数量按凸构件 AABB 有效维度估计，薄墙与楼板同样会破碎。它不是最大碎块直径；尺度越小，计算与数据量越大。
+- `fracture_size`：目标空间尺度；种子数量按源域 AABB 有效维度估计，薄墙、长梁与楼板同样会破碎。生成后按真实连通区域及尺寸复核，只能沿实际公共面合并小块，不越过门窗连接。它不是所有块严格等大的承诺；尺度越小，计算、面片和凸代理数据量越大。
 - `seed`：固定输入和种子可复现结构 ID、碎块与拓扑摘要。拓扑改变后需视为新的资产版本。
 - `parts`：可选的显式凸棱柱构件数组，用于桥梁等不适合从逐层围墙生成的结构。每项定义唯一 `id`、`kind`、材质 ID `material`、凸平面轮廓 `polygon` 和 Blender Z-up 的 `bottom` / `top` 标高。构件可共面接触，禁止体积重叠；全部轮廓必须位于顶层 `footprint` 内。此模式不自动生成楼板、屋顶或墙，也不能同时指定庭院、门窗或内墙。形状与高度由构件定义，面板中的楼层/墙厚参数会禁用，名称、碎块尺度和种子仍可调整。桥梁示例的桥墩之间有真实可通行净空，不是连续围墙。
 
@@ -102,11 +102,28 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 
 ## 生成与导出规则
 
-工具先将构件分区为互不体积重叠的封闭凸实体，再在每个实体内部以固定种子生成真实三维 Voronoi 单元。Voronoi 切面赋 `bd_surface_role=fracture`，原始表面赋 `exterior`。跨构件共面接触使用真实重叠多边形细分显示表面，只把被接触覆盖的区域改为 `fracture`；例如楼板上墙底以外的区域仍为 `exterior`。GLB 三角化保留这些材质边界；拆除相邻构件后可以显示对应断面。
+工具先生成互不体积重叠的封闭源构件，再按同一面墙、楼层或框的语义及材料组织共享源域。使用良好间隔的随机站点和非周期多尺度梯度噪声改变分区归属，在共享离散域内生成互补边界；不直接扭曲建筑外轮廓。墙体围绕同一门窗的原人工面板边界不再强制成为切缝。斜接角等可变厚度由原凸棱柱的线性厚度轮廓保留。
 
-此分类只改显示网格的面划分和材质，不重新计算或移动凸碰撞代理、质量、质心和连接。切分后的数值重复点在 0.000001 米内焊接，并检查封闭性、凸性、体积与质心。碰撞代理是通过封闭性和凸性验证的碎块独立网格副本，避免对凹物体整体包凸包而封住门窗。
+逻辑碎块可以非凸，通过若干精确凸子区域构造碰撞复合体；仅在体积及凸性验证允许时合并相邻子体，不能取一个跨过凹口或窗洞的总凸包。源碎块与代理进行严格闭合、单连通和正体积检查。每块显式积分体积、质心及完整惯性，并核对原源域和碰撞复合体。
 
-连接来自实际共面接触区域，不按距离猜测；共边或共点不会形成有面积的连接。接触容差为 0.00002 米，接触多边形的最小平面宽度不超过该容差时也按边接触处理，避免狭长数值重叠被误认为能承受弯曲的连接。底部接触 Z=0 的碎块导出固定锚点，工具检查所有碎块是否可通过连接到达锚点。
+采样间距固定为 `fracture_size*0.28`，不等于碎块尺度；每逻辑块代理上限为 48，当前六场景实测最多 28。正式目录计数依次为逻辑块 / 凸代理 / 父连接 / 承载面片：
+
+| 场景 | 计数 |
+| --- | --- |
+| rectangle | 163 / 2143 / 524 / 3661 |
+| l_shape | 269 / 3180 / 894 / 6332 |
+| courtyard | 283 / 3700 / 941 / 6730 |
+| highrise_slab | 228 / 2577 / 734 / 4308 |
+| highrise_l | 227 / 2190 / 749 / 4529 |
+| bridge | 71 / 362 / 164 / 964 |
+
+完整当前资产 ID 及验收记录见 [ADR 0020](../../docs/adr/0020-production-irregular-fracture.md)，GLB 文件名以各正式清单为准。
+
+显示采用 `source_mesh_with_contact_overlays`：只给被规范化接触面片完整覆盖的源面赋 `fracture`，其余保留 `exterior`。材质分类不增加、移动、删除或重排顶点与面，并核对分类前后几何摘要一致；没有离线接触布尔切面或 CDT 路径。运行时把每块的规范化接触面片组合成缓存断面遮罩，随碎块移动，以材质深度偏置盖住部分接触区域；物理网格和质量不受遮罩影响。消费者契约见格式文档，决策见 ADR 0023。
+
+导出还以实际 GLB 三角形复核接触覆盖。只有 float32 舍入范围内的边界缺口允许向内修正接触面片，随后重算面积、质心、方向和截面矩；记录逐面片位移、减少的接触面积及 ULP 预算。较大不一致拒绝发布，显示网格和物理体积不变。
+
+连接来自实际公共面，不按距离猜测；共边或共点不形成有面积的连接。资产只输出和接受 v2：同一碎块对只有一个父连接，内部保存方向可不同的凸平面片及真实顶点，各片的面积、中心和二阶矩从最终 float32 顶点重新计算。不能把曲面平均成一个平面代替承载数据。底部接触 Z=0 的碎块导出固定锚点，工具检查所有碎块能经连接到达锚点。旧清单需要重新烘焙。
 
 重生成只替换当前场景中对应的成功建筑集合，出错保留旧结果。用户加入的物体、子集合及另行链接到其他集合的物体会保留。
 
@@ -118,6 +135,8 @@ GLB 以内容摘要命名，JSON 最后原子替换。导出失败时，上次�
 $blenderExecutable = 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe'
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_geometry.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_fracture.py
+& $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_natural_pipeline.py
+& $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_natural_union.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_asset_tool.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_surfaces.py
 & $blenderExecutable --background --factory-startup --python-exit-code 1 --python tools/blender/tests/test_bundled_surfaces.py
@@ -126,13 +145,15 @@ $blenderExecutable = 'C:\Program Files\Blender Foundation\Blender 5.2\blender.ex
 
 测试覆盖几何封闭与凸性、独立重叠检查、门窗通行、解析体积与惯性、碎块重组、种子复现、连接面积和截面矩、部分接触与斜向接触的内外表面面积、GLB 材质角色及清单坐标一致性、跨场景隔离、UI 曲线生成与导出、用户数据保留，以及失败发布回滚。
 
+2026-11-17 在 Blender 5.2.3 后台执行以上八个模块的 63 个不同测试，全部通过；其中正式六场景的外壳面积检查保留原 `1e-6` 相对门槛。重复导出还检查最终 ID 与 JSON 字节稳定；相同源碎块的接触重算不改变代理、质量、质心、惯性或锚点。
+
 `tests/test_install.py` 另用于安装包验收，必须将 `BLENDER_USER_SCRIPTS` 指向独立测试目录后在后台执行；未设置隔离目录时会拒绝运行，避免改动常用插件目录。它检查 ZIP 安装、启用、面板注册及停用。
 
 ## 当前边界
 
-自然不规则边界和碎块尺度控制的隔离调研工具见 [prototypes](prototypes/README.md)。它不改变本页正式 Voronoi 生成器或已发布资产；曲面碰撞及多面片连接需要独立接入，验证结果和成本见 ADR 0018。
+自然不规则边界和碎块尺度控制最初的隔离调研工具见 [prototypes](prototypes/README.md) 和 ADR 0018。正式生成器使用本页描述的共享分区、复合凸碰撞及多面片连接；集成决策见 ADR 0020。
 
-- 验证范围包含米制两至十层建筑和离散桥墩桥梁样例；单构件最多 256 个 Voronoi 单元、单资产最多 2048，超限会报错，不能静默减少碎块。
+- 每个共享源域最多 256 个初始站点和 12000 个微单元、每个逻辑碎块最多 48 个凸代理、单资产最多 2048 个逻辑碎块。配置最多尝试 12 个确定性种子，超限或无法保持几何时明确报错，不能静默减少碎块。
 - 极端细长、微小或高坐标精度不足的几何可能被拒绝；请加大碎块尺度、调整种子或清理轮廓。不会丢弃失败碎块假装成功。
 - 支持平直竖墙、水平楼板与平顶；房间规划、楼梯和斜屋顶不自动推断。
 - 当前是独立资产烘焙工具，尚无 Geometry Nodes 实时预览、任意外部模型凹分解或运行时网格切割。

@@ -54,7 +54,7 @@ def _clip(poly, a, b, left=True):
         if inp:
             result.append(p)
         if inp != inq:
-            t = dp / (dp - dq)
+            t = max(0.0, min(1.0, dp / (dp - dq)))
             result.append((p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])))
     result = _clean(result)
     return result if len(result) >= 3 and abs(_area(result)) > EPS else []

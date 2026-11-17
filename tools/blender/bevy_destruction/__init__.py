@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Bevy Destruction Authoring",
     "author": "Bevy Destruction contributors",
-    "version": (0, 2, 0),
+    "version": (0, 3, 0),
     "blender": (5, 2, 0),
     "location": "View3D > Sidebar > Destruction",
     "description": "Build and export prefractured buildings for Bevy",

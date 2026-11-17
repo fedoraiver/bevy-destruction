@@ -7,10 +7,25 @@ import sys
 
 
 def main():
-    arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    arguments = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[2] / "assets" / "buildings")
-    parser.add_argument("--asset", choices=("highrise_slab", "highrise_l", "bridge"), action="append")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "assets" / "buildings",
+    )
+    parser.add_argument(
+        "--asset",
+        choices=(
+            "rectangle",
+            "l_shape",
+            "courtyard",
+            "highrise_slab",
+            "highrise_l",
+            "bridge",
+        ),
+        action="append",
+    )
     args = parser.parse_args(arguments)
     root = Path(__file__).resolve().parent
     sys.path.insert(0, str(root))
@@ -20,9 +35,19 @@ def main():
 
     if not bpy.app.background:
         raise RuntimeError("Use Blender --background for catalog baking")
-    for name in args.asset or ("highrise_slab", "highrise_l", "bridge"):
-        result = build_asset(load_spec(root / "examples" / (name + ".json")),
-                             output_dir=args.output.expanduser().resolve(), preview=False)
+    for name in args.asset or (
+        "rectangle",
+        "l_shape",
+        "courtyard",
+        "highrise_slab",
+        "highrise_l",
+        "bridge",
+    ):
+        result = build_asset(
+            load_spec(root / "examples" / (name + ".json")),
+            output_dir=args.output.expanduser().resolve(),
+            preview=False,
+        )
         print(json.dumps(result, indent=2), flush=True)
 
 
