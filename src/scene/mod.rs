@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use avian3d::prelude::*;
+use avian3d::{
+    parry::{shape::SharedShape, transformation::try_convex_hull},
+    prelude::*,
+};
 use bevy::{
     asset::{AssetEvent, AssetId, LoadState, RenderAssetUsages},
     camera::visibility::NoFrustumCulling,
@@ -13,7 +16,7 @@ use bevy::{
 
 use crate::{
     DemoOptions,
-    asset::{DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
+    asset::{ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
     camera::{Crosshair, FreeCamera},
     contact_mask::ContactMaskBuilder,
     debug::fracture_edges,
@@ -305,6 +308,73 @@ fn maintain_rim_warmup(
     }
 }
 
+fn chunk_collider(record: &ChunkRecord) -> Result<Collider, String> {
+    let shapes = record
+        .colliders
+        .iter()
+        .enumerate()
+        .map(|(index, proxy)| {
+            let points = proxy
+                .vertices
+                .iter()
+                .copied()
+                .map(Vec3::from)
+                .collect::<Vec<_>>();
+            Collider::convex_hull(&points)
+                .or_else(|| conditioned_convex_collider(&points))
+                .map(|shape| (Vec3::ZERO, Quat::IDENTITY, shape))
+                .ok_or_else(|| {
+                    format!(
+                        "Invalid convex collider: {} (proxy {})",
+                        record.id,
+                        index + 1
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Collider::compound(shapes))
+}
+
+fn conditioned_convex_collider(points: &[Vec3]) -> Option<Collider> {
+    let first = *points.first()?;
+    let (min, max) = points.iter().fold((first, first), |(min, max), &point| {
+        (min.min(point), max.max(point))
+    });
+    let extent = max - min;
+    if !extent.is_finite() || extent.min_element() <= 0.0 {
+        return None;
+    }
+
+    // Parry can classify a thin solid as a line after uniform normalization.
+    // Find the faces in better-scaled coordinates, then build from the original vertices.
+    let normalized: Vec<_> = points.iter().map(|&point| (point - min) / extent).collect();
+    let (vertices, faces) = try_convex_hull(&normalized).ok()?;
+    if vertices.len() < 4 || faces.len() < 4 {
+        return None;
+    }
+    let origin = vertices[0].as_dvec3();
+    let signed_volume: f64 = faces
+        .iter()
+        .map(|face| {
+            let [a, b, c] = face.map(|index| vertices[index as usize].as_dvec3() - origin);
+            a.dot(b.cross(c))
+        })
+        .sum();
+    if signed_volume <= f64::EPSILON {
+        return None;
+    }
+    let vertices = vertices
+        .iter()
+        .map(|vertex| {
+            normalized
+                .iter()
+                .position(|point| point == vertex)
+                .map(|index| points[index])
+        })
+        .collect::<Option<Vec<_>>>()?;
+    SharedShape::convex_mesh(vertices, &faces).map(Collider::from)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_pending(
     mut commands: Commands,
@@ -382,28 +452,14 @@ pub(crate) fn instantiate_pending(
                         },
                     );
                 }
-                let shapes = record
-                    .colliders
-                    .iter()
-                    .map(|proxy| {
-                        let points = proxy
-                            .vertices
-                            .iter()
-                            .copied()
-                            .map(Vec3::from)
-                            .collect::<Vec<_>>();
-                        Collider::convex_hull(&points)
-                            .map(|shape| (Vec3::ZERO, Quat::IDENTITY, shape))
-                            .ok_or_else(|| format!("Invalid convex collider: {}", record.id))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let collider = chunk_collider(record)?;
                 let edges = fracture_edges(
                     chunk
                         .primitives
                         .iter()
                         .map(|primitive| meshes.get(&primitive.mesh).unwrap()),
                 )?;
-                chunks.push((chunk, Collider::compound(shapes), edges));
+                chunks.push((chunk, collider, edges));
             }
             let patches = if let Some(patches) = cache.patches.get(&instance.asset.id()) {
                 patches.clone()

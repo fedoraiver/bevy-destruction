@@ -2,6 +2,35 @@ use super::*;
 use crate::{asset::ChunkRecord, fracture_detail::RimEdge};
 use bevy::mesh::VertexAttributeValues;
 
+#[test]
+fn catalog_convex_proxies_build_runtime_colliders() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+    for (name, path) in crate::catalog::SCENES {
+        let manifest: crate::asset::Manifest =
+            serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
+        for record in &manifest.chunks {
+            let collider = chunk_collider(record).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let shapes = collider.shape().as_compound().unwrap().shapes();
+            assert_eq!(
+                shapes.len(),
+                record.colliders.len(),
+                "{name}: {}",
+                record.id
+            );
+            if record.id == "floor-02:natural:19:0007" && name == "l_shape" {
+                let hull = shapes[15].1.as_convex_polyhedron().unwrap();
+                let points = &record.colliders[15].vertices;
+                assert_eq!(hull.points().len(), points.len());
+                assert!(
+                    points
+                        .iter()
+                        .all(|&v| hull.points().contains(&Vec3::from(v)))
+                );
+            }
+        }
+    }
+}
+
 fn mask_record() -> ChunkRecord {
     ChunkRecord {
         id: "a".into(),

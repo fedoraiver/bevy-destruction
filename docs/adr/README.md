@@ -41,5 +41,6 @@
 | [0024](0024-fresh-impact-event-rebinding.md) | 独立接触事件绑定与落地时序诊断 | 新事件绑定已实现；大块落地耦合未解决，失败实验未采用 |
 | [0025](0025-single-owner-fracture-surface-shading.md) | 消除 grid/断面闪烁的单次片元着色 | 已实现，8 组/40 张真实 GPU 对照及材质运动回归通过 |
 | [0026](0026-visible-chunk-force-diagram.md) | 仅显示可见碎块的受力图与图例 | 已实现，八阶段真实图形及遮挡/洞口/局部可见检查通过 |
+| [0027](0027-thin-convex-collider-construction.md) | 细长凸碰撞代理的构造 | 已实现，六个正式场景的碰撞体构造回归通过 |
 
 后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。
