@@ -3,17 +3,26 @@ use std::collections::BTreeMap;
 use bevy::{
     asset::AssetId,
     gltf::GltfMaterial,
-    mesh::VertexAttributeValues,
-    pbr::{ExtendedMaterial, MaterialExtension, gltf::standard_material_from_gltf_material},
+    mesh::{MeshVertexBufferLayoutRef, VertexAttributeValues},
+    pbr::{
+        ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+        gltf::standard_material_from_gltf_material,
+    },
     prelude::*,
     render::{
-        render_resource::{AsBindGroup, ShaderType},
+        render_resource::{
+            AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+        },
         storage::ShaderBuffer,
     },
-    shader::ShaderRef,
+    shader::{ShaderDefVal, ShaderRef},
 };
 
 pub type BuildingMaterial = ExtendedMaterial<StandardMaterial, BuildingSurface>;
+
+/// Per-primitive MeshTag values; zero or an absent tag leaves the surface unchanged.
+pub const HEAT_AMBER_TAG: u32 = 1;
+pub const HEAT_RED_TAG: u32 = 2;
 
 const EMPTY_CONTACT_MASK: Handle<ShaderBuffer> =
     bevy::asset::uuid_handle!("d5c5e270-46af-40d0-9904-9220b6a4603b");
@@ -133,6 +142,21 @@ impl MaterialExtension for BuildingSurface {
 
     fn deferred_fragment_shader() -> ShaderRef {
         "shaders/building_surface.wesl".into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = &mut descriptor.fragment {
+            fragment.shader_defs.extend([
+                ShaderDefVal::UInt("HEAT_AMBER_TAG".into(), HEAT_AMBER_TAG),
+                ShaderDefVal::UInt("HEAT_RED_TAG".into(), HEAT_RED_TAG),
+            ]);
+        }
+        Ok(())
     }
 }
 

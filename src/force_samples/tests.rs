@@ -32,7 +32,6 @@ fn bounded_history_replaces_a_body_and_expires_invalid_members() {
         samples.record_impulse(ImpulseSample {
             building,
             chunk: "a".into(),
-            point: Vec3::ZERO,
             impulse: Vec3::Y,
             captured_at: 1.0,
         });

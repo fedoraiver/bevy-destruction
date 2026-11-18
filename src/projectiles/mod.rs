@@ -281,7 +281,6 @@ fn impact_damage(world: &mut World) {
                                 impulse_samples.push(ImpulseSample {
                                     building: identity.building,
                                     chunk: identity.id.clone(),
-                                    point: point.point,
                                     impulse: manifold.normal * (point.normal_impulse * sign),
                                     captured_at,
                                 });

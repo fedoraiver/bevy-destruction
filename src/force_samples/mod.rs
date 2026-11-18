@@ -29,8 +29,7 @@ pub struct DynamicForceSample {
 pub struct ImpulseSample {
     pub building: Entity,
     pub chunk: String,
-    /// The actual contact point and impulse in world space, retained as event history.
-    pub point: Vec3,
+    /// Actual normal impulse at one contact, in world space.
     pub impulse: Vec3,
     pub captured_at: f64,
 }

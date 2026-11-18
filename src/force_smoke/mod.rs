@@ -6,7 +6,8 @@ use avian3d::prelude::{
 };
 use bevy::{
     asset::RenderAssetUsages,
-    mesh::PrimitiveTopology,
+    core_pipeline::prepass::DepthPrepass,
+    mesh::{MeshTag, PrimitiveTopology},
     prelude::*,
     render::view::{
         DebandDither, Tonemapping,
@@ -17,8 +18,13 @@ use bevy::{
 use crate::{
     DemoOptions,
     asset::{BondPatchRecord, ColliderRecord, DestructibleAsset},
-    force_debug::ForceViewStats,
-    force_samples::{DynamicForceSample, ForceCapture, ForceSamples, bond_signature},
+    force_debug::{ForceViewStats, ScriptedForceInspection},
+    force_samples::{
+        DynamicForceSample, FORCE_SAMPLE_SECONDS, ForceCapture, ForceSamples, bond_signature,
+    },
+    material::{
+        BuildingMaterial, HEAT_AMBER_TAG, HEAT_RED_TAG, building_material, surface_coordinates,
+    },
     physics::Cluster,
     projectiles::{ImpactStats, LaunchRequest, LaunchRequests, ProjectileShape},
     scene::{BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera},
@@ -29,15 +35,18 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 11] = [
     "01-overlay-off.png",
-    "02-structural-forces.png",
+    "02-structural-heat.png",
     "03-broken-connection-hidden.png",
-    "04-contact-impulse.png",
+    "04-actual-contact-inspection.png",
     "05-overlay-cleared.png",
     "06-visibility-source-ids.png",
-    "07-visibility-filtered-forces.png",
-    "08-visibility-cleared-repeat.png",
+    "07-building-neutral.png",
+    "08-heat-without-alt.png",
+    "09-alt-window-inspection.png",
+    "10-alt-released.png",
+    "11-heat-off-restored.png",
 ];
 
 pub struct ForceSmokePlugin;
@@ -76,16 +85,18 @@ struct ForceSmokeState {
     broken: Option<(Entity, String)>,
     captures: BTreeMap<usize, Capture>,
     scene_pixels: BTreeMap<usize, usize>,
-    rejected_readbacks: [u32; 8],
+    rejected_readbacks: [u32; 11],
     peak_static_bonds: usize,
-    peak_force_pairs: usize,
+    peak_tinted_chunks: usize,
     peak_force_n: f64,
     peak_impulse_ns: f64,
     saw_broken_hidden: bool,
     saw_cleared: bool,
+    saw_real_impulse_readout: bool,
+    saw_normal_without_arrows: bool,
+    saw_neutral_inspection: bool,
     fixture: Option<VisibilityFixture>,
-    visibility_stats: Option<ForceViewStats>,
-    visibility_peak_rays: usize,
+    fixture_stats: BTreeMap<usize, ForceViewStats>,
     errors: Vec<String>,
 }
 
@@ -117,6 +128,14 @@ struct VisibilityFixture {
     chunks: Vec<String>,
     bonds: BTreeMap<String, BondStress>,
     signature: u64,
+    twin: Entity,
+    primitives: Vec<FixturePrimitive>,
+}
+
+struct FixturePrimitive {
+    entity: Entity,
+    source_id: Handle<StandardMaterial>,
+    building: Handle<BuildingMaterial>,
 }
 
 struct FixtureShape {
@@ -291,6 +310,19 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         min: Vec3::new(-10.0, -2.0, -0.08),
         max: Vec3::new(32.0, 2.0, 2.08),
     });
+    let mut primitives = Vec::new();
+    let mut surface = building_material(None, false, "concrete");
+    surface.base.double_sided = true;
+    surface.base.cull_mode = None;
+    let surface = world
+        .resource_mut::<Assets<BuildingMaterial>>()
+        .add(surface);
+    let mut fracture_surface = building_material(None, true, "concrete");
+    fracture_surface.base.double_sided = true;
+    fracture_surface.base.cull_mode = None;
+    let fracture_surface = world
+        .resource_mut::<Assets<BuildingMaterial>>()
+        .add(fracture_surface);
     for shape in visibility_shapes() {
         let triangles = shape
             .boxes
@@ -358,7 +390,10 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             .id();
         let mesh = world
             .resource_mut::<Assets<Mesh>>()
-            .add(triangle_mesh(&triangles));
+            .add(surface_coordinates(
+                triangle_mesh(&triangles),
+                Transform::IDENTITY,
+            ));
         let color = shape.color.map(|value| f32::from(value) / 255.0);
         let material = world
             .resource_mut::<Assets<StandardMaterial>>()
@@ -372,12 +407,23 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         let primitive = world
             .spawn((
                 Mesh3d(mesh),
-                MeshMaterial3d(material),
+                MeshMaterial3d(material.clone()),
+                MeshTag::new(0),
                 Transform::IDENTITY,
                 Visibility::Inherited,
                 ChildOf(entity),
             ))
             .id();
+        let source_surface = if shape.id == "partial-b" {
+            fracture_surface.clone()
+        } else {
+            surface.clone()
+        };
+        primitives.push(FixturePrimitive {
+            entity: primitive,
+            source_id: material,
+            building: source_surface,
+        });
         instance.chunks.insert(
             shape.id,
             ChunkInstance {
@@ -419,6 +465,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         instance.bonds.insert(bond.id.clone(), true);
         // These deterministic diagnostic forces test visibility only. The first
         // five phases still require the authored selfweight and a real contact J.
+        let utilization = [0.499, 1.4, 0.5, 1.0, 1.2][index];
         force_bonds.insert(
             bond.id.clone(),
             BondStress {
@@ -427,7 +474,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 tension: 0.0,
                 compression: 0.0,
                 shear: 0.0,
-                utilization: 0.7,
+                utilization,
                 section_exact: true,
             },
         );
@@ -448,6 +495,92 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         chunks: chunks.clone(),
         anchored: false,
     });
+    let twin = world
+        .spawn((
+            Name::new("Same-asset neutral instance"),
+            Transform::IDENTITY,
+            Visibility::Visible,
+        ))
+        .id();
+    let twin_origin = FIXTURE_ORIGIN + Vec3::Y * 4.5;
+    let twin_body = world
+        .spawn((
+            Name::new("Frozen same-asset body"),
+            RigidBody::Dynamic,
+            Position(twin_origin),
+            Rotation::IDENTITY,
+            GravityScale(0.0),
+            Mass(100.0),
+            CenterOfMass(Vec3::ZERO),
+            AngularInertia::from_mat3_unchecked(Mat3::IDENTITY),
+            Transform::from_translation(twin_origin),
+            Visibility::Visible,
+            ChildOf(twin),
+            NoAutoMass,
+            NoAutoAngularInertia,
+            NoAutoCenterOfMass,
+        ))
+        .id();
+    let mut second = BuildingInstance::pending(instance.asset.clone());
+    second.bounds = instance.bounds;
+    second.bonds = instance.bonds.clone();
+    second.clusters = vec![twin_body];
+    for (id, chunk) in &instance.chunks {
+        let entity = world
+            .spawn((
+                Name::new(format!("Neutral twin {id}")),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(twin_body),
+                ChunkIdentity {
+                    building: twin,
+                    id: id.clone(),
+                },
+            ))
+            .id();
+        let original = chunk.primitives[0];
+        let mesh = world.get::<Mesh3d>(original).unwrap().0.clone();
+        let original_material = primitives
+            .iter()
+            .find(|entry| entry.entity == original)
+            .unwrap();
+        let source = original_material.source_id.clone();
+        let source_surface = original_material.building.clone();
+        let primitive = world
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(source.clone()),
+                MeshTag::new(0),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(entity),
+            ))
+            .id();
+        primitives.push(FixturePrimitive {
+            entity: primitive,
+            source_id: source,
+            building: source_surface,
+        });
+        second.chunks.insert(
+            id.clone(),
+            ChunkInstance {
+                entity,
+                primitives: vec![primitive],
+                alive: true,
+                triangles: chunk.triangles.clone(),
+                transform: chunk.transform,
+                material: chunk.material.clone(),
+                detail: None,
+                cluster: Some(twin_body),
+            },
+        );
+    }
+    world.entity_mut(twin_body).insert(Cluster {
+        building: twin,
+        chunks: chunks.clone(),
+        anchored: false,
+    });
+    world.entity_mut(twin).insert(second);
     world.entity_mut(building).insert(instance);
     VisibilityFixture {
         building,
@@ -455,16 +588,32 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         chunks,
         bonds: force_bonds,
         signature,
+        twin,
+        primitives,
     }
 }
 
-fn hold_visibility_fixture(world: &mut World, fixture: &VisibilityFixture, enabled: bool) {
+fn hold_visibility_fixture(
+    world: &mut World,
+    fixture: &VisibilityFixture,
+    phase: usize,
+    hold: u32,
+) {
     let camera = world
         .query_filtered::<Entity, With<DemoCamera>>()
         .single(world)
         .unwrap();
+    let eye = FIXTURE_ORIGIN + Vec3::new(0.0, 2.25, FIXTURE_DISTANCE);
+    let pose = if phase == 8 {
+        Transform::from_translation(eye).looking_at(
+            FIXTURE_ORIGIN + Vec3::new(1.4, if hold < 8 { 4.5 } else { 0.0 }, 0.08),
+            Vec3::Y,
+        )
+    } else {
+        Transform::from_translation(eye)
+    };
     world.entity_mut(camera).insert((
-        Transform::from_translation(FIXTURE_ORIGIN + Vec3::Z * FIXTURE_DISTANCE),
+        pose,
         Projection::Perspective(PerspectiveProjection {
             fov: std::f32::consts::FRAC_PI_3,
             near: 0.05,
@@ -473,8 +622,22 @@ fn hold_visibility_fixture(world: &mut World, fixture: &VisibilityFixture, enabl
         }),
         Tonemapping::None,
         DebandDither::Disabled,
+        DepthPrepass,
     ));
-    if enabled {
+    if phase != 5 {
+        for primitive in &fixture.primitives {
+            if world
+                .get::<MeshMaterial3d<BuildingMaterial>>(primitive.entity)
+                .is_none()
+            {
+                world
+                    .entity_mut(primitive.entity)
+                    .remove::<MeshMaterial3d<StandardMaterial>>()
+                    .insert(MeshMaterial3d(primitive.building.clone()));
+            }
+        }
+    }
+    if matches!(phase, 6..=9) {
         let now = world.resource::<Time<Fixed>>().elapsed_secs_f64();
         world
             .resource_mut::<ForceSamples>()
@@ -484,8 +647,61 @@ fn hold_visibility_fixture(world: &mut World, fixture: &VisibilityFixture, enabl
                 chunks: fixture.chunks.clone(),
                 bonds: fixture.bonds.clone(),
                 bond_signature: fixture.signature,
-                captured_at: now,
+                captured_at: if phase == 6 {
+                    now - FORCE_SAMPLE_SECONDS - 0.1
+                } else {
+                    now
+                },
             });
+    }
+}
+
+fn aim_at_real_impulse_chunk(world: &mut World) {
+    let Some((building, id)) = world
+        .resource::<ForceSamples>()
+        .impulses
+        .iter()
+        .rev()
+        .map(|sample| (sample.building, sample.chunk.clone()))
+        .find(|(building, id)| {
+            world
+                .get::<BuildingInstance>(*building)
+                .is_some_and(|instance| instance.chunks.get(id).is_some_and(|chunk| chunk.alive))
+        })
+    else {
+        return;
+    };
+    let camera = world
+        .query_filtered::<Entity, With<DemoCamera>>()
+        .single(world)
+        .unwrap();
+    let eye = world.get::<GlobalTransform>(camera).unwrap().translation();
+    let instance = world.get::<BuildingInstance>(building).unwrap();
+    let chunk = &instance.chunks[&id];
+    let Some(pose) = chunk
+        .cluster
+        .and_then(|body| world.get::<GlobalTransform>(body))
+        .copied()
+    else {
+        return;
+    };
+    let target = chunk
+        .triangles
+        .iter()
+        .filter_map(|triangle| {
+            let [a, b, c] = triangle.map(|point| pose.transform_point(point));
+            let normal = (b - a).cross(c - a).try_normalize()?;
+            let center = (a + b + c) / 3.0;
+            (normal.dot(eye - center) > 0.0).then_some((
+                center,
+                normal,
+                center.distance_squared(eye),
+            ))
+        })
+        .min_by(|a, b| a.2.total_cmp(&b.2));
+    if let Some((center, normal, _)) = target {
+        *world.get_mut::<Transform>(camera).unwrap() =
+            Transform::from_translation(center + normal * 1.2).looking_at(center, Vec3::Y);
     }
 }
 
@@ -570,7 +786,8 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         return;
     }
     if state.applied != Some(state.phase) {
-        world.resource_mut::<ForceCapture>().enabled = matches!(state.phase, 1..=3 | 6);
+        world.resource_mut::<ForceCapture>().enabled = matches!(state.phase, 1..=3 | 6..=9);
+        world.resource_mut::<ScriptedForceInspection>().0 = matches!(state.phase, 3 | 8);
         if state.phase == 5 {
             state.fixture = Some(spawn_visibility_fixture(world));
         }
@@ -651,7 +868,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         if state.phase == 2 {
             state.broken = world
                 .resource::<ForceViewStats>()
-                .drawn_bonds
+                .valid_bonds
                 .first()
                 .cloned();
             if let Some((building, id)) = &state.broken {
@@ -668,18 +885,40 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         state.hold = 0;
     }
     if let Some(fixture) = &state.fixture {
-        hold_visibility_fixture(world, fixture, state.phase == 6);
+        hold_visibility_fixture(world, fixture, state.phase, state.hold);
+    } else if state.phase == 3 {
+        aim_at_real_impulse_chunk(world);
     }
     state.hold += 1;
     let stats = world.resource::<ForceViewStats>().clone();
     if state.phase == 1 {
         state.peak_static_bonds = state.peak_static_bonds.max(stats.static_bonds);
-        state.peak_force_pairs = state.peak_force_pairs.max(stats.force_pairs);
+        state.peak_tinted_chunks = state.peak_tinted_chunks.max(stats.tinted_chunks.len());
         state.peak_force_n = state.peak_force_n.max(stats.max_force_n);
+        state.saw_normal_without_arrows =
+            stats.force_arrows == 0 && stats.pick_queries == 0 && stats.inspected.is_none();
     }
     if state.phase == 3 {
-        state.peak_impulse_ns = state.peak_impulse_ns.max(stats.max_impulse_ns);
-        if world.resource::<ImpactStats>().contacts <= state.before_contacts || stats.impulses == 0
+        if let Some(inspection) = &stats.inspected
+            && let Some(impulse) = inspection.impulse_ns
+        {
+            let genuine = world
+                .resource::<ForceSamples>()
+                .impulses
+                .iter()
+                .any(|sample| {
+                    (sample.building, sample.chunk.as_str())
+                        == (inspection.chunk.0, inspection.chunk.1.as_str())
+                        && (sample.impulse.as_dvec3().length() - impulse).abs()
+                            <= 1e-6 * impulse.max(1.0)
+                });
+            state.saw_real_impulse_readout |= genuine;
+            if genuine {
+                state.peak_impulse_ns = state.peak_impulse_ns.max(impulse);
+            }
+        }
+        if world.resource::<ImpactStats>().contacts <= state.before_contacts
+            || !state.saw_real_impulse_readout
         {
             return;
         }
@@ -688,18 +927,30 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
         state.saw_broken_hidden = state
             .broken
             .as_ref()
-            .is_some_and(|broken| !stats.drawn_bonds.contains(broken));
+            .is_some_and(|broken| !stats.valid_bonds.contains(broken));
     }
     if state.phase == 4 {
         let samples = world.resource::<ForceSamples>();
-        state.saw_cleared = stats.force_pairs == 0
-            && stats.impulses == 0
+        state.saw_cleared = stats.force_arrows == 0
+            && stats.tinted_chunks.is_empty()
+            && stats.inspected.is_none()
             && samples.dynamic.is_empty()
             && samples.impulses.is_empty();
     }
-    if state.phase == 6 {
-        state.visibility_peak_rays = state.visibility_peak_rays.max(stats.visibility_rays);
-        state.visibility_stats = Some(stats.clone());
+    if state.phase >= 6 {
+        state.fixture_stats.insert(state.phase, stats.clone());
+        if state.phase == 8
+            && stats.inspected.as_ref().is_some_and(|readout| {
+                state
+                    .fixture
+                    .as_ref()
+                    .is_some_and(|fixture| readout.chunk == (fixture.twin, "window-a".into()))
+                    && readout.bonds.is_empty()
+                    && readout.impulse_ns.is_none()
+            })
+        {
+            state.saw_neutral_inspection |= stats.force_arrows == 0 && stats.pick_queries > 0;
+        }
     }
     let wait = if state.phase == 0 {
         140
@@ -796,7 +1047,7 @@ fn scene_surface_pixels(capture: &Capture) -> usize {
 }
 
 fn accept_readback(state: &mut ForceSmokeState, phase: usize, candidate: Capture) -> bool {
-    let scene_pixels = if phase >= 5 {
+    let scene_pixels = if phase == 5 {
         let counts = (0..10)
             .map(|index| source_id_pixels(&candidate, index))
             .collect::<Vec<_>>();
@@ -809,6 +1060,16 @@ fn accept_readback(state: &mut ForceSmokeState, phase: usize, candidate: Capture
             return false;
         }
         counts.iter().sum()
+    } else if phase > 5 {
+        let pixels = state
+            .captures
+            .get(&5)
+            .and_then(|reference| building_readback_pixels(reference, &candidate, phase));
+        let Some(pixels) = pixels else {
+            state.rejected_readbacks[phase] += 1;
+            return false;
+        };
+        pixels
     } else {
         scene_surface_pixels(&candidate)
     };
@@ -822,129 +1083,297 @@ fn accept_readback(state: &mut ForceSmokeState, phase: usize, candidate: Capture
     true
 }
 
-fn fixture_changed_pixels(a: &Capture, b: &Capture, tile: usize, exclude_center: bool) -> usize {
-    if a.width != b.width || a.height != b.height {
-        return usize::MAX;
+fn building_readback_pixels(reference: &Capture, capture: &Capture, phase: usize) -> Option<usize> {
+    if (reference.width, reference.height) != (capture.width, capture.height) {
+        return None;
     }
-    let scale = a.height as f32 / (2.0 * (std::f32::consts::FRAC_PI_6).tan() * FIXTURE_DISTANCE);
-    let center = Vec2::new(
-        a.width as f32 * 0.5 + TARGETS[tile].1 * scale,
-        a.height as f32 * 0.5,
-    );
-    let half = Vec2::new(scale, scale * 0.6);
-    let mut count = 0;
-    for y in 0..a.height {
-        for x in 0..a.width {
-            let delta = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - center;
-            if delta.x.abs() > half.x
-                || delta.y.abs() > half.y
-                || (exclude_center && delta.length_squared() < 64.0)
-            {
-                continue;
+    if phase == 8 {
+        let mut center = Vec::new();
+        for y in capture.height / 2 - 10..capture.height / 2 + 10 {
+            for x in capture.width / 2 - 10..capture.width / 2 + 10 {
+                center.push((y * capture.width + x) * 4);
             }
-            let i = (y * a.width + x) * 4;
-            let difference = (0..3)
-                .map(|c| u32::from(a.pixels[i + c].abs_diff(b.pixels[i + c])))
-                .sum::<u32>();
-            count += usize::from(difference > 24);
+        }
+        let amber = heat_hues(capture, &center).0;
+        let cyan = center_pixels(capture)
+            .filter(|(_, p)| {
+                p[1] > p[0].saturating_add(30) && p[2] > p[0].saturating_add(30) && p[2] > 140
+            })
+            .count();
+        return (amber * 10 >= center.len() * 5 && cyan >= 5).then_some(amber);
+    }
+    let mut ready = 0;
+    for twin in [false, true] {
+        for target in [0, 1] {
+            let indices = id_indices(reference, target, twin);
+            if indices.len() < 16 {
+                return None;
+            }
+            let solid = indices
+                .iter()
+                .filter(|&&i| {
+                    let channels = &capture.pixels[i..i + 3];
+                    let low = *channels.iter().min().unwrap();
+                    let high = *channels.iter().max().unwrap();
+                    low >= 43 && high <= 245 && high - low <= 45
+                })
+                .count();
+            if solid * 10 < indices.len() * 7 {
+                return None;
+            }
+            ready += solid;
         }
     }
-    count
+    Some(ready)
 }
 
-fn visibility_report(state: &mut ForceSmokeState) -> serde_json::Value {
+fn id_indices(capture: &Capture, target: usize, twin: bool) -> Vec<usize> {
+    let color = TARGET_COLORS[target];
+    capture
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(index, pixel)| {
+            let upper = index / capture.width < capture.height / 2;
+            upper == twin && (0..3).all(|c| pixel[c].abs_diff(color[c]) <= 2)
+        })
+        .map(|(index, _)| index * 4)
+        .collect()
+}
+
+fn changed_indices(a: &Capture, b: &Capture, indices: &[usize]) -> usize {
+    if (a.width, a.height) != (b.width, b.height) {
+        return usize::MAX;
+    }
+    indices
+        .iter()
+        .filter(|&&i| {
+            (0..3)
+                .map(|c| u32::from(a.pixels[i + c].abs_diff(b.pixels[i + c])))
+                .sum::<u32>()
+                > 24
+        })
+        .count()
+}
+
+fn heat_hues(capture: &Capture, indices: &[usize]) -> (usize, usize) {
+    let mut amber = 0;
+    let mut red = 0;
+    for &i in indices {
+        let [r, g, b] = [
+            capture.pixels[i],
+            capture.pixels[i + 1],
+            capture.pixels[i + 2],
+        ]
+        .map(f32::from);
+        if r >= 0.9 * g && g > 1.4 * b && g - b > 18.0 {
+            amber += 1;
+        } else if r > 1.35 * g.max(b) && r - g > 20.0 {
+            red += 1;
+        }
+    }
+    (amber, red)
+}
+
+fn covered_rear_indices(capture: &Capture) -> Vec<usize> {
+    let scale =
+        capture.height as f32 / (2.0 * std::f32::consts::FRAC_PI_6.tan() * FIXTURE_DISTANCE);
+    let center = Vec2::new(
+        capture.width as f32 * 0.5 + TARGETS[1].1 * scale,
+        capture.height as f32 * 0.5 + 2.25 * scale,
+    );
+    (0..capture.width * capture.height)
+        .filter(|&index| {
+            let d = Vec2::new(
+                (index % capture.width) as f32 + 0.5,
+                (index / capture.width) as f32 + 0.5,
+            ) - center;
+            d.x.abs() < 0.9 * scale && d.y.abs() < 0.6 * scale
+        })
+        .map(|index| index * 4)
+        .collect()
+}
+
+fn heat_report(state: &mut ForceSmokeState) -> serde_json::Value {
     let Some(fixture) = &state.fixture else {
         state
             .errors
-            .push("Missing source-triangle visibility fixture".into());
+            .push("Missing shared-asset heat fixture".into());
         return serde_json::Value::Null;
     };
-    let Some(stats) = &state.visibility_stats else {
+    let Some(stats) = state.fixture_stats.get(&7) else {
         state
             .errors
-            .push("Missing actual force visibility draw statistics".into());
+            .push("Missing actual heat draw statistics".into());
         return serde_json::Value::Null;
     };
-    let visible = stats
-        .visible_chunks
-        .iter()
-        .filter(|(building, _)| *building == fixture.building)
-        .map(|(_, id)| id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let drawn = stats
-        .drawn_bonds
-        .iter()
-        .filter(|(building, _)| *building == fixture.building)
-        .map(|(_, id)| id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let graph = stats
-        .drawn_graph_bonds
-        .iter()
-        .filter(|(building, _)| *building == fixture.building)
-        .map(|(_, id)| id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
+    let Some(ids) = state.captures.get(&5) else {
+        state.errors.push("Missing source-ID reference".into());
+        return serde_json::Value::Null;
+    };
+    let Some(neutral) = state.captures.get(&6) else {
+        state
+            .errors
+            .push("Missing neutral BuildingMaterial reference".into());
+        return serde_json::Value::Null;
+    };
+    let Some(heat) = state.captures.get(&7) else {
+        state.errors.push("Missing heat GPU capture".into());
+        return serde_json::Value::Null;
+    };
+    let Some(released) = state.captures.get(&9) else {
+        state.errors.push("Missing Alt-release GPU capture".into());
+        return serde_json::Value::Null;
+    };
+    let Some(restored) = state.captures.get(&10) else {
+        state
+            .errors
+            .push("Missing heat-off restored GPU capture".into());
+        return serde_json::Value::Null;
+    };
     let mut targets = Vec::new();
-    if let (Some(off), Some(on), Some(repeat)) = (
-        state.captures.get(&5),
-        state.captures.get(&6),
-        state.captures.get(&7),
-    ) {
+    let mut all_indices = Vec::new();
+    for twin in [false, true] {
+        let building = if twin { fixture.twin } else { fixture.building };
         for index in 0..10 {
             let id = target_id(index);
-            let pixels = source_id_pixels(off, index);
-            let expected = expected_target_visible(index);
-            let minimum = if index == 7 { 16 } else { 64 };
-            if (expected && pixels < minimum) || (!expected && pixels != 0) {
-                state.errors.push(format!("Visibility source-ID reference {id}: {pixels} pixels, expected visible={expected}"));
-            }
-            if visible.contains(&id) != expected {
+            let indices = id_indices(ids, index, twin);
+            let expected_visible = expected_target_visible(index);
+            if (expected_visible && indices.len() < if index == 7 { 16 } else { 64 })
+                || (!expected_visible && !indices.is_empty())
+            {
                 state.errors.push(format!(
-                    "Actual visibility set disagrees for {id}: expected visible={expected}"
+                    "Source-ID {} {id}: {} visible pixels",
+                    if twin { "neutral twin" } else { "loaded" },
+                    indices.len()
                 ));
             }
-            targets.push(serde_json::json!({"chunk":id,"source_id_pixels":pixels,"expected_visible":expected,"actual_visible":visible.contains(&id)}));
+            let expected_tag = if twin || index < 2 {
+                0
+            } else if index / 2 == 2 {
+                HEAT_AMBER_TAG
+            } else {
+                HEAT_RED_TAG
+            };
+            let actual_tag = stats
+                .tinted_chunks
+                .get(&(building, id.clone()))
+                .copied()
+                .unwrap_or(0);
+            if actual_tag != expected_tag {
+                state.errors.push(format!(
+                    "Heat tag for {id} twin={twin}: expected {expected_tag}, actual {actual_tag}"
+                ));
+            }
+            let changed = changed_indices(neutral, heat, &indices);
+            let restored_pixels = changed_indices(neutral, restored, &indices);
+            let released_pixels = changed_indices(heat, released, &indices);
+            let (amber, red) = heat_hues(heat, &indices);
+            if expected_visible && expected_tag == 0 && changed != 0 {
+                state.errors.push(format!(
+                    "Neutral instance/chunk {id} twin={twin} inherited heat: {changed} pixels"
+                ));
+            }
+            if expected_visible && expected_tag != 0 {
+                let matching = if expected_tag == HEAT_AMBER_TAG {
+                    amber
+                } else {
+                    red
+                };
+                if matching * 10 < indices.len() * 7 {
+                    state.errors.push(format!(
+                        "Heat hue did not cover {id}: {matching}/{} expected tag {expected_tag}",
+                        indices.len()
+                    ));
+                }
+            }
+            if restored_pixels != 0 || released_pixels != 0 {
+                state.errors.push(format!("Heat restoration {id} twin={twin}: off={restored_pixels}, release={released_pixels}"));
+            }
+            targets.push(serde_json::json!({"chunk":id,"neutral_same_asset_instance":twin,"source_id_pixels":indices.len(),"expected_tag":expected_tag,"actual_tag":actual_tag,"changed_pixels":changed,"amber_pixels":amber,"red_pixels":red,"off_restored_pixels":restored_pixels,"alt_released_pixels":released_pixels}));
+            all_indices.extend(indices);
         }
-        for (tile, &(name, _)) in TARGETS.iter().enumerate() {
-            let id = format!("visibility-{name}");
-            let expected = matches!(tile, 0 | 2 | 3);
-            if drawn.contains(&id) != expected || graph.contains(&id) != expected {
-                state.errors.push(format!(
-                    "Hidden/visible target {name} has incorrect force/graph bond submission"
-                ));
-            }
-            if tile == 4 {
-                continue;
-            }
-            let changed = fixture_changed_pixels(off, on, tile, tile == 1);
-            let repeat_changed = fixture_changed_pixels(off, repeat, tile, tile == 1);
-            if (expected && changed < 8) || (!expected && changed != 0) {
-                state.errors.push(format!("Visibility target {name}: {changed} changed force pixels, expected visible={expected}"));
-            }
-            if repeat_changed != 0 {
-                state.errors.push(format!(
-                    "Visibility cleared target {name}: {repeat_changed} residual force pixels"
-                ));
-            }
-            targets.push(serde_json::json!({"bond":id,"expected_drawn":expected,"force_pixels":changed,"cleared_repeat_pixels":repeat_changed}));
+    }
+    let rear_changed = changed_indices(neutral, heat, &covered_rear_indices(neutral));
+    if rear_changed != 0 {
+        state.errors.push(format!(
+            "Hidden red chunks leaked through opaque foreground: {rear_changed} pixels"
+        ));
+    }
+    for phase in [6, 7, 9, 10] {
+        if state
+            .fixture_stats
+            .get(&phase)
+            .is_none_or(|s| s.inspected.is_some() || s.force_arrows != 0 || s.pick_queries != 0)
+        {
+            state.errors.push(format!(
+                "Phase {phase} performed inspection or retained arrows without Alt"
+            ));
         }
-    } else {
+    }
+    let inspection = state
+        .fixture_stats
+        .get(&8)
+        .and_then(|s| s.inspected.as_ref());
+    let selected_ok = inspection.is_some_and(|selected| {
+        selected.chunk == (fixture.building, "window-a".into())
+            && selected.bonds.len() == 1
+            && selected.bonds[0].id == "visibility-window"
+            && (selected.bonds[0].force_n - 2000.0).abs() < 1e-6
+            && (selected.bonds[0].utilization - 0.5).abs() < 1e-12
+            && selected.bonds[0].impact
+    });
+    let inspection_stats = state.fixture_stats.get(&8);
+    if !state.saw_neutral_inspection {
+        state.errors.push("Alt on same-asset chunk without valid force data did not report unavailable without an arrow".into());
+    }
+    let expired = state.fixture_stats.get(&6).is_some_and(|s| {
+        !s.tinted_chunks
+            .keys()
+            .any(|(building, _)| *building == fixture.building)
+            && !s
+                .valid_bonds
+                .iter()
+                .any(|(building, _)| *building == fixture.building)
+    });
+    let recovered = stats
+        .valid_bonds
+        .iter()
+        .filter(|(building, _)| *building == fixture.building)
+        .count()
+        == 5;
+    if !expired || !recovered {
         state
             .errors
-            .push("Missing off/on/repeat visibility GPU captures".into());
+            .push("Expired dynamic forces did not reset before fresh fixture recovery".into());
     }
-    if stats.force_pairs != 2 || stats.force_arrows != 5 {
-        state.errors.push(format!(
-            "Visible endpoint force counts disagree: {} pairs, {} arrows; expected 2/5",
-            stats.force_pairs, stats.force_arrows
-        ));
+    if !selected_ok || inspection_stats.is_none_or(|s| s.force_arrows != 1 || s.pick_queries == 0) {
+        state.errors.push(
+            "Alt did not inspect the warm chunk through the real window with one local force arrow"
+                .into(),
+        );
     }
-    if state.visibility_peak_rays == 0 || stats.visibility_untested != 0 {
-        state.errors.push(format!(
-            "Visibility fixture was not fully tested: {} rays, {} untested",
-            state.visibility_peak_rays, stats.visibility_untested
-        ));
+    let cyan = state.captures.get(&8).map_or(0, |capture| {
+        center_pixels(capture)
+            .filter(|(_, p)| {
+                p[1] > p[0].saturating_add(30) && p[2] > p[0].saturating_add(30) && p[2] > 140
+            })
+            .count()
+    });
+    if cyan < 5 {
+        state
+            .errors
+            .push(format!("Alt inspection has only {cyan} cyan arrow pixels"));
     }
-    serde_json::json!({"source_triangles_match_render_mesh":true,"partial_centers_are_occluded":true,"synthetic_forces_only_in_fixture":true,"visible_chunks":visible,"drawn_force_bonds":drawn,"drawn_graph_bonds":graph,"force_pairs":stats.force_pairs,"force_arrows":stats.force_arrows,"visibility_peak_actual_rays":state.visibility_peak_rays,"visibility_capture_frame_rays":stats.visibility_rays,"visibility_untested":stats.visibility_untested,"targets":targets})
+    let final_stats = state.fixture_stats.get(&10);
+    if final_stats.is_none_or(|s| !s.tinted_chunks.is_empty()) {
+        state
+            .errors
+            .push("Disabling heat left nonzero chunk tags".into());
+    }
+    serde_json::json!({"shared_asset_mesh_material_instances":true,"source_triangles_match_render_mesh":true,"depth_prepass":true,"expired_sample_reset":expired,"fresh_sample_recovered":recovered,"unavailable_inspection_without_arrow":state.saw_neutral_inspection,"ordinary_heat_has_no_arrows_or_picking":true,"hidden_red_changed_pixels":rear_changed,"alt_window_selected":selected_ok,"alt_cyan_arrow_pixels":cyan,"alt_force_arrows":inspection_stats.map(|s|s.force_arrows),"targets":targets,"restored_source_pixels":all_indices.len()})
 }
 
 fn center_pixels(capture: &Capture) -> impl Iterator<Item = (usize, &[u8])> {
@@ -962,75 +1391,47 @@ fn center_pixels(capture: &Capture) -> impl Iterator<Item = (usize, &[u8])> {
 }
 
 fn finish(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::Path) {
-    let changed = state
-        .captures
-        .get(&0)
-        .zip(state.captures.get(&1))
-        .filter(|(a, b)| a.width == b.width && a.height == b.height)
-        .map_or(0, |(a, b)| {
-            center_pixels(b)
-                .filter(|(index, pixel)| {
-                    let old = &a.pixels[index * 4..index * 4 + 4];
-                    (0..3)
-                        .map(|channel| old[channel].abs_diff(pixel[channel]) as u32)
-                        .sum::<u32>()
-                        > 75
-                })
-                .count()
-        });
-    let purple = state.captures.get(&3).map_or(0, |capture| {
-        center_pixels(capture)
-            .filter(|(_, p)| {
-                u16::from(p[0]) > u16::from(p[1]) + 30
-                    && u16::from(p[2]) > u16::from(p[1]) + 30
-                    && p[2] > 140
-            })
-            .count()
-    });
-    if state.peak_static_bonds == 0 || state.peak_force_pairs == 0 || state.peak_force_n <= 0.0 {
+    if state.peak_static_bonds == 0 || state.peak_force_n <= 0.0 {
         state
             .errors
-            .push("No real valid selfweight forces were displayed".into());
+            .push("No real current selfweight force data reached the overview".into());
     }
-    if changed < 80 {
-        state.errors.push(format!(
-            "Force overlay changed only {changed} non-HUD pixels"
-        ));
+    if !state.saw_normal_without_arrows {
+        state
+            .errors
+            .push("Normal overview performed picking or retained arrows".into());
     }
-    if state.peak_impulse_ns <= 0.0 || purple < 5 {
-        state.errors.push(format!(
-            "Actual contact impulse was not visible: {} Ns, {purple} purple pixels",
-            state.peak_impulse_ns
-        ));
+    if state.peak_impulse_ns <= 0.0 || !state.saw_real_impulse_readout {
+        state
+            .errors
+            .push("Inspector did not read a real matching physical contact impulse".into());
     }
     if !state.saw_broken_hidden {
         state
             .errors
-            .push("Broken connection retained a force glyph".into());
+            .push("Broken connection retained valid force data".into());
     }
     if !state.saw_cleared {
         state
             .errors
-            .push("Disabled force overlay retained data or glyphs".into());
+            .push("Disabled force heat retained data, tags or inspection".into());
     }
     for name in NAMES {
         if !directory.join(name).is_file() {
             state.errors.push(format!("Missing screenshot {name}"));
         }
     }
-    let visibility = visibility_report(state);
-    let report = serde_json::json!({"asset":world.resource::<DemoOptions>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"force_pairs":state.peak_force_pairs,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"force_overlay_changed_non_hud_pixels":changed,"contact_impulse_purple_pixels":purple,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"visibility":visibility,"errors":state.errors});
+    let heat = heat_report(state);
+    let report = serde_json::json!({"asset":world.resource::<DemoOptions>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"overview_tinted_chunks":state.peak_tinted_chunks,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"actual_impulse_matches_physical_sample":state.saw_real_impulse_readout,"normal_overview_without_arrows":state.saw_normal_without_arrows,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"heat":heat,"errors":state.errors});
     std::fs::write(
         directory.join("report.json"),
         serde_json::to_string_pretty(&report).unwrap(),
     )
     .expect("Write force probe report");
     state.finished = true;
-    if state.errors.is_empty() {
-        info!("Force view probe passed: {report}");
-        world.write_message(AppExit::Success);
+    world.write_message(if state.errors.is_empty() {
+        AppExit::Success
     } else {
-        error!("Force view probe failed: {report}");
-        world.write_message(AppExit::error());
-    }
+        AppExit::error()
+    });
 }

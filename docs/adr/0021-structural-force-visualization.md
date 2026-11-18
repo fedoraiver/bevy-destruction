@@ -5,6 +5,7 @@
 - 已采用并实现；目录重构前的严格连接签名版本已通过 100 项合并 Rust 回归。
 - 已迁移到 `src/模块/mod.rs` / `tests.rs` 及强制 v2 面片接口；新版正式矩形的五阶段真实 GPU 图形验收通过，读回图像已逐张检查。
 - 日期：2026-11-17。
+- 当前 `9` 交互见 [ADR 0028](0028-load-heat-and-local-force-inspection.md)，本记录仍定义内力、力矩和实际冲量的数据来源。
 - 2026-11-18 的可见 Chunk 筛选、单侧箭头与可见样本尺度已由 [ADR 0026](0026-visible-chunk-force-diagram.md) 扩展；下文五阶段结果保留为原显示范围的历史验证。
 - 扩展 [ADR 0010](0010-elastic-interface-stress-and-overload-fracture.md)、[ADR 0014](0014-inertial-cluster-impact-fracture.md)、[ADR 0016](0016-damaged-structure-solver-and-support-release.md) 和 [ADR 0017](0017-progressive-impact-unloading.md) 的诊断显示，不改变其物理与断裂规则。
 

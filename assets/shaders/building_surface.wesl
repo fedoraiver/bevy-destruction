@@ -1,6 +1,7 @@
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
+    mesh_functions::get_tag,
 };
 
 @if(PREPASS_PIPELINE)
@@ -89,6 +90,19 @@ fn unit(v: vec3<f32>) -> vec3<f32> {
     return v / max(length(v), 0.000000000001);
 }
 
+fn heat_color(color: vec3<f32>, tag: u32) -> vec3<f32> {
+    var tint: vec3<f32>;
+    if tag == u32(constants::HEAT_AMBER_TAG) {
+        tint = vec3<f32>(1.0, 0.36, 0.015);
+    } else if tag == u32(constants::HEAT_RED_TAG) {
+        tint = vec3<f32>(1.0, 0.025, 0.015);
+    } else {
+        return color;
+    }
+    let detail = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return mix(color, tint * detail * 1.5, 0.85);
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr = pbr_input_from_standard_material(in, is_front);
@@ -143,6 +157,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         pbr.N = normalize(pbr.N - world_gradient);
     }
 
+    pbr.material.base_color = vec4<f32>(
+        heat_color(pbr.material.base_color.rgb, get_tag(in.instance_index)),
+        pbr.material.base_color.a,
+    );
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
     var out: FragmentOutput;
     @if(PREPASS_PIPELINE) {

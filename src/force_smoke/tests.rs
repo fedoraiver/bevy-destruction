@@ -179,23 +179,100 @@ fn visibility_readback_requires_all_five_actually_visible_source_ids() {
 }
 
 #[test]
-fn hidden_rear_pixel_gate_excludes_only_foreground_com_and_detects_leaked_arrows() {
-    let baseline = Capture {
-        width: 1280,
-        height: 720,
-        pixels: [112, 115, 119, 255].repeat(1280 * 720),
-    };
-    let mut leaked = Capture {
-        width: 1280,
-        height: 720,
-        pixels: baseline.pixels.clone(),
-    };
-    let scale = 720.0 / (2.0 * std::f32::consts::FRAC_PI_6.tan() * FIXTURE_DISTANCE);
-    let center = (640.0 + TARGETS[1].1 * scale) as usize;
-    paint(&mut leaked, center, 360, [250, 250, 250, 255]);
-    assert_eq!(fixture_changed_pixels(&baseline, &leaked, 1, true), 0);
-    for x in center + 12..center + 22 {
-        paint(&mut leaked, x, 360, [250, 250, 250, 255]);
+fn source_id_masks_separate_instances_that_share_the_same_mesh_and_color() {
+    let mut capture = readback_fixture();
+    let [r, g, b] = TARGET_COLORS[4];
+    paint(&mut capture, 40, 30, [r, g, b, 255]);
+    paint(&mut capture, 40, 70, [r, g, b, 255]);
+    assert_eq!(id_indices(&capture, 4, true), vec![(30 * 120 + 40) * 4]);
+    assert_eq!(id_indices(&capture, 4, false), vec![(70 * 120 + 40) * 4]);
+}
+
+#[test]
+fn heat_pixel_gate_distinguishes_warm_red_neutral_and_exact_restoration() {
+    let mut neutral = readback_fixture();
+    for x in 30..33 {
+        paint(&mut neutral, x, 60, [130, 130, 130, 255]);
     }
-    assert_eq!(fixture_changed_pixels(&baseline, &leaked, 1, true), 10);
+    let indices = (30..33).map(|x| (60 * 120 + x) * 4).collect::<Vec<_>>();
+    assert_eq!(heat_hues(&neutral, &indices), (0, 0));
+    assert_eq!(changed_indices(&neutral, &neutral, &indices), 0);
+    let mut heat = readback_fixture();
+    paint(&mut heat, 30, 60, [210, 130, 20, 255]);
+    paint(&mut heat, 31, 60, [210, 20, 20, 255]);
+    paint(&mut heat, 32, 60, [130, 130, 130, 255]);
+    assert_eq!(heat_hues(&heat, &indices), (1, 1));
+    assert_eq!(changed_indices(&neutral, &heat, &indices), 2);
+}
+
+#[test]
+fn building_readback_rejects_background_ground_and_depth_stripes_inside_source_masks() {
+    let mut reference = readback_fixture();
+    for (row, target) in [(30, 0), (32, 1), (70, 0), (72, 1)] {
+        for x in 30..50 {
+            let [r, g, b] = TARGET_COLORS[target];
+            paint(&mut reference, x, row, [r, g, b, 255]);
+        }
+    }
+    let mut state = ForceSmokeState {
+        phase: 6,
+        ..default()
+    };
+    state.captures.insert(5, reference);
+    let mut depth_only = readback_fixture();
+    // A bright ground outside the known source silhouette cannot stand in for
+    // the forward material; this reproduces the first GPU warmup failure.
+    for y in 78..85 {
+        for x in 0..120 {
+            paint(&mut depth_only, x, y, [112, 115, 119, 255]);
+        }
+    }
+    assert!(!accept_readback(
+        &mut state,
+        6,
+        Capture {
+            width: 120,
+            height: 100,
+            pixels: depth_only.pixels.clone()
+        }
+    ));
+    for row in [30, 32, 70, 72] {
+        for x in (30..50).step_by(5) {
+            paint(&mut depth_only, x, row, [155, 160, 162, 255]);
+        }
+    }
+    assert!(!accept_readback(
+        &mut state,
+        6,
+        Capture {
+            width: 120,
+            height: 100,
+            pixels: depth_only.pixels.clone()
+        }
+    ));
+    assert_eq!(state.phase, 6);
+    for row in [30, 32, 70, 72] {
+        for x in 30..50 {
+            paint(&mut depth_only, x, row, [155, 160, 162, 255]);
+        }
+    }
+    assert!(accept_readback(&mut state, 6, depth_only));
+    assert_eq!(state.phase, 7);
+    assert_eq!(state.rejected_readbacks[6], 2);
+}
+
+#[test]
+fn alt_readback_requires_a_warm_visible_surface_in_addition_to_the_arrow() {
+    let reference = readback_fixture();
+    let mut capture = readback_fixture();
+    for x in 30..40 {
+        paint(&mut capture, x, 65, [61, 230, 255, 255]);
+    }
+    assert!(building_readback_pixels(&reference, &capture, 8).is_none());
+    for y in 40..60 {
+        for x in 50..70 {
+            paint(&mut capture, x, y, [210, 130, 20, 255]);
+        }
+    }
+    assert!(building_readback_pixels(&reference, &capture, 8).is_some());
 }

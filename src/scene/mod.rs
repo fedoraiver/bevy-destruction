@@ -9,7 +9,7 @@ use bevy::{
     camera::visibility::NoFrustumCulling,
     core_pipeline::prepass::DepthPrepass,
     gltf::*,
-    mesh::PrimitiveTopology,
+    mesh::{MeshTag, PrimitiveTopology},
     prelude::*,
     render::storage::ShaderBuffer,
 };
@@ -567,7 +567,7 @@ pub(crate) fn instantiate_pending(
                 let primitive_name = format!("{} primitive {i}", record.id);
                 let primitive_entity = commands.spawn_scene(bsn! {
                     Name::new(primitive_name) Mesh3d(mesh) MeshMaterial3d::<BuildingMaterial>(material) Transform::IDENTITY
-                }).insert(ChildOf(entity)).id();
+                }).insert((ChildOf(entity), MeshTag::new(0))).id();
                 primitives.push(primitive_entity);
             }
             instance.chunks.insert(
@@ -622,7 +622,7 @@ fn update_hint(
         format!("Building error: {error}")
     } else if instance.bounds.is_some() {
         format!(
-            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | 9: forces | Esc: exit     {}/{} chunks",
+            "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | 9: heat | Esc: exit     {}/{} chunks",
             instance.chunks.values().filter(|chunk| chunk.alive).count(),
             instance.chunks.len()
         )
