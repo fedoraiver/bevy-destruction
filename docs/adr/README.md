@@ -1,47 +1,38 @@
 # 架构决策记录
 
-本目录保存 Bevy 建筑实时物理破坏插件的设计决策、重要设定及验证边界。
+这里记录现行设计、取舍和验证范围。运行方法和最近一次验证见[项目 README](../../README.md)。
 
-## 状态说明
+**当前限制。** 正式板式高楼上部落地后破坏偏轻，严格落地回归仍失败。独立接触事件的首次绑定已通过聚焦回归。两项验证的区别和诊断见 [ADR 0003](0003-collision-driven-fracture.md)。
 
-- **提议（待原型验证）**：当前设计方向，尚未视为最终选型或完成实现。
-- **部分已采用**：仅记录中明确指出的条目已作出决定，其余条目仍为提议；实现和验证进度需分别说明。
-- **已采用**：已作出的设计决策；实现和验证进度仍需单独说明。
-- **已被取代**：保留历史，并链接替代它的新记录。
+## 结构与物理
 
-截至 2026-11-17，六个场景的自然不规则分块、复合凸代理与 v2 多面片接触已导出，正式资产和图形验收进度见 ADR 0020、0023。Rust 模块及测试已统一为目录布局，旧资产兼容已移除。运行时包含六自由度准静态承载、渐进断裂、有限质量刚性撞击物、惯性平衡的动态簇撞击分析，以及连接内力/真实接触冲量视图。材质随碎块运动，性能测量的条件与历史边界见 ADR 0013 至 0019。建筑仍按刚体簇运动；用户明确不需要显示弹性或弯曲变形，完整瞬态应力波不属于当前实现。
+| ADR | 决策 |
+| --- | --- |
+| [0001](0001-rigid-cluster-runtime.md) | 预破碎结构与刚体簇运行时 |
+| [0002](0002-elastic-structure-and-overload.md) | 六自由度结构承载与过载断裂 |
+| [0003](0003-collision-driven-fracture.md) | 碰撞驱动的断裂与事件卸载 |
 
-## 索引
+## 资产制作
 
-| 编号 | 主题 | 状态 |
-| --- | --- | --- |
-| [0001](0001-prefractured-graph-and-clusters.md) | 预破碎资产、结构连接图与刚体簇 | 部分已采用（刚性图、锚点与动态簇已实现） |
-| [0002](0002-avian-backend-and-fixed-step.md) | Avian 物理后端与固定步进 | 部分已采用（固定步与动态簇接入已实现） |
-| [0003](0003-structural-loads-and-progressive-fracture.md) | 结构承载、连接损伤与渐进断裂 | 部分已采用（六自由度界面、自重与过载已实现，详见 0010） |
-| [0004](0004-authoring-performance-and-delivery.md) | 资产制作、性能边界与分阶段交付 | 提议（待原型验证） |
-| [0005](0005-blender-procedural-building-pipeline.md) | Blender 建筑轮廓生成、预破碎与碰撞资产流程 | 部分已采用（Blender 已确定，流程提议待验证） |
-| [0006](0006-blender-authoring-tool-and-asset-format.md) | Blender 资产工具实现与导出格式 | 已采用（已实现，验证范围见记录） |
-| [0007](0007-bevy-bsn-fracture-interaction-demo.md) | BSN 建筑导入、网格材质与点击破坏演示 | 已采用（已实现，验证范围见记录） |
-| [0008](0008-destruction-vfx-and-exposed-edge-detail.md) | 破坏 VFX 的冲击感与暴露破口边缘细节 | 部分已采用（分层 VFX 与暴露边带已实现，验证范围见记录） |
-| [0009](0009-support-release-and-dynamic-clusters.md) | 失支撑释放、动态刚体簇与运动继承 | 已采用（已实现，验证范围见记录） |
-| [0010](0010-elastic-interface-stress-and-overload-fracture.md) | 六自由度界面应力、自重承载与过载断裂 | 已采用（已实现，验证范围见记录） |
-| [0011](0011-building-catalog-and-rigid-impact-scenarios.md) | 高层建筑、桥梁资产与刚性撞击场景 | 已采用（已实现，验证范围见记录） |
-| [0012](0012-resolvable-contact-sections.md) | 可分辨接触截面与资产重烘焙 | 已采用（已实现，验证范围见记录） |
-| [0013](0013-object-attached-procedural-surfaces.md) | 随碎块运动的程序化网格与断面材质 | 已采用（已实现并完成图像对照） |
-| [0014](0014-inertial-cluster-impact-fracture.md) | 惯性平衡的动态簇撞击与内部断裂 | 已采用（已实现，验证范围见记录） |
-| [0015](0015-structural-and-collision-runtime-performance.md) | 结构缓存、求解与碎片碰撞性能 | 已采用（已实现，测量范围见记录） |
-| [0016](0016-damaged-structure-solver-and-support-release.md) | 受损结构稳健求解与窄支撑释放 | 已采用（已实现，验证范围见记录） |
-| [0017](0017-progressive-impact-unloading.md) | 逐连接撞击断裂与分离卸载 | 已采用（已实现，验证范围见记录） |
-| [0018](0018-natural-irregular-prefracture.md) | 自然不规则预破碎与碎块尺度 | 历史调研与原型，正式实现见 0020 |
-| [0019](0019-performance-hot-paths.md) | 求解热点、撞击输入复用与烟尘渲染性能 | 已采用，验证与测量范围见记录 |
-| [0020](0020-production-irregular-fracture.md) | 正式不规则分块与多面片承载接口 | 已实现，63 项制作测试及六目录核心检查通过；落地限制见 0024 |
-| [0021](0021-structural-force-visualization.md) | 连接内力与真实接触冲量视图 | 已实现，最终矩形五阶段图形验收通过 |
-| [0022](0022-rust-module-layout.md) | Rust 模块目录、集中测试与 v2-only 资产 | 已采用并实现，验证范围见记录 |
-| [0023](0023-source-mesh-and-contact-surface-overlays.md) | 保留源网格与真实接触面的断面显示 | 已实现，六目录覆盖及最终矩形点击/受力/倾倒检查通过 |
-| [0024](0024-fresh-impact-event-rebinding.md) | 独立接触事件绑定与落地时序诊断 | 新事件绑定已实现；大块落地耦合未解决，失败实验未采用 |
-| [0025](0025-single-owner-fracture-surface-shading.md) | 消除 grid/断面闪烁的单次片元着色 | 已实现，8 组/40 张真实 GPU 对照及材质运动回归通过 |
-| [0026](0026-visible-chunk-force-diagram.md) | 仅显示可见碎块的受力图与图例 | 历史方案，显示方式由 0028 替代 |
-| [0027](0027-thin-convex-collider-construction.md) | 细长凸碰撞代理的构造 | 已实现，六个正式场景的碰撞体构造回归通过 |
-| [0028](0028-load-heat-and-local-force-inspection.md) | 受力热力与 Alt 局部详查 | 已实现，11 阶段热力图形和原断面回归通过 |
+| ADR | 决策 |
+| --- | --- |
+| [0004](0004-blender-asset-pipeline.md) | Blender 制作与自然不规则预破碎 |
+| [0005](0005-v2-asset-contract.md) | v2 破坏资产与规范接触面 |
 
-后续设计记录按编号追加；相关决策改变时同步维护本索引和原记录。
+## 交互、渲染与诊断
+
+| ADR | 决策 |
+| --- | --- |
+| [0006](0006-demo-scenes-and-controls.md) | 演示场景与交互 |
+| [0007](0007-fracture-surface-rendering.md) | 源网格、随物体移动的材质与断面着色 |
+| [0008](0008-destruction-effects-and-rims.md) | 分层破坏特效、共享烟尘与暴露边带 |
+| [0009](0009-structural-diagnostics.md) | 受力样本、热力总览与局部详查 |
+
+## 性能与工程布局
+
+| ADR | 决策 |
+| --- | --- |
+| [0010](0010-runtime-performance.md) | 结构求解与碰撞性能 |
+| [0011](0011-rust-project-layout.md) | Rust 模块与测试布局 |
+
+新增决策从 0012 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

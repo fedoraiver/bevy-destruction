@@ -24,4 +24,4 @@
   --python tools/blender/prototypes/test_curved_partition.py
 ```
 
-当前只是二维薄墙沿厚度挤出的验证，未覆盖一般三维建筑。精细曲面需要较多凸代理，现有单平面 Bond 及接触重建也不能直接表达曲面；因此没有改写 `assets/buildings`，不把输出伪装成正式资产。方案、已完成验证和后续兼容要求见 [ADR 0018](../../../docs/adr/0018-natural-irregular-prefracture.md)。
+隔离原型覆盖二维薄墙沿厚度挤出的分块，输出保存在独立目录。正式资产使用共享分区和 v2 多面片接口，见 [ADR 0004](../../../docs/adr/0004-blender-asset-pipeline.md)和 [ADR 0005](../../../docs/adr/0005-v2-asset-contract.md)。
