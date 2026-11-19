@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="466" viewBox="0 0 1200 466" role="img" aria-labelledby="title desc" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <title id="title">固定步中的断裂与刚体更新</title>
+  <desc id="desc">固定步依次处理锚定承载、刚体簇重建、Avian 接触、新冲量采样和撞击断裂。撞击断键标记在下一固定步参与承载与簇重建。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 1 1 L 9 5 L 1 9 Z" fill="#657991" />
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="1198" height="464" rx="24" fill="#f8fafc" stroke="#cbd5e1" />
+  <text x="55" y="57" fill="#172435" font-size="34" font-weight="700" text-anchor="start">固定步中的断裂与刚体更新</text>
+  <text x="55" y="92" fill="#4d6074" font-size="21" font-weight="400" text-anchor="start">60 Hz  ·  FixedPostUpdate</text>
+  <path d="M 377 176 H 436" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)" />
+  <path d="M 764 176 H 823" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)" />
+  <path d="M 985 226 V 284" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)" />
+  <path d="M 823 334 H 764" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)" />
+  <path d="M 436 334 H 377" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)" />
+  <path d="M 52 334 H 24 V 176 H 52" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 7" marker-end="url(#arrow)" />
+  <rect x="54" y="124" width="322" height="102" rx="15" fill="#e7f5f1" stroke="#cbd5e1" />
+  <text x="72" y="158" fill="#096b65" font-size="24" font-weight="700" text-anchor="start">锚定结构承载</text>
+  <text x="72" y="188" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">计算自重与外载</text>
+  <text x="72" y="212" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">过载达到门槛时断键</text>
+  <rect x="438" y="124" width="324" height="102" rx="15" fill="#e7f5f1" stroke="#cbd5e1" />
+  <text x="456" y="158" fill="#096b65" font-size="24" font-weight="700" text-anchor="start">重建刚体簇</text>
+  <text x="456" y="188" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">按有效 Bond 的连通分量分组</text>
+  <text x="456" y="212" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">失去最后的锚点后转为动态</text>
+  <rect x="824" y="124" width="322" height="102" rx="15" fill="#ebf2fe" stroke="#cbd5e1" />
+  <text x="842" y="158" fill="#2457a6" font-size="24" font-weight="700" text-anchor="start">Avian 刚体接触</text>
+  <text x="842" y="188" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">求解接触并施加冲量</text>
+  <text x="842" y="212" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">更新整簇的真实运动</text>
+  <rect x="824" y="284" width="322" height="102" rx="15" fill="#ebf2fe" stroke="#cbd5e1" />
+  <text x="842" y="318" fill="#2457a6" font-size="24" font-weight="700" text-anchor="start">读取新接触冲量</text>
+  <text x="842" y="348" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">提取真实法向接触 J</text>
+  <text x="842" y="372" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">检查撞击事件资格</text>
+  <rect x="438" y="284" width="324" height="102" rx="15" fill="#fff3e5" stroke="#cbd5e1" />
+  <text x="456" y="318" fill="#9a5416" font-size="24" font-weight="700" text-anchor="start">判定撞击断裂</text>
+  <text x="456" y="348" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">局部冲量判据</text>
+  <text x="456" y="372" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">或动态簇惯性平衡求内力</text>
+  <rect x="54" y="284" width="322" height="102" rx="15" fill="#fff3e5" stroke="#cbd5e1" />
+  <text x="72" y="318" fill="#9a5416" font-size="24" font-weight="700" text-anchor="start">断开连接并标记拓扑</text>
+  <text x="72" y="348" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">更新失效 Bond</text>
+  <text x="72" y="372" fill="#4d6074" font-size="20" font-weight="400" text-anchor="start">等待下个固定步重新分组</text>
+  <path d="M 55 423 H 99" fill="none" stroke="#657991" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 7" />
+  <text x="111" y="430" fill="#4d6074" font-size="21" font-weight="400" text-anchor="start">返回下一固定步。惯性平衡载荷用于连接分析，真实冲量由 Avian 在接触阶段施加。</text>
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="478" viewBox="0 0 1200 478" role="img" aria-labelledby="title description">
+  <title id="title">受力样本与显示路径</title>
+  <desc id="description">静态和撞击等效连接内力通过当前结构校验后，用于热力总览和局部详查。真实法向冲量独立采样，只在局部面板显示选中碎块的最大有效值。</desc>
+
+  <rect width="1200" height="478" rx="22" fill="#f8fafc"/>
+
+  <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M318 171H365V267H318 M365 214H403" stroke="#096b65"/>
+    <path d="M710 214H772V171H828 M772 214V286H828" stroke="#2457a6"/>
+    <path d="M318 411H828" stroke="#9a5416"/>
+  </g>
+  <path d="M400 208L410 214L400 220Z" fill="#096b65"/>
+  <path d="M825 165L835 171L825 177Z M825 280L835 286L825 292Z" fill="#2457a6"/>
+  <path d="M825 405L835 411L825 417Z" fill="#9a5416"/>
+
+  <g fill="#fff" stroke="#cbd5e1" stroke-width="1.25">
+    <rect x="44" y="132" width="274" height="78" rx="12"/>
+    <rect x="44" y="228" width="274" height="78" rx="12"/>
+    <rect x="410" y="160" width="300" height="108" rx="12"/>
+    <rect x="44" y="372" width="274" height="78" rx="12"/>
+    <rect x="835" y="132" width="321" height="78" rx="12"/>
+    <rect x="835" y="240" width="321" height="210" rx="12"/>
+  </g>
+  <rect x="850" y="390" width="291" height="43" rx="7" fill="#fff4e6"/>
+
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif" fill="#172435" font-size="19">
+    <text x="44" y="55" font-size="32" font-weight="700">受力样本与显示路径</text>
+    <g font-size="17" font-weight="600" fill="#475569">
+      <text x="44" y="108">样本来源</text>
+      <text x="410" y="108">连接数据</text>
+      <text x="835" y="108">显示路径</text>
+    </g>
+
+    <g font-size="22" font-weight="700">
+      <text x="64" y="163" fill="#096b65">静态连接内力</text>
+      <text x="64" y="259" fill="#096b65">撞击等效内力</text>
+      <text x="430" y="192" fill="#096b65">当前结构校验</text>
+      <text x="64" y="403" fill="#9a5416">真实法向冲量</text>
+      <text x="855" y="163" fill="#2457a6">9 · 热力总览</text>
+      <text x="855" y="274" fill="#2457a6">Alt · 局部详查</text>
+    </g>
+
+    <text x="64" y="190">F、M、U · 自重与外载</text>
+    <text x="64" y="286">F、M、U · 最长 0.7 s</text>
+    <text x="430" y="222">校验连接状态与簇成员</text>
+    <text x="430" y="247">静态解须匹配当前输入</text>
+    <text x="64" y="430">J · N·s · 最长 1 s</text>
+    <text x="855" y="190">每块取相邻有效连接的最高 U</text>
+    <text x="855" y="306">准星拾取最近的可见源三角形</text>
+    <text x="855" y="334">按 U 取前三条，列出 F、M、U</text>
+    <text x="855" y="362">首条 F 非零时画单支方向箭头</text>
+    <text x="863" y="419" fill="#9a5416" font-weight="600">面板单列本块最大有效 J</text>
+  </g>
+</svg>
