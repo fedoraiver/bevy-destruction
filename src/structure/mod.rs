@@ -53,56 +53,6 @@ pub fn components(
     components
 }
 
-#[derive(Debug)]
-pub struct ClusterMass {
-    pub mass: f32,
-    pub center: Vec3,
-    pub inertia: Mat3,
-}
-
-pub fn cluster_mass(manifest: &Manifest, chunks: &[String]) -> ClusterMass {
-    let records: BTreeMap<_, _> = manifest
-        .chunks
-        .iter()
-        .map(|chunk| (chunk.id.as_str(), chunk))
-        .collect();
-    let chunks: BTreeSet<_> = chunks.iter().map(String::as_str).collect();
-    assert!(
-        !chunks.is_empty(),
-        "A cluster must contain at least one chunk"
-    );
-    let mass = chunks.iter().map(|id| records[id].mass).sum::<f32>();
-    let center = chunks
-        .iter()
-        .map(|id| {
-            let chunk = records[id];
-            chunk
-                .transform()
-                .transform_point(chunk.center_of_mass.into())
-                * chunk.mass
-        })
-        .sum::<Vec3>()
-        / mass;
-    let mut inertia = Mat3::ZERO;
-    for id in chunks {
-        let chunk = records[id];
-        let rotation = Mat3::from_quat(chunk.transform().rotation);
-        let local_inertia = Mat3::from_cols_array_2d(&chunk.inertia);
-        let offset = chunk
-            .transform()
-            .transform_point(chunk.center_of_mass.into())
-            - center;
-        let outer = Mat3::from_cols(offset * offset.x, offset * offset.y, offset * offset.z);
-        inertia += rotation * local_inertia * rotation.transpose()
-            + (Mat3::IDENTITY * offset.length_squared() - outer) * chunk.mass;
-    }
-    ClusterMass {
-        mass,
-        center,
-        inertia,
-    }
-}
-
 pub fn inherited_velocity(
     linear: Vec3,
     angular: Vec3,

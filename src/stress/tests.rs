@@ -1,6 +1,58 @@
 use super::*;
 use crate::asset::{AnchorRecord, BondPatchRecord, BondRecord};
 
+fn fixture_loads(
+    manifest: &Manifest,
+    gravity: Vec3,
+    applied: &BTreeMap<String, NodeLoad>,
+) -> BTreeMap<String, NodeLoad> {
+    manifest
+        .chunks
+        .iter()
+        .map(|record| {
+            let mut load = applied.get(&record.id).copied().unwrap_or_default();
+            load.force = add3(
+                load.force,
+                scale3(gravity.as_dvec3().to_array(), f64::from(record.mass)),
+            );
+            (record.id.clone(), load)
+        })
+        .collect()
+}
+
+fn solve(
+    manifest: &Manifest,
+    chunks: &[String],
+    active_bonds: &BTreeMap<String, bool>,
+    gravity: Vec3,
+    applied: &BTreeMap<String, NodeLoad>,
+    settings: &SolverSettings,
+) -> Result<StressSolution, SolveError> {
+    super::solve(
+        manifest,
+        chunks,
+        active_bonds,
+        &fixture_loads(manifest, gravity, applied),
+        settings,
+    )
+}
+
+fn assemble(
+    manifest: &Manifest,
+    chunks: &[String],
+    active_bonds: &BTreeMap<String, bool>,
+    gravity: Vec3,
+    applied: &BTreeMap<String, NodeLoad>,
+) -> Result<Model, SolveError> {
+    assemble_with_gauge(
+        manifest,
+        chunks,
+        active_bonds,
+        &fixture_loads(manifest, gravity, applied),
+        None,
+    )
+}
+
 fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Manifest {
     let mut manifest = crate::stress_smoke::beam_manifest();
     let template = manifest.chunks[0].clone();
@@ -730,6 +782,8 @@ fn narrow_wall_jamb_transfers_the_upper_building_weight_and_moment() {
 
 #[test]
 fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
+    use crate::scene::{chunk_collider, chunk_mass_properties};
+
     for file in [
         "highrise_slab",
         "highrise_l",
@@ -744,13 +798,34 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
         );
         let contents = std::fs::read_to_string(path).unwrap();
         let manifest: Manifest = serde_json::from_str(&contents).unwrap();
+        let gravity = DVec3::NEG_Y * 9.81;
+        let loads = manifest
+            .chunks
+            .iter()
+            .map(|record| {
+                let collider =
+                    chunk_collider(record).unwrap_or_else(|error| panic!("{file}: {error}"));
+                let density = manifest.materials[&record.material].density;
+                let mass = chunk_mass_properties(&record.id, &collider, density)
+                    .unwrap_or_else(|error| panic!("{file}: {error}"));
+                let center = record
+                    .transform()
+                    .transform_point(mass.center_of_mass)
+                    .as_dvec3();
+                let load = NodeLoad {
+                    force: (gravity * f64::from(mass.mass)).to_array(),
+                    ..Default::default()
+                }
+                .at_reference(center - node_center(record));
+                (record.id.clone(), load)
+            })
+            .collect::<BTreeMap<_, _>>();
         let start = std::time::Instant::now();
-        let result = solve(
+        let result = super::solve(
             &manifest,
             &ids(&manifest),
             &bonds(&manifest),
-            Vec3::new(0.0, -9.81, 0.0),
-            &BTreeMap::new(),
+            &loads,
             &SolverSettings::default(),
         )
         .unwrap_or_else(|error| panic!("{file}: {error}"));
@@ -766,14 +841,13 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
                 .fold(0.0_f64, f64::max),
             start.elapsed()
         );
-        let total_mass: f64 = manifest.chunks.iter().map(|chunk| chunk.mass as f64).sum();
         close(
             result
                 .reactions
                 .values()
                 .map(|reaction| reaction.force[1])
                 .sum(),
-            total_mass * 9.81,
+            -loads.values().map(|load| load.force[1]).sum::<f64>(),
             1e-6,
         );
         assert!(

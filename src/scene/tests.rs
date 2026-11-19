@@ -10,6 +10,9 @@ fn catalog_convex_proxies_build_runtime_colliders() {
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
         for record in &manifest.chunks {
             let collider = chunk_collider(record).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let density = manifest.materials[&record.material].density;
+            chunk_mass_properties(&record.id, &collider, density)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
             let shapes = collider.shape().as_compound().unwrap().shapes();
             assert_eq!(
                 shapes.len(),
@@ -29,6 +32,13 @@ fn catalog_convex_proxies_build_runtime_colliders() {
             }
         }
     }
+}
+
+#[test]
+fn invalid_mass_properties_identify_the_chunk() {
+    let collider = Collider::cuboid(1.0, 1.0, 1.0);
+    let error = chunk_mass_properties("wall-brick-6", &collider, 0.0).unwrap_err();
+    assert!(error.contains("wall-brick-6"));
 }
 
 fn mask_record() -> ChunkRecord {
@@ -204,6 +214,7 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
                 alive: true,
                 triangles: Vec::new(),
                 transform: Transform::IDENTITY,
+                mass_properties: MassProperties3d::ZERO,
                 material: "concrete".into(),
                 detail: None,
                 cluster: None,

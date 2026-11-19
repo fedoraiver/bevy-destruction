@@ -65,7 +65,10 @@ pub(crate) struct CollapseSelection {
     pub upper_floor_y: f32,
 }
 
-pub(crate) fn select_collapse_support(manifest: &Manifest) -> Result<CollapseSelection, String> {
+pub(crate) fn select_collapse_support(
+    manifest: &Manifest,
+    mass: impl Fn(&str) -> f32,
+) -> Result<CollapseSelection, String> {
     let records = manifest
         .chunks
         .iter()
@@ -194,7 +197,7 @@ pub(crate) fn select_collapse_support(manifest: &Manifest) -> Result<CollapseSel
     let mut candidates = Vec::new();
     for start in starts {
         let mut remaining = supports.clone();
-        let mut costs = BTreeMap::from([(start, f64::from(records[start].mass))]);
+        let mut costs = BTreeMap::from([(start, f64::from(mass(start)))]);
         let mut previous = BTreeMap::new();
         while let Some(id) = remaining
             .iter()
@@ -226,7 +229,7 @@ pub(crate) fn select_collapse_support(manifest: &Manifest) -> Result<CollapseSel
                 break;
             }
             for &neighbor in adjacent[id].intersection(&remaining) {
-                let cost = costs[id] + f64::from(records[neighbor].mass);
+                let cost = costs[id] + f64::from(mass(neighbor));
                 if costs.get(neighbor).is_none_or(|old| cost < *old) {
                     costs.insert(neighbor, cost);
                     previous.insert(neighbor, id);
@@ -376,7 +379,7 @@ fn drive(
         &Rotation,
         &LinearVelocity,
         &AngularVelocity,
-        &Mass,
+        &ComputedMass,
     )>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut metrics: ResMut<RunMetrics>,
@@ -468,8 +471,8 @@ fn drive(
                 && rotation.0.is_finite()
                 && linear.0.is_finite()
                 && angular.0.is_finite()
-                && mass.0.is_finite();
-            total_mass += f64::from(mass.0);
+                && mass.value().is_finite();
+            total_mass += f64::from(mass.value());
             if cluster.anchored || *kind != RigidBody::Dynamic {
                 continue;
             }
@@ -559,7 +562,9 @@ fn drive(
             capture(&mut commands, &options, CAPTURES[0]);
         }
         20 => {
-            let selection = match select_collapse_support(&asset.manifest) {
+            let selection = match select_collapse_support(&asset.manifest, |id| {
+                instance.chunks[id].mass_properties.mass
+            }) {
                 Ok(selection) => selection,
                 Err(error) => {
                     state.errors.push(error);
@@ -581,14 +586,10 @@ fn drive(
                         >= selection.upper_floor_y
                 })
                 .map(|record| {
+                    let chunk = &instance.chunks[&record.id];
                     (
                         record.id.clone(),
-                        (
-                            record
-                                .transform()
-                                .transform_point(record.center_of_mass.into()),
-                            record.mass,
-                        ),
+                        (chunk.center_in_building(), chunk.mass_properties.mass),
                     )
                 })
                 .collect();
@@ -596,12 +597,11 @@ fn drive(
             state.removed = selection.removed;
             state.support_path = selection.support_path;
             state.static_stub = selection.static_stub;
-            state.expected_mass = asset
-                .manifest
+            state.expected_mass = instance
                 .chunks
                 .iter()
-                .filter(|record| !state.removed.contains(&record.id))
-                .map(|record| f64::from(record.mass))
+                .filter(|(id, chunk)| chunk.alive && !state.removed.contains(*id))
+                .map(|(_, chunk)| f64::from(chunk.mass_properties.mass))
                 .sum();
             for id in &state.removed {
                 let chunk = instance.chunks.get_mut(id).unwrap();

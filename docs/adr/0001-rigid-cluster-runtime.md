@@ -31,18 +31,7 @@
 
 ### 质量与运动继承
 
-簇沿用来源建筑坐标系的原点和方向。将每块质心 $c_i$ 和局部惯性方向 $R_i$ 换到簇坐标后，按存活 Chunk 汇总显式质量 $M$、独立质心 $c$ 和完整惯性 $I$：
-
-$$
-\begin{aligned}
-M &= \sum_i m_i \\
-c &= \frac{\sum_i m_i c_i}{M} \\
-r_i &= c_i - c \\
-I &= \sum_i \left[R_i I_i R_i^{\mathsf{T}} + m_i \left((r_i \cdot r_i) \mathbf{1} - r_i r_i^{\mathsf{T}}\right)\right]
-\end{aligned}
-$$
-
-簇刚体禁用 Avian 的自动质量属性，Collider 密度为零。拆簇读取父簇真实物理位姿及速度。子簇继承原世界位姿，动态显示再对物理变换插值。设 $c_{\mathrm{child,world}}$ 和 $c_{\mathrm{parent,world}}$ 为世界质心：
+簇沿用来源建筑坐标系的原点和方向。Avian 按各 Chunk 的材料密度与复合碰撞体计算质量、质心及惯性，并汇总同簇成员，见 [ADR 0012](0012-density-derived-mass-properties.md)。新簇完成换属后立即计算质量属性，拆簇读取父簇真实物理位姿、速度及 Avian 质心。子簇继承原世界位姿，动态显示再对物理变换插值。设 $c_{\mathrm{child,world}}$ 和 $c_{\mathrm{parent,world}}$ 为世界质心：
 
 $$
 \begin{aligned}
@@ -55,7 +44,7 @@ $$
 
 ## 备选方案与取舍
 
-全楼单刚体难以局部分离，逐块独立刚体和固定关节会提前增加接触与约束成本。Avian 的 ECS 接口允许复用刚体并保留 Chunk 级碰撞身份。对非凸碎块整体取凸包或简化细长子体会损失真实轮廓和净空。分轴构造增加失败时的计算，保留已烘焙的代理及质量数据。
+全楼单刚体难以局部分离，逐块独立刚体和固定关节会提前增加接触与约束成本。Avian 的 ECS 接口允许复用刚体并保留 Chunk 级碰撞身份。对非凸碎块整体取凸包或简化细长子体会损失真实轮廓和净空。分轴构造增加失败时的计算，保留已烘焙的代理几何。
 
 ## 验证要求与结果
 

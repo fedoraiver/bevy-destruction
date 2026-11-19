@@ -38,7 +38,7 @@ fn upper_static_support_contact_is_detected_when_the_lower_member_has_no_impulse
 }
 use crate::{
     physics::DestructionPhysicsPlugin,
-    scene::{BuildingBounds, ChunkIdentity, ChunkInstance},
+    scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider},
     stress_runtime::StressRuntimePlugin,
 };
 use bevy::time::TimeUpdateStrategy;
@@ -53,7 +53,18 @@ fn production_manifest() -> Manifest {
 #[test]
 fn production_support_selection_uses_geometry_and_is_independent_of_record_order() {
     let mut manifest = production_manifest();
-    let selected = select_collapse_support(&manifest).unwrap();
+    let masses = manifest
+        .chunks
+        .iter()
+        .map(|record| {
+            let collider = chunk_collider(record).unwrap();
+            (
+                record.id.clone(),
+                collider.mass(manifest.materials[&record.material].density),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let selected = select_collapse_support(&manifest, |id| masses[id]).unwrap();
     assert!(selected.support_path.len() >= 2 && !selected.removed.is_empty());
     for pair in selected.support_path.windows(2) {
         assert!(manifest.bonds.iter().any(|bond| {
@@ -64,7 +75,7 @@ fn production_support_selection_uses_geometry_and_is_independent_of_record_order
     manifest.chunks.reverse();
     manifest.bonds.reverse();
     manifest.anchors.reverse();
-    let repeated = select_collapse_support(&manifest).unwrap();
+    let repeated = select_collapse_support(&manifest, |id| masses[id]).unwrap();
     assert_eq!(selected.support_path, repeated.support_path);
     assert_eq!(selected.removed, repeated.removed);
 }
@@ -72,7 +83,6 @@ fn production_support_selection_uses_geometry_and_is_independent_of_record_order
 #[test]
 fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_stub() {
     let manifest = production_manifest();
-    let selected = select_collapse_support(&manifest).unwrap();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin, PhysicsPlugins::default()))
         .init_resource::<Assets<DestructibleAsset>>()
@@ -103,27 +113,14 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for record in &manifest.chunks {
         let local = record.transform();
-        let shapes = record
-            .colliders
-            .iter()
-            .map(|proxy| {
-                let points = proxy
-                    .vertices
-                    .iter()
-                    .copied()
-                    .map(Vec3::from_array)
-                    .collect::<Vec<_>>();
-                for &point in &points {
-                    min = min.min(local.transform_point(point));
-                    max = max.max(local.transform_point(point));
-                }
-                (
-                    Vec3::ZERO,
-                    Quat::IDENTITY,
-                    Collider::convex_hull(&points).unwrap(),
-                )
-            })
-            .collect();
+        for &point in record.colliders.iter().flat_map(|proxy| &proxy.vertices) {
+            let point = local.transform_point(Vec3::from_array(point));
+            min = min.min(point);
+            max = max.max(point);
+        }
+        let collider = chunk_collider(record).unwrap();
+        let density = manifest.materials[&record.material].density;
+        let mass_properties = collider.mass_properties(density);
         let entity = app
             .world_mut()
             .spawn((
@@ -134,8 +131,8 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                     building,
                     id: record.id.clone(),
                 },
-                Collider::compound(shapes),
-                ColliderDensity(0.0),
+                collider,
+                ColliderDensity(density),
             ))
             .id();
         instance.chunks.insert(
@@ -146,6 +143,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                 alive: true,
                 triangles: Vec::new(),
                 transform: local,
+                mass_properties,
                 material: record.material.clone(),
                 detail: None,
                 cluster: None,
@@ -159,6 +157,33 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         .map(|bond| (bond.id.clone(), true))
         .collect();
     instance.topology_dirty = true;
+    let selected =
+        select_collapse_support(&manifest, |id| instance.chunks[id].mass_properties.mass).unwrap();
+    let upper = manifest
+        .chunks
+        .iter()
+        .filter(|record| {
+            record
+                .transform()
+                .transform_point(record.center_of_mass.into())
+                .y
+                >= selected.upper_floor_y
+        })
+        .map(|record| {
+            let chunk = &instance.chunks[&record.id];
+            (
+                record.id.clone(),
+                (chunk.center_in_building(), chunk.mass_properties.mass),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let upper_mass = upper.values().map(|(_, mass)| mass).sum::<f32>();
+    let expected_mass = instance
+        .chunks
+        .iter()
+        .filter(|(id, _)| !selected.removed.contains(*id))
+        .map(|(_, chunk)| f64::from(chunk.mass_properties.mass))
+        .sum::<f64>();
     app.world_mut().entity_mut(building).insert(instance);
     for _ in 0..5 {
         app.update();
@@ -186,24 +211,6 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         }
         instance.topology_dirty = true;
     }
-    let upper = manifest
-        .chunks
-        .iter()
-        .filter_map(|record| {
-            let center = record
-                .transform()
-                .transform_point(record.center_of_mass.into());
-            (center.y >= selected.upper_floor_y)
-                .then_some((record.id.clone(), (center, record.mass)))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let upper_mass = upper.values().map(|(_, mass)| mass).sum::<f32>();
-    let expected_mass = manifest
-        .chunks
-        .iter()
-        .filter(|record| !selected.removed.contains(&record.id))
-        .map(|record| f64::from(record.mass))
-        .sum::<f64>();
     let (mut released_mass, mut drop, mut tilt, mut support_contact) =
         (0.0_f32, 0.0_f32, 0.0_f32, false);
     for _ in 0..270 {
@@ -239,7 +246,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                     .0
                     .is_finite()
             );
-            mass += f64::from(app.world().get::<Mass>(body).unwrap().0);
+            mass += f64::from(app.world().get::<ComputedMass>(body).unwrap().value());
             if app.world().get::<RigidBody>(body) != Some(&RigidBody::Dynamic) {
                 continue;
             }

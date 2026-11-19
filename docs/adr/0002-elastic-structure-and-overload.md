@@ -12,9 +12,9 @@
 
 ### 模型与边界条件
 
-每个 Chunk 的未知量为质心处的三维平移 $u$ 和小转角 $\theta$。固定 Anchor 锁定全部六个自由度。锚定分量以建筑坐标系中的真实自重 $mg$ 和外部质心力、力矩组装平衡方程 $Kq = f$，其中 $q$ 汇集所有待求平移和转动自由度。脱离地基的动态簇用 [ADR 0003](0003-collision-driven-fracture.md) 定义的接触载荷工况。求解位移用于恢复连接内力，显示及碰撞使用 [ADR 0001](0001-rigid-cluster-runtime.md) 的刚体簇。
+每个 Chunk 的未知量为资产定义的结构节点处的三维平移 $u$ 和小转角 $\theta$。固定 Anchor 锁定全部六个自由度。锚定分量在建筑坐标系中用自重 $mg$ 和外部载荷组装平衡方程 $Kq = f$，其中 $q$ 汇集待求平移和转动自由度。自重使用 Avian 质量及质心，将偏心力矩换算到结构节点，见 [ADR 0012](0012-density-derived-mass-properties.md)。脱离地基的动态簇用 [ADR 0003](0003-collision-driven-fracture.md) 定义的接触载荷工况。求解位移用于恢复连接内力，显示及碰撞使用 [ADR 0001](0001-rigid-cluster-runtime.md) 的刚体簇。
 
-设面片中心为 $p$，父连接中心为 $p_{\mathrm{bond}}$，端点质心为 $c_a, c_b$。共同界面点上的位移跳跃 $d$ 与相对转角 $\phi$ 为：
+设面片中心为 $p$，父连接中心为 $p_{\mathrm{bond}}$，两端结构节点为 $c_a, c_b$。共同界面点上的位移跳跃 $d$ 与相对转角 $\phi$ 为：
 
 $$
 \begin{aligned}

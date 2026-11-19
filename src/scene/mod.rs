@@ -74,9 +74,17 @@ pub struct ChunkInstance {
     pub alive: bool,
     pub triangles: Vec<[Vec3; 3]>,
     pub transform: Transform,
+    pub mass_properties: MassProperties3d,
     pub material: String,
     pub detail: Option<Entity>,
     pub cluster: Option<Entity>,
+}
+
+impl ChunkInstance {
+    pub fn center_in_building(&self) -> Vec3 {
+        self.transform
+            .transform_point(self.mass_properties.center_of_mass)
+    }
 }
 
 #[derive(Component)]
@@ -308,7 +316,7 @@ fn maintain_rim_warmup(
     }
 }
 
-fn chunk_collider(record: &ChunkRecord) -> Result<Collider, String> {
+pub(crate) fn chunk_collider(record: &ChunkRecord) -> Result<Collider, String> {
     let shapes = record
         .colliders
         .iter()
@@ -333,6 +341,25 @@ fn chunk_collider(record: &ChunkRecord) -> Result<Collider, String> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Collider::compound(shapes))
+}
+
+pub(crate) fn chunk_mass_properties(
+    id: &str,
+    collider: &Collider,
+    density: f32,
+) -> Result<MassProperties3d, String> {
+    let properties = collider.mass_properties(density);
+    let inertia = properties.principal_angular_inertia;
+    if !properties.mass.is_finite()
+        || properties.mass <= 0.0
+        || !properties.center_of_mass.is_finite()
+        || !properties.local_inertial_frame.is_finite()
+        || !inertia.is_finite()
+        || inertia.min_element() <= 0.0
+    {
+        return Err(format!("Invalid collider mass properties: {id}"));
+    }
+    Ok(properties)
 }
 
 fn conditioned_convex_collider(points: &[Vec3]) -> Option<Collider> {
@@ -453,13 +480,15 @@ pub(crate) fn instantiate_pending(
                     );
                 }
                 let collider = chunk_collider(record)?;
+                let density = asset.manifest.materials[&record.material].density;
+                let mass_properties = chunk_mass_properties(&record.id, &collider, density)?;
                 let edges = fracture_edges(
                     chunk
                         .primitives
                         .iter()
                         .map(|primitive| meshes.get(&primitive.mesh).unwrap()),
                 )?;
-                chunks.push((chunk, collider, edges));
+                chunks.push((chunk, collider, density, mass_properties, edges));
             }
             let patches = if let Some(patches) = cache.patches.get(&instance.asset.id()) {
                 patches.clone()
@@ -489,7 +518,7 @@ pub(crate) fn instantiate_pending(
             }
         };
         let mask_started = bevy::platform::time::Instant::now();
-        let sources = prepared.iter().flat_map(|(chunk, _, _)| {
+        let sources = prepared.iter().flat_map(|(chunk, ..)| {
             let record = &asset.manifest.chunks[chunk.record_index];
             chunk
                 .primitives
@@ -520,7 +549,7 @@ pub(crate) fn instantiate_pending(
         };
         stats.cache_build_ms += mask_started.elapsed().as_secs_f64() * 1000.0;
         let mut material_cache = BTreeMap::new();
-        for (chunk, collider, edges) in prepared {
+        for (chunk, collider, density, mass_properties, edges) in prepared {
             let record = &asset.manifest.chunks[chunk.record_index];
             if !options.no_detail {
                 rim_materials.get_or_create(&record.material, &mut materials);
@@ -533,9 +562,14 @@ pub(crate) fn instantiate_pending(
                 .collect();
             let chunk_name = record.id.clone();
             let entity = commands.spawn_scene(bsn! { Name::new(chunk_name) Transform { translation: {transform.translation}, rotation: {transform.rotation} } Visibility::Visible })
-                .insert((ChunkIdentity { building: root, id: record.id.clone() }, ChildOf(root), collider,
-                    ColliderDensity(0.0), Mass(record.mass), AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
-                    CenterOfMass(Vec3::from(record.center_of_mass)), NoAutoMass, NoAutoAngularInertia, NoAutoCenterOfMass, edges)).id();
+                .insert((
+                    ChunkIdentity { building: root, id: record.id.clone() },
+                    ChildOf(root),
+                    collider,
+                    ColliderDensity(density),
+                    edges,
+                ))
+                .id();
             let mut primitives = Vec::new();
             for (i, primitive) in chunk.primitives.iter().enumerate() {
                 let fracture = primitive.surface_role == crate::asset::SurfaceRole::Fracture;
@@ -578,6 +612,7 @@ pub(crate) fn instantiate_pending(
                     alive: true,
                     triangles,
                     transform,
+                    mass_properties,
                     material: record.material.clone(),
                     detail: None,
                     cluster: None,

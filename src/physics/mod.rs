@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::prelude::*;
-use bevy::prelude::*;
+use bevy::{ecs::system::InRef, prelude::*};
 
 use crate::{asset::DestructibleAsset, scene::BuildingInstance, structure};
 
@@ -77,6 +77,15 @@ pub(crate) fn global_transform(world: &World, entity: Entity) -> GlobalTransform
         })
 }
 
+fn update_new_cluster_mass(
+    InRef(bodies): InRef<[(Entity, Motion)]>,
+    mut mass_properties: MassPropertyHelper,
+) {
+    for &(body, _) in bodies {
+        mass_properties.update_mass_properties(body);
+    }
+}
+
 pub(crate) fn rebuild_clusters(world: &mut World) {
     let buildings = world
         .query::<(Entity, &BuildingInstance)>()
@@ -120,7 +129,8 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             .map(|&entity| {
                 let position = world.get::<Position>(entity).unwrap().0;
                 let rotation = world.get::<Rotation>(entity).unwrap().0;
-                let center = position + rotation * world.get::<CenterOfMass>(entity).unwrap().0;
+                let center =
+                    position + rotation * world.get::<ComputedCenterOfMass>(entity).unwrap().0;
                 (
                     entity,
                     Motion {
@@ -143,17 +153,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     .then_some(parent)
             })
             .collect::<BTreeSet<_>>();
-        let masses = components
-            .iter()
-            .map(|component| {
-                let parent = chunks[&component.chunks[0]].1;
-                if parent.is_some_and(|parent| retained.contains(&parent)) {
-                    None
-                } else {
-                    Some(structure::cluster_mass(manifest, &component.chunks))
-                }
-            })
-            .collect::<Vec<_>>();
         // Purge contacts with old body owners before rebinding colliders.
         for &(entity, parent, _) in chunks.values() {
             if !parent.is_some_and(|parent| retained.contains(&parent)) {
@@ -178,17 +177,16 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         world.flush();
 
         let mut next = Vec::new();
-        for (component, mass) in components.into_iter().zip(masses) {
+        let mut created = Vec::new();
+        for component in components {
             let parent = chunks[&component.chunks[0]].1;
             if let Some(parent) = parent.filter(|parent| retained.contains(parent)) {
                 next.push(parent);
                 continue;
             }
-            let mass = mass.unwrap();
             let motion = parent.map_or(initial, |parent| motions[&parent]);
             let pose = motion.transform();
             let global = GlobalTransform::from(pose);
-            let center = pose.transform_point(mass.center);
             let body = world
                 .spawn((
                     Name::new(if component.anchored {
@@ -207,20 +205,8 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     },
                     Position(motion.position),
                     Rotation(motion.rotation),
-                    Mass(mass.mass),
-                    CenterOfMass(mass.center),
-                    AngularInertia::from_mat3_unchecked(mass.inertia),
-                    NoAutoMass,
-                    NoAutoAngularInertia,
-                    NoAutoCenterOfMass,
                 ))
                 .insert((
-                    LinearVelocity(structure::inherited_velocity(
-                        motion.linear,
-                        motion.angular,
-                        motion.center,
-                        center,
-                    )),
                     AngularVelocity(motion.angular),
                     Friction::new(0.7),
                     Restitution::new(0.0),
@@ -249,6 +235,7 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     .cluster = Some(body);
             }
             next.push(body);
+            created.push((body, motion));
         }
         world.flush();
         for old in previous {
@@ -259,6 +246,23 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         for (id, &(entity, _, _)) in &chunks {
             if alive.contains(id) {
                 world.entity_mut(entity).remove::<ColliderDisabled>();
+            }
+        }
+        if !created.is_empty() {
+            world.flush();
+            world
+                .run_system_cached_with(update_new_cluster_mass, created.as_slice())
+                .expect("Update mass properties before inheriting cluster motion");
+            for (body, motion) in created {
+                let local_center = world.get::<ComputedCenterOfMass>(body).unwrap().0;
+                let center = motion.transform().transform_point(local_center);
+                let linear = structure::inherited_velocity(
+                    motion.linear,
+                    motion.angular,
+                    motion.center,
+                    center,
+                );
+                world.entity_mut(body).insert(LinearVelocity(linear));
             }
         }
         let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();

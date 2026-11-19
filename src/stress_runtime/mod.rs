@@ -9,8 +9,8 @@ use bevy::{math::DVec3, prelude::*};
 use crate::{
     asset::DestructibleAsset,
     physics,
-    scene::BuildingInstance,
-    stress::{self, BondStress, NodeLoad, SolverSettings},
+    scene::{BuildingInstance, ChunkInstance},
+    stress::{self, BondStress, NodeLoad, SolverSettings, node_center},
     structure,
 };
 
@@ -52,6 +52,7 @@ impl Default for StressSettings {
     }
 }
 
+/// Applied loads in building coordinates, with moments at the authored structural nodes.
 #[derive(Resource, Default)]
 pub struct StructuralLoads(pub BTreeMap<Entity, BTreeMap<String, NodeLoad>>);
 
@@ -124,6 +125,15 @@ impl StressState {
     }
 }
 
+fn hash_weight(chunk: &ChunkInstance, hash: &mut impl Hasher) {
+    chunk.mass_properties.mass.to_bits().hash(hash);
+    chunk
+        .center_in_building()
+        .to_array()
+        .map(f32::to_bits)
+        .hash(hash);
+}
+
 pub(crate) fn update_stress(world: &mut World) {
     if !world.resource::<StressSettings>().enabled {
         return;
@@ -190,6 +200,9 @@ pub(crate) fn update_stress(world: &mut World) {
             for (id, chunk) in &instance.chunks {
                 id.hash(&mut hash);
                 chunk.alive.hash(&mut hash);
+                if chunk.alive {
+                    hash_weight(chunk, &mut hash);
+                }
             }
             instance.bonds.hash(&mut hash);
             for value in local_gravity.to_array() {
@@ -224,6 +237,12 @@ pub(crate) fn update_stress(world: &mut World) {
                 .map(|(id, _)| id.clone())
                 .collect();
             let components = structure::components(&asset.manifest, &alive, &instance.bonds);
+            let records = asset
+                .manifest
+                .chunks
+                .iter()
+                .map(|record| (record.id.as_str(), record))
+                .collect::<BTreeMap<_, _>>();
             let mut previous_components = std::mem::take(&mut state.static_components);
             for component in components {
                 if !component.anchored {
@@ -251,6 +270,7 @@ pub(crate) fn update_stress(world: &mut World) {
                     }
                 }
                 for id in &component.chunks {
+                    hash_weight(&instance.chunks[id], &mut component_hash);
                     if let Some(load) = loads.get(id) {
                         id.hash(&mut component_hash);
                         for value in load.force.into_iter().chain(load.moment) {
@@ -272,43 +292,51 @@ pub(crate) fn update_stress(world: &mut World) {
                     continue;
                 }
                 state.numerical_solves += 1;
+                let applied_loads = component
+                    .chunks
+                    .iter()
+                    .filter_map(|id| {
+                        let record = records.get(id.as_str())?;
+                        let chunk = &instance.chunks[id];
+                        let center = chunk.center_in_building().as_dvec3();
+                        let weight =
+                            local_gravity.as_dvec3() * f64::from(chunk.mass_properties.mass);
+                        let weight_load = NodeLoad {
+                            force: weight.to_array(),
+                            ..default()
+                        }
+                        .at_reference(center - node_center(record));
+                        let external = loads.get(id).copied().unwrap_or_default();
+                        Some((
+                            id.clone(),
+                            NodeLoad {
+                                force: (weight + DVec3::from_array(external.force)).to_array(),
+                                moment: (DVec3::from_array(weight_load.moment)
+                                    + DVec3::from_array(external.moment))
+                                .to_array(),
+                            },
+                        ))
+                    })
+                    .collect::<BTreeMap<_, _>>();
                 match stress::solve(
                     &asset.manifest,
                     &component.chunks,
                     &instance.bonds,
-                    local_gravity,
-                    loads,
+                    &applied_loads,
                     &settings.solver,
                 ) {
                     Ok(solution) => {
-                        let mut force = [0.0_f64; 3];
-                        let mut moment = [0.0_f64; 3];
-                        for record in asset
-                            .manifest
-                            .chunks
-                            .iter()
-                            .filter(|record| component.chunks.contains(&record.id))
-                        {
-                            let center = record
-                                .transform()
-                                .transform_point(record.center_of_mass.into())
-                                .as_dvec3();
-                            let applied = loads.get(&record.id).copied().unwrap_or_default();
-                            let reaction = solution
-                                .reactions
-                                .get(&record.id)
-                                .copied()
-                                .unwrap_or_default();
-                            let net_force = local_gravity.as_dvec3() * f64::from(record.mass)
-                                + DVec3::from_array(applied.force)
+                        let mut force = DVec3::ZERO;
+                        let mut moment = DVec3::ZERO;
+                        for (id, applied) in &applied_loads {
+                            let center = node_center(records[id.as_str()]);
+                            let reaction = solution.reactions.get(id).copied().unwrap_or_default();
+                            let net_force = DVec3::from_array(applied.force)
                                 + DVec3::from_array(reaction.force);
-                            let net_moment = center.cross(net_force)
+                            force += net_force;
+                            moment += center.cross(net_force)
                                 + DVec3::from_array(applied.moment)
                                 + DVec3::from_array(reaction.moment);
-                            for axis in 0..3 {
-                                force[axis] += net_force[axis];
-                                moment[axis] += net_moment[axis];
-                            }
                         }
                         let max_displacement = solution
                             .displacements
@@ -321,8 +349,8 @@ pub(crate) fn update_stress(world: &mut World) {
                             iterations: solution.iterations,
                             relative_residual: solution.relative_residual,
                             error: None,
-                            force_balance_error: DVec3::from_array(force).length(),
-                            moment_balance_error: DVec3::from_array(moment).length(),
+                            force_balance_error: force.length(),
+                            moment_balance_error: moment.length(),
                             max_displacement,
                         };
                         let cached = StaticComponentCache {

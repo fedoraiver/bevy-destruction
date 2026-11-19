@@ -71,7 +71,7 @@ fn drive(
         &Rotation,
         &LinearVelocity,
         &AngularVelocity,
-        &Mass,
+        &ComputedMass,
     )>,
     impacts: Res<ImpactStats>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
@@ -134,7 +134,7 @@ fn drive(
                 && body.2.0.is_finite()
                 && body.3.0.is_finite()
                 && body.4.0.is_finite()
-                && body.5.0.is_finite()
+                && body.5.value().is_finite()
         });
         state.finite &= finite;
         if state.first_impact.is_none() && impacts.structural_solves > 0 {
@@ -169,12 +169,10 @@ fn drive(
                         .into(),
                 );
             }
-            state.initial_mass = asset
-                .manifest
-                .chunks
+            state.initial_mass = state
+                .upper
                 .iter()
-                .filter(|record| state.upper.contains(&record.id))
-                .map(|record| f64::from(record.mass))
+                .map(|id| f64::from(instance.chunks[id].mass_properties.mass))
                 .sum();
             state.initial_bonds = asset
                 .manifest
@@ -239,7 +237,7 @@ fn drive(
                             world_max = world_max.max(world);
                         }
                     }
-                    serde_json::json!({"chunks":body.0.chunks,"parts":parts,"mass_kg":body.5.0,
+                    serde_json::json!({"chunks":body.0.chunks,"parts":parts,"mass_kg":body.5.value(),
                     "source_min":source_min.to_array(),"source_max":source_max.to_array(),
                     "world_min":world_min.to_array(),"world_max":world_max.to_array()})
                 })
@@ -296,7 +294,7 @@ fn drive(
             }
             let mass = selected_bodies
                 .iter()
-                .map(|body| f64::from(body.5.0))
+                .map(|body| f64::from(body.5.value()))
                 .sum::<f64>();
             if (mass - state.initial_mass).abs() > state.initial_mass * 1e-5 {
                 state

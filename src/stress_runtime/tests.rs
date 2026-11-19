@@ -166,6 +166,39 @@ fn initial_overload_can_fracture_before_the_first_cluster_exists() {
 }
 
 #[test]
+fn self_weight_uses_collider_mass_and_shifts_moment_to_the_structural_node() {
+    let mut app = app(60.0);
+    app.insert_resource(Gravity(Vec3::NEG_Y * 10.0));
+    let root = spawn_beam(app.world_mut(), Vec3::ZERO);
+    remove_left_support(app.world_mut(), root);
+
+    let collider = Collider::compound(vec![(
+        Vec3::X * 0.25,
+        Quat::IDENTITY,
+        Collider::cuboid(3.0, 0.2, 0.1),
+    )]);
+    let density = 2400.0;
+    let properties = collider.mass_properties(density);
+    let entity = {
+        let mut instance = app.world_mut().get_mut::<BuildingInstance>(root).unwrap();
+        let chunk = instance.chunks.get_mut(BEAM).unwrap();
+        chunk.mass_properties = properties;
+        chunk.entity
+    };
+    app.world_mut()
+        .entity_mut(entity)
+        .insert((collider, ColliderDensity(density)));
+
+    update_stress(app.world_mut());
+    let stress = app.world().get::<StressState>(root).unwrap();
+    let bond = &stress.bonds[RIGHT_BOND].stress;
+    assert!((bond.force[1].abs() - 1440.0).abs() < 1e-3);
+    assert!((bond.moment[2].abs() - 1080.0).abs() < 1e-3);
+    assert!(stress.reports[0].force_balance_error < 1e-6);
+    assert!(stress.reports[0].moment_balance_error < 1e-6);
+}
+
+#[test]
 fn progressive_failure_uses_elapsed_fixed_time() {
     let at_30 = rupture_time(30.0);
     let at_120 = rupture_time(120.0);
@@ -301,19 +334,23 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
     record.node = "floating".into();
     record.position = [8.0, 6.0, 0.0];
     let transform = record.transform();
+    let collider = Collider::cuboid(3.0, 0.2, 0.2);
+    let density = app
+        .world()
+        .resource::<Assets<DestructibleAsset>>()
+        .get(&asset)
+        .unwrap()
+        .manifest
+        .materials[&record.material]
+        .density;
+    let mass_properties = collider.mass_properties(density);
     let entity = app
         .world_mut()
         .spawn((
             transform,
             ChildOf(root),
-            Collider::cuboid(3.0, 0.2, 0.2),
-            ColliderDensity(0.0),
-            Mass(record.mass),
-            CenterOfMass(Vec3::ZERO),
-            AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
-            NoAutoMass,
-            NoAutoAngularInertia,
-            NoAutoCenterOfMass,
+            collider,
+            ColliderDensity(density),
             ChunkIdentity {
                 building: root,
                 id: "floating".into(),
@@ -339,6 +376,7 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
                 alive: true,
                 triangles: Vec::new(),
                 transform,
+                mass_properties,
                 material: "concrete".into(),
                 detail: None,
                 cluster: None,
@@ -490,7 +528,7 @@ mod collapse {
     use super::*;
     use crate::{
         asset::{ChunkRecord, Manifest},
-        scene::{BuildingBounds, ChunkIdentity, ChunkInstance},
+        scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider},
     };
     use avian3d::collision::contact_types::ContactGraph;
     use bevy::time::TimeUpdateStrategy;
@@ -538,6 +576,9 @@ mod collapse {
         for record in &manifest.chunks {
             let alive = !record.part_id.contains("-l00") || keep_support(record);
             let local = record.transform();
+            let collider = chunk_collider(record).unwrap();
+            let density = manifest.materials[&record.material].density;
+            let mass_properties = collider.mass_properties(density);
             let entity = app
                 .world_mut()
                 .spawn((
@@ -551,26 +592,9 @@ mod collapse {
                 ))
                 .id();
             if alive {
-                let shapes = record
-                    .colliders
-                    .iter()
-                    .map(|proxy| {
-                        let points = proxy
-                            .vertices
-                            .iter()
-                            .copied()
-                            .map(Vec3::from_array)
-                            .collect::<Vec<_>>();
-                        (
-                            Vec3::ZERO,
-                            Quat::IDENTITY,
-                            Collider::convex_hull(&points).unwrap(),
-                        )
-                    })
-                    .collect();
                 app.world_mut()
                     .entity_mut(entity)
-                    .insert((Collider::compound(shapes), ColliderDensity(0.0)));
+                    .insert((collider, ColliderDensity(density)));
             }
             instance.chunks.insert(
                 record.id.clone(),
@@ -580,6 +604,7 @@ mod collapse {
                     alive,
                     triangles: Vec::new(),
                     transform: local,
+                    mass_properties,
                     material: record.material.clone(),
                     detail: None,
                     cluster: None,
@@ -610,29 +635,19 @@ mod collapse {
         frames: usize,
         static_stub: Option<&str>,
     ) -> BulkMotion {
-        let manifest = app
-            .world()
-            .resource::<Assets<DestructibleAsset>>()
-            .get(&app.world().get::<BuildingInstance>(root).unwrap().asset)
-            .unwrap()
-            .manifest
-            .clone();
-        let expected_mass = manifest
+        let instance = app.world().get::<BuildingInstance>(root).unwrap();
+        let expected_mass = instance
             .chunks
-            .iter()
-            .filter(|record| {
-                app.world().get::<BuildingInstance>(root).unwrap().chunks[&record.id].alive
-            })
-            .map(|record| f64::from(record.mass))
+            .values()
+            .filter(|chunk| chunk.alive)
+            .map(|chunk| f64::from(chunk.mass_properties.mass))
             .sum::<f64>();
-        let upper = manifest
+        let upper = instance
             .chunks
             .iter()
-            .filter_map(|record| {
-                let center = record
-                    .transform()
-                    .transform_point(record.center_of_mass.into());
-                (center.y >= 3.0).then_some((record.id.clone(), (center, record.mass)))
+            .filter_map(|(id, chunk)| {
+                let center = chunk.center_in_building();
+                (center.y >= 3.0).then_some((id.clone(), (center, chunk.mass_properties.mass)))
             })
             .collect::<BTreeMap<_, _>>();
         let mut motion = BulkMotion::default();
@@ -666,7 +681,7 @@ mod collapse {
                         .0
                         .is_finite()
                 );
-                total_mass += f64::from(app.world().get::<Mass>(body).unwrap().0);
+                total_mass += f64::from(app.world().get::<ComputedMass>(body).unwrap().value());
                 let chunks = &app.world().get::<physics::Cluster>(body).unwrap().chunks;
                 let tracked = chunks
                     .iter()

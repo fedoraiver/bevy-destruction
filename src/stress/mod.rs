@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use bevy::prelude::Vec3;
+use bevy::{math::DVec3, prelude::Vec3};
 
-use crate::asset::{Manifest, PhysicalMaterial};
+use crate::asset::{ChunkRecord, Manifest, PhysicalMaterial};
 
 #[cfg(test)]
 mod tests;
@@ -33,6 +33,24 @@ pub struct NodeLoad {
     pub moment: V3,
 }
 
+impl NodeLoad {
+    /// Shifts the moment using the vector from the new reference to the old one.
+    pub(crate) fn at_reference(self, offset: DVec3) -> Self {
+        Self {
+            moment: (DVec3::from_array(self.moment) + offset.cross(DVec3::from_array(self.force)))
+                .to_array(),
+            ..self
+        }
+    }
+}
+
+pub(crate) fn node_center(record: &ChunkRecord) -> DVec3 {
+    record
+        .transform()
+        .transform_point(Vec3::from(record.center_of_mass))
+        .as_dvec3()
+}
+
 #[derive(Debug, Clone)]
 pub struct BondStress {
     /// Force and couple acting on endpoint a at the interface center.
@@ -48,7 +66,7 @@ pub struct BondStress {
 #[derive(Debug, Clone)]
 pub struct StressSolution {
     pub bonds: BTreeMap<String, BondStress>,
-    /// Support actions at anchored chunk centers of mass.
+    /// Support actions at the authored structural nodes.
     pub reactions: BTreeMap<String, NodeLoad>,
     pub displacements: BTreeMap<String, V6>,
     pub iterations: usize,
@@ -116,16 +134,14 @@ struct StiffnessBlock {
     values: M6,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn solve(
     manifest: &Manifest,
     chunks: &[String],
     active_bonds: &BTreeMap<String, bool>,
-    gravity: Vec3,
-    external_loads: &BTreeMap<String, NodeLoad>,
+    loads: &BTreeMap<String, NodeLoad>,
     settings: &SolverSettings,
 ) -> Result<StressSolution, SolveError> {
-    let model = assemble(manifest, chunks, active_bonds, gravity, external_loads)?;
+    let model = assemble_with_gauge(manifest, chunks, active_bonds, loads, None)?;
     let (x, iterations, relative_residual) = pcg(&model, settings)?;
     Ok(model.recover(&x, iterations, relative_residual))
 }
@@ -140,14 +156,7 @@ pub fn solve_with_gauge(
     settings: &SolverSettings,
     gauge: &str,
 ) -> Result<StressSolution, SolveError> {
-    let model = assemble_with_gauge(
-        manifest,
-        chunks,
-        active_bonds,
-        Vec3::ZERO,
-        external_loads,
-        Some(gauge),
-    )?;
+    let model = assemble_with_gauge(manifest, chunks, active_bonds, external_loads, Some(gauge))?;
     let reference = scale3(
         model
             .nodes
@@ -176,34 +185,13 @@ pub fn solve_with_gauge(
     Ok(model.recover(&x, iterations, relative_residual))
 }
 
-fn assemble(
-    manifest: &Manifest,
-    chunks: &[String],
-    active_bonds: &BTreeMap<String, bool>,
-    gravity: Vec3,
-    external_loads: &BTreeMap<String, NodeLoad>,
-) -> Result<Model, SolveError> {
-    assemble_with_gauge(
-        manifest,
-        chunks,
-        active_bonds,
-        gravity,
-        external_loads,
-        None,
-    )
-}
-
 fn assemble_with_gauge(
     manifest: &Manifest,
     chunks: &[String],
     active_bonds: &BTreeMap<String, bool>,
-    gravity: Vec3,
-    external_loads: &BTreeMap<String, NodeLoad>,
+    loads: &BTreeMap<String, NodeLoad>,
     gauge: Option<&str>,
 ) -> Result<Model, SolveError> {
-    if !gravity.is_finite() {
-        return invalid("Gravity is not finite");
-    }
     let records = manifest
         .chunks
         .iter()
@@ -229,20 +217,9 @@ fn assemble_with_gauge(
         let Some(record) = records.get(id.as_str()) else {
             return invalid(&format!("Unknown chunk {id}"));
         };
-        if !record.mass.is_finite() || record.mass <= 0.0 {
-            return invalid(&format!("Invalid mass for {id}"));
-        }
-        let center = record
-            .transform()
-            .transform_point(Vec3::from(record.center_of_mass))
-            .as_dvec3()
-            .to_array();
+        let center = node_center(record).to_array();
         let fixed = anchors.contains(id.as_str());
-        let mut load = external_loads.get(id).copied().unwrap_or_default();
-        load.force = add3(
-            load.force,
-            scale3(gravity.as_dvec3().to_array(), record.mass as f64),
-        );
+        let load = loads.get(id).copied().unwrap_or_default();
         if !center
             .into_iter()
             .chain(load.force)

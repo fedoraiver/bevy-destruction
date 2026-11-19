@@ -47,6 +47,10 @@ fn launch(app: &mut App, shape: ProjectileShape) -> Entity {
         .unwrap()
 }
 
+fn computed_mass(world: &World, entity: Entity) -> f32 {
+    world.get::<ComputedMass>(entity).unwrap().value()
+}
+
 #[test]
 fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
     for shape in [ProjectileShape::Sphere, ProjectileShape::Cube] {
@@ -75,19 +79,40 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
             app.world().get::<RigidBody>(beam_body),
             Some(&RigidBody::Dynamic)
         );
-        assert_eq!(
-            app.world().get::<Mass>(projectile).unwrap().0,
-            PROJECTILE_MASS
-        );
+        let mass = computed_mass(app.world(), projectile);
+        assert!((mass - PROJECTILE_MASS).abs() < 1e-3);
         assert!(app.world().get::<RigidProjectile>(projectile).is_some());
         let collider = app.world().get::<Collider>(projectile).unwrap();
-        match shape {
-            ProjectileShape::Sphere => assert_eq!(collider.shape().as_ball().unwrap().radius, 0.65),
+        let expected_inertia = match shape {
+            ProjectileShape::Sphere => {
+                assert_eq!(collider.shape().as_ball().unwrap().radius, 0.65);
+                PROJECTILE_MASS * 0.4 * 0.65 * 0.65
+            }
             ProjectileShape::Cube => {
                 let size = collider.shape().as_cuboid().unwrap().half_extents;
                 assert_eq!([size.x, size.y, size.z], [0.6; 3]);
+                PROJECTILE_MASS * 1.2 * 1.2 / 6.0
             }
-        }
+        };
+        let inertia = app
+            .world()
+            .get::<ComputedAngularInertia>(projectile)
+            .unwrap();
+        let inertia_error = Mat3::from(inertia.value()) - Mat3::IDENTITY * expected_inertia;
+        assert!(
+            inertia_error
+                .to_cols_array()
+                .iter()
+                .all(|error| error.abs() < 1e-3)
+        );
+        assert_eq!(
+            app.world()
+                .get::<ComputedCenterOfMass>(projectile)
+                .unwrap()
+                .0,
+            Vec3::ZERO
+        );
+        assert!(app.world().get::<ColliderDensity>(projectile).unwrap().0 > 0.0);
         assert!(app.world().get::<Position>(projectile).unwrap().is_finite());
         let velocity = app.world().get::<LinearVelocity>(projectile).unwrap().0;
         assert!(velocity.is_finite());
@@ -98,10 +123,7 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
         }
         let after = app.world().resource::<ImpactStats>();
         assert_eq!((after.contacts, after.broken_bonds), before);
-        assert_eq!(
-            app.world().get::<Mass>(projectile).unwrap().0,
-            PROJECTILE_MASS
-        );
+        assert_eq!(computed_mass(app.world(), projectile), mass);
     }
 }
 
@@ -136,10 +158,7 @@ fn subthreshold_speed_contacts_do_not_break_bonds_or_accumulate_resting_damage()
             .unwrap()
             .anchored
     );
-    assert_eq!(
-        app.world().get::<Mass>(projectile).unwrap().0,
-        PROJECTILE_MASS
-    );
+    assert!((computed_mass(app.world(), projectile) - PROJECTILE_MASS).abs() < 1e-3);
 }
 
 fn spawn_dropped_tower(app: &mut App) -> (Entity, Vec<String>) {
@@ -152,7 +171,7 @@ fn spawn_dropped_tower_at_height(
 ) -> (Entity, Vec<String>) {
     use crate::{
         asset::Manifest,
-        scene::{BuildingBounds, ChunkInstance},
+        scene::{BuildingBounds, ChunkInstance, chunk_collider},
     };
     let contents = std::env::var_os("DESTRUCTION_LANDING_ASSET")
         .map(|path| std::fs::read_to_string(path).unwrap())
@@ -221,29 +240,18 @@ fn spawn_dropped_tower_at_height(
                 },
             ))
             .id();
-        if alive {
-            let shapes = record
-                .colliders
-                .iter()
-                .map(|proxy| {
-                    let points = proxy
-                        .vertices
-                        .iter()
-                        .copied()
-                        .map(Vec3::from_array)
-                        .collect::<Vec<_>>();
-                    (
-                        Vec3::ZERO,
-                        Quat::IDENTITY,
-                        Collider::convex_hull(&points).unwrap(),
-                    )
-                })
-                .collect::<Vec<_>>();
+        let mass_properties = if alive {
+            let collider = chunk_collider(record).unwrap();
+            let density = manifest.materials[&record.material].density;
+            let properties = collider.mass_properties(density);
             app.world_mut()
                 .entity_mut(entity)
-                .insert((Collider::compound(shapes), ColliderDensity(0.0)));
+                .insert((collider, ColliderDensity(density)));
             upper.push(record.id.clone());
-        }
+            properties
+        } else {
+            MassProperties3d::ZERO
+        };
         instance.chunks.insert(
             record.id.clone(),
             ChunkInstance {
@@ -252,6 +260,7 @@ fn spawn_dropped_tower_at_height(
                 alive,
                 triangles: Vec::new(),
                 transform: local,
+                mass_properties,
                 material: record.material.clone(),
                 detail: None,
                 cluster: None,
@@ -495,16 +504,14 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
             (min.min(y), max.max(y))
         });
     eprintln!("broken bond source_y={:.3}..{:.3}", broken_y.0, broken_y.1);
-    let expected_mass = manifest
-        .chunks
+    let expected_mass = upper
         .iter()
-        .filter(|record| upper.contains(&record.id))
-        .map(|record| f64::from(record.mass))
+        .map(|id| f64::from(instance.chunks[id].mass_properties.mass))
         .sum::<f64>();
     let actual_mass = instance
         .clusters
         .iter()
-        .map(|body| f64::from(app.world().get::<Mass>(*body).unwrap().0))
+        .map(|body| f64::from(computed_mass(app.world(), *body)))
         .sum::<f64>();
     assert!((actual_mass - expected_mass).abs() < expected_mass * 1e-5);
     assert!(
@@ -565,7 +572,7 @@ fn trace_landing_step(
             let cluster = world.get::<Cluster>(*body).unwrap();
             (
                 cluster.chunks.len(),
-                world.get::<Mass>(*body).unwrap().0,
+                computed_mass(world, *body),
                 world.get::<LinearVelocity>(*body).unwrap().y,
                 world.get::<AngularVelocity>(*body).unwrap().length(),
                 (cluster.chunks.len() <= 4).then(|| cluster.chunks.clone()),
@@ -1029,10 +1036,47 @@ fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
     );
 }
 
+fn offset_impact_fixture() -> (Manifest, BuildingInstance) {
+    let mut manifest = crate::stress_smoke::beam_manifest();
+    let mut instance = BuildingInstance::pending(Handle::default());
+    for (index, record) in manifest.chunks.iter_mut().enumerate() {
+        let rotation = Quat::from_euler(EulerRot::XYZ, 0.2, -0.4, 0.3 * index as f32);
+        record.rotation = rotation.to_array();
+        let collider = Collider::compound(vec![
+            (
+                Vec3::new(-0.1, 0.2, 0.3),
+                Quat::IDENTITY,
+                Collider::cuboid(0.4, 0.1, 0.2),
+            ),
+            (
+                Vec3::new(0.4, 0.3, 0.2),
+                Quat::from_rotation_z(0.7),
+                Collider::cuboid(0.2, 0.4, 0.3),
+            ),
+        ]);
+        let mass_properties = collider.mass_properties(700.0 + 100.0 * index as f32);
+        instance.chunks.insert(
+            record.id.clone(),
+            crate::scene::ChunkInstance {
+                entity: Entity::PLACEHOLDER,
+                primitives: Vec::new(),
+                alive: true,
+                triangles: Vec::new(),
+                transform: record.transform(),
+                mass_properties,
+                material: record.material.clone(),
+                detail: None,
+                cluster: None,
+            },
+        );
+    }
+    (manifest, instance)
+}
+
 #[test]
 fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
-    use crate::stress_smoke::{LEFT_SUPPORT, RIGHT_SUPPORT, beam_manifest};
-    let manifest = beam_manifest();
+    use crate::stress_smoke::{LEFT_SUPPORT, RIGHT_SUPPORT};
+    let (manifest, instance) = offset_impact_fixture();
     let chunks = manifest
         .chunks
         .iter()
@@ -1050,7 +1094,7 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
             angular: DVec3::new(0.0, 500.0, -200.0),
         },
     )]);
-    let case = inertial_loads(&manifest, &chunks, &impulses).unwrap();
+    let case = inertial_loads(&manifest, &instance, &chunks, &impulses).unwrap();
     assert!(case.force_balance_ratio < 1e-12);
     assert!(case.moment_balance_ratio < 1e-12);
     let left = stress::solve_with_gauge(
@@ -1089,52 +1133,45 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
 
 #[test]
 fn a_rigid_velocity_change_has_no_internal_impact_load() {
-    let manifest = crate::stress_smoke::beam_manifest();
+    let (manifest, instance) = offset_impact_fixture();
     let chunks = manifest
         .chunks
         .iter()
         .map(|chunk| chunk.id.clone())
         .collect::<Vec<_>>();
-    let total_mass = manifest
+    let total_mass = instance
         .chunks
-        .iter()
-        .map(|chunk| f64::from(chunk.mass))
+        .values()
+        .map(|chunk| f64::from(chunk.mass_properties.mass))
         .sum::<f64>();
-    let center = manifest
+    let center = instance
         .chunks
-        .iter()
-        .map(|record| {
-            record
-                .transform()
-                .transform_point(record.center_of_mass.into())
-                .as_dvec3()
-                * f64::from(record.mass)
-        })
+        .values()
+        .map(|chunk| chunk.center_in_building().as_dvec3() * f64::from(chunk.mass_properties.mass))
         .sum::<DVec3>()
         / total_mass;
     let linear = DVec3::new(2.0, -5.0, 3.0);
     let angular = DVec3::new(0.0, 0.0, 0.7);
-    let impulses = manifest
+    let impulses = instance
         .chunks
         .iter()
-        .map(|record| {
-            let r = record
-                .transform()
-                .transform_point(record.center_of_mass.into())
-                .as_dvec3()
-                - center;
-            let inertia =
-                DMat3::from_cols_array_2d(&record.inertia.map(|column| column.map(f64::from)));
+        .map(|(id, chunk)| {
+            let r = chunk.center_in_building().as_dvec3() - center;
+            let inertia = Mat3::from(
+                chunk
+                    .mass_properties
+                    .global_angular_inertia_tensor(chunk.transform.rotation),
+            );
             (
-                record.id.clone(),
+                id.clone(),
                 ImpulseLoad {
-                    linear: (linear + angular.cross(r)) * f64::from(record.mass),
-                    angular: inertia * angular,
+                    linear: (linear + angular.cross(r)) * f64::from(chunk.mass_properties.mass),
+                    angular: inertia.as_dmat3() * angular,
                 },
             )
         })
         .collect();
-    let case = inertial_loads(&manifest, &chunks, &impulses).unwrap();
+    let case = inertial_loads(&manifest, &instance, &chunks, &impulses).unwrap();
     for load in case.loads.values() {
         assert!(DVec3::from_array(load.force).length() < 1e-7);
         assert!(DVec3::from_array(load.moment).length() < 1e-7);

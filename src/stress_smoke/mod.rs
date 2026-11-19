@@ -262,6 +262,9 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
         } else {
             Vec3::new(0.1, 1.0, 0.1)
         };
+        let collider = Collider::cuboid(size.x, size.y, size.z);
+        let density = manifest.materials[&record.material].density;
+        let mass_properties = collider.mass_properties(density);
         let chunk = world
             .spawn((
                 Name::new(record.id.clone()),
@@ -269,14 +272,8 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
                 GlobalTransform::from(pose) * local,
                 Visibility::Inherited,
                 ChildOf(root),
-                Collider::cuboid(size.x, size.y, size.z),
-                ColliderDensity(0.0),
-                Mass(record.mass),
-                CenterOfMass(Vec3::ZERO),
-                AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
-                NoAutoMass,
-                NoAutoAngularInertia,
-                NoAutoCenterOfMass,
+                collider,
+                ColliderDensity(density),
                 ChunkIdentity {
                     building: root,
                     id: record.id.clone(),
@@ -302,6 +299,7 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
                 alive: true,
                 triangles: Vec::new(),
                 transform: local,
+                mass_properties,
                 material: "concrete".into(),
                 detail: None,
                 cluster: None,
@@ -345,11 +343,14 @@ fn drive(
         &Cluster,
         &Position,
         &Rotation,
-        &CenterOfMass,
+        &ComputedCenterOfMass,
         &RigidBody,
         Has<Sleeping>,
     )>,
-    projectiles: Query<(Entity, Has<Collider>, &Mass, &LinearVelocity), With<RigidProjectile>>,
+    projectiles: Query<
+        (Entity, Has<Collider>, &ComputedMass, &LinearVelocity),
+        With<RigidProjectile>,
+    >,
     mut launches: ResMut<LaunchRequests>,
     impacts: Res<ImpactStats>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
@@ -574,7 +575,7 @@ fn drive(
                 .filter(|projectile| !state.known_projectiles.contains(&projectile.0))
                 .any(|(_, collider, mass, velocity)| {
                     collider
-                        && (mass.0 - PROJECTILE_MASS).abs() < 0.1
+                        && (mass.value() - PROJECTILE_MASS).abs() < 0.1
                         && velocity.0.is_finite()
                         && (velocity.z + PROJECTILE_SPEED).abs() > 1.0
                 });

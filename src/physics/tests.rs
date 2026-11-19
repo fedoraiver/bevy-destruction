@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     asset::{AnchorRecord, BondRecord, ColliderRecord, Manifest},
-    scene::{BuildingBounds, ChunkIdentity, ChunkInstance},
+    scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider, chunk_mass_properties},
 };
 use bevy::time::TimeUpdateStrategy;
 
@@ -17,6 +17,20 @@ fn app() -> App {
     app.cleanup();
     app.update();
     app
+}
+
+fn box_proxy(center: Vec3, size: Vec3) -> ColliderRecord {
+    ColliderRecord {
+        kind: "convex_hull".into(),
+        vertices: [-0.5, 0.5]
+            .into_iter()
+            .flat_map(|x| {
+                [-0.5, 0.5].into_iter().flat_map(move |y| {
+                    [-0.5, 0.5].map(|z| (center + size * Vec3::new(x, y, z)).to_array())
+                })
+            })
+            .collect(),
+    }
 }
 
 fn manifest() -> Manifest {
@@ -45,17 +59,7 @@ fn manifest() -> Manifest {
             chunk.rotation = Quat::IDENTITY.to_array();
             chunk.center_of_mass = [0.0; 3];
             chunk.inertia = Mat3::from_diagonal(Vec3::splat(chunk.mass / 6.0)).to_cols_array_2d();
-            chunk.colliders = vec![ColliderRecord {
-                kind: "convex_hull".into(),
-                vertices: [-0.5, 0.5]
-                    .into_iter()
-                    .flat_map(|x| {
-                        [-0.5, 0.5]
-                            .into_iter()
-                            .flat_map(move |y| [-0.5, 0.5].map(|z| [x, y, z]))
-                    })
-                    .collect(),
-            }];
+            chunk.colliders = vec![box_proxy(Vec3::ZERO, Vec3::ONE)];
             chunk
         })
         .collect();
@@ -126,12 +130,9 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
         .collect();
     for record in manifest.chunks {
         let local = record.transform();
-        let points: Vec<_> = record.colliders[0]
-            .vertices
-            .iter()
-            .copied()
-            .map(Vec3::from_array)
-            .collect();
+        let collider = chunk_collider(&record).unwrap();
+        let density = manifest.materials[&record.material].density;
+        let mass_properties = chunk_mass_properties(&record.id, &collider, density).unwrap();
         let entity = app
             .world_mut()
             .spawn((
@@ -139,14 +140,8 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                 GlobalTransform::from(pose) * local,
                 Visibility::Inherited,
                 ChildOf(root),
-                Collider::convex_hull(&points).unwrap(),
-                ColliderDensity(0.0),
-                Mass(record.mass),
-                AngularInertia::from_mat3_unchecked(Mat3::from_cols_array_2d(&record.inertia)),
-                CenterOfMass(Vec3::from_array(record.center_of_mass)),
-                NoAutoMass,
-                NoAutoAngularInertia,
-                NoAutoCenterOfMass,
+                collider,
+                ColliderDensity(density),
                 ChunkIdentity {
                     building: root,
                     id: record.id.clone(),
@@ -161,6 +156,7 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                 alive: true,
                 triangles: Vec::new(),
                 transform: local,
+                mass_properties,
                 material: record.material,
                 detail: None,
                 cluster: None,
@@ -172,10 +168,14 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
 }
 
 fn asset(app: &mut App) -> Handle<DestructibleAsset> {
+    add_asset(app, manifest())
+}
+
+fn add_asset(app: &mut App, manifest: Manifest) -> Handle<DestructibleAsset> {
     app.world_mut()
         .resource_mut::<Assets<DestructibleAsset>>()
         .add(DestructibleAsset {
-            manifest: manifest(),
+            manifest,
             gltf: Handle::default(),
         })
 }
@@ -199,6 +199,23 @@ fn body(world: &World, building: Entity, id: &str) -> Entity {
         .unwrap()
 }
 
+fn mass(world: &World, body: Entity) -> f32 {
+    world.get::<ComputedMass>(body).unwrap().value()
+}
+
+fn inertia(world: &World, body: Entity) -> Mat3 {
+    world
+        .get::<ComputedAngularInertia>(body)
+        .unwrap()
+        .tensor()
+        .into()
+}
+
+fn assert_mass(world: &World, body: Entity, expected: f32) {
+    let actual = mass(world, body);
+    assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+}
+
 fn assert_vec(actual: Vec3, expected: Vec3) {
     assert!(
         actual.distance(expected) < 1e-4,
@@ -216,7 +233,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let old = body(app.world(), damaged, "a");
     let untouched = body(app.world(), intact, "a");
     assert_eq!(app.world().get::<RigidBody>(old), Some(&RigidBody::Static));
-    assert_eq!(app.world().get::<Mass>(old).unwrap().0, 14.0);
+    assert_mass(app.world(), old, 14.0);
     assert_eq!(app.world().get::<RigidBodyColliders>(old).unwrap().len(), 4);
     let removed = remove(app.world_mut(), damaged, "a");
     let surviving_ids = ["b", "c", "d"]
@@ -229,7 +246,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         app.world().get::<RigidBody>(detached),
         Some(&RigidBody::Dynamic)
     );
-    assert_eq!(app.world().get::<Mass>(detached).unwrap().0, 12.0);
+    assert_mass(app.world(), detached, 12.0);
     assert_eq!(
         app.world()
             .get::<RigidBodyColliders>(detached)
@@ -256,7 +273,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         );
     }
     assert_eq!(body(app.world(), intact, "a"), untouched);
-    assert_eq!(app.world().get::<Mass>(untouched).unwrap().0, 14.0);
+    assert_mass(app.world(), untouched, 14.0);
     app.world_mut()
         .get_mut::<BuildingInstance>(damaged)
         .unwrap()
@@ -270,7 +287,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
             detached
         );
     }
-    assert_eq!(app.world().get::<Mass>(detached).unwrap().0, 12.0);
+    assert_mass(app.world(), detached, 12.0);
 }
 
 #[test]
@@ -286,7 +303,7 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.7, -0.3, 0.5);
     let linear = Vec3::new(2.0, -1.0, 3.0);
     let angular = Vec3::new(0.2, -0.3, 0.7);
-    let center = position + rotation * app.world().get::<CenterOfMass>(parent).unwrap().0;
+    let center = position + rotation * app.world().get::<ComputedCenterOfMass>(parent).unwrap().0;
     app.world_mut().entity_mut(parent).insert((
         Position(position),
         Rotation(rotation),
@@ -321,9 +338,9 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
                 .angle_between(rotation)
                 < 1e-4
         );
-        assert_eq!(app.world().get::<Mass>(child).unwrap().0, mass);
+        assert_mass(app.world(), child, mass);
         assert_vec(
-            app.world().get::<CenterOfMass>(child).unwrap().0,
+            app.world().get::<ComputedCenterOfMass>(child).unwrap().0,
             local_center,
         );
         assert_vec(
@@ -357,6 +374,126 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
         );
         assert_eq!(app.world().get::<ColliderOf>(entity).unwrap().body, child);
     }
+}
+
+#[test]
+fn rotated_density_compounds_preserve_momentum_on_first_step_after_split() {
+    let mut app = app();
+    let mut manifest = manifest();
+    manifest
+        .chunks
+        .retain(|record| ["b", "c"].contains(&record.id.as_str()));
+    manifest.bonds.retain(|bond| bond.id == "bc");
+    manifest.anchors.clear();
+    let boxes = [
+        [
+            (Vec3::new(0.4, 0.2, -0.1), Vec3::new(1.0, 1.0, 2.0)),
+            (Vec3::new(2.2, 0.2, -0.1), Vec3::new(0.5, 2.0, 1.0)),
+        ],
+        [
+            (Vec3::new(-0.2, 0.3, 0.5), Vec3::ONE),
+            (Vec3::new(-0.2, 1.8, 0.5), Vec3::new(2.0, 0.5, 0.5)),
+        ],
+    ];
+    let mut parts = Vec::new();
+    for ((record, shapes), angle) in manifest.chunks.iter_mut().zip(boxes).zip([0.4, -0.7]) {
+        record.rotation = Quat::from_rotation_z(angle).to_array();
+        record.center_of_mass = [0.4, -0.2, 0.1];
+        record.colliders = shapes.map(|(center, size)| box_proxy(center, size)).into();
+        let transform = record.transform();
+        let rotation = Mat3::from_quat(transform.rotation);
+        let density = manifest.materials[&record.material].density;
+        for (center, size) in shapes {
+            let mass = size.element_product() * density;
+            let square = size * size;
+            let inertia =
+                Mat3::from_diagonal((Vec3::splat(square.element_sum()) - square) * (mass / 12.0));
+            parts.push((
+                transform.transform_point(center),
+                mass,
+                rotation * inertia * rotation.transpose(),
+            ));
+        }
+    }
+    let expected_mass = parts.iter().map(|(_, mass, _)| mass).sum::<f32>();
+    let expected_center = parts
+        .iter()
+        .map(|&(center, mass, _)| mass * center)
+        .sum::<Vec3>()
+        / expected_mass;
+    let expected_inertia = parts
+        .iter()
+        .map(|&(center, mass, inertia)| {
+            let r = center - expected_center;
+            let outer = Mat3::from_cols(r * r.x, r * r.y, r * r.z);
+            inertia + mass * (Mat3::IDENTITY * r.length_squared() - outer)
+        })
+        .sum::<Mat3>();
+    assert!(expected_inertia.x_axis.y.abs() > 0.1);
+
+    let asset = add_asset(&mut app, manifest);
+    let building = spawn_building(&mut app, asset, Transform::IDENTITY);
+    rebuild_clusters(app.world_mut());
+    let parent = body(app.world(), building, "b");
+    assert_eq!(body(app.world(), building, "c"), parent);
+    assert_mass(app.world(), parent, expected_mass);
+    assert_vec(
+        app.world().get::<ComputedCenterOfMass>(parent).unwrap().0,
+        expected_center,
+    );
+    assert!(inertia(app.world(), parent).abs_diff_eq(expected_inertia, 2e-4));
+
+    let position = Vec3::new(4.0, 8.0, 6.0);
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.7, -0.3, 0.5);
+    let world_rotation = Mat3::from_quat(rotation);
+    let linear = Vec3::new(2.0, -1.0, 3.0);
+    let angular = Vec3::new(0.2, -0.3, 0.7);
+    let parent_center = position + rotation * expected_center;
+    app.world_mut().entity_mut(parent).insert((
+        Position(position),
+        Rotation(rotation),
+        LinearVelocity(linear),
+        AngularVelocity(angular),
+    ));
+    {
+        let mut instance = app
+            .world_mut()
+            .get_mut::<BuildingInstance>(building)
+            .unwrap();
+        instance.bonds.insert("bc".into(), false);
+        instance.topology_dirty = true;
+    }
+    rebuild_clusters(app.world_mut());
+
+    let world = app.world();
+    assert!(world.get_entity(parent).is_err());
+    let mut total_mass = 0.0;
+    let mut linear_momentum = Vec3::ZERO;
+    let mut angular_momentum = Vec3::ZERO;
+    for id in ["b", "c"] {
+        let child = body(world, building, id);
+        let member = &world.get::<BuildingInstance>(building).unwrap().chunks[id];
+        let child_center = world.get::<ComputedCenterOfMass>(child).unwrap().0;
+        let child_mass = mass(world, child);
+        let center = position + rotation * child_center;
+        let velocity = world.get::<LinearVelocity>(child).unwrap().0;
+        let spin = world.get::<AngularVelocity>(child).unwrap().0;
+        assert_vec(child_center, member.center_in_building());
+        assert_vec(velocity, linear + angular.cross(center - parent_center));
+        assert_vec(spin, angular);
+        total_mass += child_mass;
+        let momentum = child_mass * velocity;
+        linear_momentum += momentum;
+        angular_momentum +=
+            world_rotation * inertia(world, child) * world_rotation.transpose() * spin
+                + (center - parent_center).cross(momentum);
+    }
+    assert!((total_mass - expected_mass).abs() < 1e-5);
+    assert_vec(linear_momentum, expected_mass * linear);
+    assert_vec(
+        angular_momentum,
+        world_rotation * expected_inertia * world_rotation.transpose() * angular,
+    );
 }
 
 #[test]
@@ -394,7 +531,7 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
         Some(&RigidBody::Dynamic)
     );
     assert!(!app.world().get::<Cluster>(detached).unwrap().anchored);
-    assert_eq!(app.world().get::<Mass>(detached).unwrap().0, 12.0);
+    assert_mass(app.world(), detached, 12.0);
     app.world_mut()
         .get_mut::<BuildingInstance>(building)
         .unwrap()

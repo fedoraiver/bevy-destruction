@@ -299,6 +299,7 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
                 alive: true,
                 triangles: Vec::new(),
                 transform: floor_transform,
+                mass_properties: MassProperties3d::ZERO,
                 material: "concrete".into(),
                 detail: None,
                 cluster: None,

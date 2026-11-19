@@ -157,31 +157,21 @@ fn spawn_projectiles(
         if count >= 12 {
             continue;
         }
-        let (mesh, collider, inertia) = match request.shape {
-            ProjectileShape::Sphere => (
-                Mesh::from(Sphere::new(0.65)),
-                Collider::sphere(0.65),
-                PROJECTILE_MASS * 0.4 * 0.65 * 0.65,
-            ),
+        let (mesh, collider) = match request.shape {
+            ProjectileShape::Sphere => (Mesh::from(Sphere::new(0.65)), Collider::sphere(0.65)),
             ProjectileShape::Cube => (
                 Mesh::from(Cuboid::from_length(1.2)),
                 Collider::cuboid(1.2, 1.2, 1.2),
-                PROJECTILE_MASS * 1.2 * 1.2 / 6.0,
             ),
         };
+        let density = ColliderDensity(PROJECTILE_MASS / collider.mass(1.0));
         commands
             .spawn((
                 Name::new("Unbreakable rigid impactor"),
                 RigidProjectile { age: 0.0 },
                 RigidBody::Dynamic,
                 collider,
-                ColliderDensity(0.0),
-                Mass(PROJECTILE_MASS),
-                CenterOfMass(Vec3::ZERO),
-                AngularInertia::from_mat3_unchecked(Mat3::from_diagonal(Vec3::splat(inertia))),
-                NoAutoMass,
-                NoAutoAngularInertia,
-                NoAutoCenterOfMass,
+                density,
                 Transform::from_translation(request.origin),
                 LinearVelocity(*request.direction * PROJECTILE_SPEED),
                 Mesh3d(meshes.add(mesh)),
@@ -291,20 +281,7 @@ fn impact_damage(world: &mut World) {
                 if world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
                     && cluster.chunks.len() > 1
                 {
-                    let asset = world
-                        .resource::<Assets<DestructibleAsset>>()
-                        .get(&instance.asset)
-                        .unwrap();
-                    let record = asset
-                        .manifest
-                        .chunks
-                        .iter()
-                        .find(|record| record.id == identity.id)
-                        .unwrap();
-                    let center = record
-                        .transform()
-                        .transform_point(record.center_of_mass.into())
-                        .as_dvec3();
+                    let center = chunk.center_in_building().as_dvec3();
                     let origin = world.get::<Position>(body).unwrap().0;
                     let inverse_rotation = world.get::<Rotation>(body).unwrap().0.conjugate();
                     let shock = shocks.entry(body).or_insert_with(|| ClusterImpact {
@@ -511,52 +488,57 @@ struct InertialLoadCase {
     moment_balance_ratio: f64,
 }
 
+struct ImpactChunk<'a> {
+    id: &'a str,
+    mass: f64,
+    center: DVec3,
+    node: DVec3,
+    inertia: DMat3,
+}
+
 fn inertial_loads(
     manifest: &Manifest,
+    instance: &BuildingInstance,
     chunks: &[String],
     impulses: &BTreeMap<String, ImpulseLoad>,
 ) -> Option<InertialLoadCase> {
     let selected = chunks.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    let records = manifest
+    let members = manifest
         .chunks
         .iter()
         .filter(|record| selected.contains(record.id.as_str()))
-        .collect::<Vec<_>>();
-    let mass = records
+        .map(|record| {
+            let chunk = instance.chunks.get(&record.id)?;
+            let properties = &chunk.mass_properties;
+            let inertia = properties.global_angular_inertia_tensor(chunk.transform.rotation);
+            Some(ImpactChunk {
+                id: &record.id,
+                mass: f64::from(properties.mass),
+                center: chunk.center_in_building().as_dvec3(),
+                node: stress::node_center(record),
+                inertia: Mat3::from(inertia).as_dmat3(),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if members.len() != selected.len() {
+        return None;
+    }
+    let mass = members.iter().map(|member| member.mass).sum::<f64>();
+    let center = members
         .iter()
-        .map(|record| f64::from(record.mass))
-        .sum::<f64>();
-    let center_of = |record: &crate::asset::ChunkRecord| {
-        record
-            .transform()
-            .transform_point(record.center_of_mass.into())
-            .as_dvec3()
-    };
-    let center = records
-        .iter()
-        .map(|record| center_of(record) * f64::from(record.mass))
+        .map(|member| member.center * member.mass)
         .sum::<DVec3>()
         / mass;
-    let inertia_of = |record: &crate::asset::ChunkRecord| {
-        let rotation = DMat3::from_cols_array(
-            &Mat3::from_quat(record.transform().rotation)
-                .to_cols_array()
-                .map(f64::from),
-        );
-        let local = DMat3::from_cols_array_2d(&record.inertia.map(|column| column.map(f64::from)));
-        rotation * local * rotation.transpose()
-    };
     let mut inertia = DMat3::ZERO;
     let mut linear = DVec3::ZERO;
     let mut angular = DVec3::ZERO;
     let mut force_scale = 0.0;
     let mut moment_scale = 0.0;
-    for record in &records {
-        let r = center_of(record) - center;
+    for member in &members {
+        let r = member.center - center;
         let outer = DMat3::from_cols(r * r.x, r * r.y, r * r.z);
-        inertia += inertia_of(record)
-            + (DMat3::IDENTITY * r.length_squared() - outer) * f64::from(record.mass);
-        let impulse = impulses.get(&record.id).copied().unwrap_or_default();
+        inertia += member.inertia + (DMat3::IDENTITY * r.length_squared() - outer) * member.mass;
+        let impulse = impulses.get(member.id).copied().unwrap_or_default();
         linear += impulse.linear;
         angular += impulse.angular + r.cross(impulse.linear);
         force_scale += impulse.linear.length();
@@ -574,22 +556,20 @@ fn inertial_loads(
     let mut loads = BTreeMap::new();
     let mut force_residual = DVec3::ZERO;
     let mut moment_residual = DVec3::ZERO;
-    for record in records {
-        let r = center_of(record) - center;
-        let impulse = impulses.get(&record.id).copied().unwrap_or_default();
-        let force = (impulse.linear
-            - (delta_linear + delta_angular.cross(r)) * f64::from(record.mass))
-            / duration;
-        let moment = (impulse.angular - inertia_of(record) * delta_angular) / duration;
+    for member in members {
+        let r = member.center - center;
+        let impulse = impulses.get(member.id).copied().unwrap_or_default();
+        let force =
+            (impulse.linear - (delta_linear + delta_angular.cross(r)) * member.mass) / duration;
+        let moment = (impulse.angular - member.inertia * delta_angular) / duration;
+        let load = NodeLoad {
+            force: force.to_array(),
+            moment: moment.to_array(),
+        }
+        .at_reference(member.center - member.node);
         force_residual += force;
-        moment_residual += r.cross(force) + moment;
-        loads.insert(
-            record.id.clone(),
-            NodeLoad {
-                force: force.to_array(),
-                moment: moment.to_array(),
-            },
-        );
+        moment_residual += (member.node - center).cross(force) + DVec3::from_array(load.moment);
+        loads.insert(member.id.to_owned(), load);
     }
     Some(InertialLoadCase {
         loads,
@@ -692,7 +672,8 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         let started = bevy::platform::time::Instant::now();
         // Continuations retain these inputs until the membership checks above release the event.
         if shock.prepared.is_none() {
-            let Some(case) = inertial_loads(&asset.manifest, &shock.chunks, &shock.loads) else {
+            let Some(case) = inertial_loads(&asset.manifest, instance, &shock.chunks, &shock.loads)
+            else {
                 continue;
             };
             shock.prepared = Some(case);

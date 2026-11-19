@@ -140,7 +140,7 @@ fn verify_split(
         &Rotation,
         &LinearVelocity,
         &AngularVelocity,
-        &CenterOfMass,
+        &ComputedCenterOfMass,
     )>,
 ) {
     if !state.verify_split_pending {
@@ -198,8 +198,8 @@ fn drive(
         &Rotation,
         &LinearVelocity,
         &AngularVelocity,
-        &CenterOfMass,
-        &Mass,
+        &ComputedCenterOfMass,
+        &ComputedMass,
         Has<Sleeping>,
     )>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
@@ -271,7 +271,7 @@ fn drive(
                     || !v.0.is_finite()
                     || !w.0.is_finite()
                     || !c.0.is_finite()
-                    || !m.0.is_finite())
+                    || !m.value().is_finite())
         })
     {
         state.non_finite = true;
@@ -293,12 +293,9 @@ fn drive(
                 finish(&state, &options, directory, &mut exit);
                 return;
             };
-            state.expected_mass = asset
-                .manifest
-                .chunks
+            state.expected_mass = selected
                 .iter()
-                .filter(|chunk| selected.contains(&chunk.id))
-                .map(|chunk| chunk.mass)
+                .map(|id| instance.chunks[id].mass_properties.mass)
                 .sum();
             info!(
                 "Physics smoke: releasing roof pair {selected:?}; existing clusters={:?}",
@@ -308,15 +305,10 @@ fn drive(
                     .map(|body| (body.0, body.1.anchored, body.1.chunks.len()))
                     .collect::<Vec<_>>()
             );
-            for chunk in &asset.manifest.chunks {
-                if selected.contains(&chunk.id) {
-                    state.initial_centers.insert(
-                        chunk.id.clone(),
-                        chunk
-                            .transform()
-                            .transform_point(Vec3::from(chunk.center_of_mass)),
-                    );
-                }
+            for id in &selected {
+                state
+                    .initial_centers
+                    .insert(id.clone(), instance.chunks[id].center_in_building());
             }
             state.cleared_chunks = asset
                 .manifest
@@ -381,7 +373,7 @@ fn drive(
                     .errors
                     .push("Unsupported roof pair did not become one dynamic cluster".into());
             }
-            let mass: f32 = selected_bodies.iter().map(|body| body.8.0).sum();
+            let mass: f32 = selected_bodies.iter().map(|body| body.8.value()).sum();
             if (mass - state.expected_mass).abs() > state.expected_mass * 0.0001 {
                 state
                     .errors
@@ -415,15 +407,13 @@ fn drive(
                 &selected_bodies
             {
                 let parent_center = position.0 + rotation.0 * center.0;
-                for record in &asset.manifest.chunks {
-                    if state.selected.contains(&record.id) && cluster.chunks.contains(&record.id) {
-                        let local = record
-                            .transform()
-                            .transform_point(Vec3::from(record.center_of_mass));
+                for id in &cluster.chunks {
+                    if state.selected.contains(id) {
+                        let local = instance.chunks[id].center_in_building();
                         let point = position.0 + rotation.0 * local;
                         let velocity = linear.0 + angular.0.cross(point - parent_center);
                         state.split_predictions.insert(
-                            record.id.clone(),
+                            id.clone(),
                             SplitPrediction {
                                 center: point,
                                 rotation: rotation.0,
@@ -455,7 +445,7 @@ fn drive(
                     .errors
                     .push("Split continuity was not verified before physics".into());
             }
-            let mass: f32 = selected_bodies.iter().map(|body| body.8.0).sum();
+            let mass: f32 = selected_bodies.iter().map(|body| body.8.value()).sum();
             if (mass - state.expected_mass).abs() > state.expected_mass * 0.0001 {
                 state
                     .errors

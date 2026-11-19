@@ -13,6 +13,7 @@
 | [0001](0001-rigid-cluster-runtime.md) | 预破碎结构与刚体簇运行时 |
 | [0002](0002-elastic-structure-and-overload.md) | 六自由度结构承载与过载断裂 |
 | [0003](0003-collision-driven-fracture.md) | 碰撞驱动的断裂与事件卸载 |
+| [0012](0012-density-derived-mass-properties.md) | Avian 按碰撞体与密度计算质量属性 |
 
 ## 资产制作
 
@@ -37,4 +38,4 @@
 | [0010](0010-runtime-performance.md) | 结构求解与碰撞性能 |
 | [0011](0011-rust-project-layout.md) | Rust 模块与测试布局 |
 
-新增决策从 0012 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+新增决策从 0013 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

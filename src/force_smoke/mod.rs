@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use avian3d::prelude::{
-    AngularInertia, CenterOfMass, GravityScale, Mass, NoAutoAngularInertia, NoAutoCenterOfMass,
-    NoAutoMass, Position, RigidBody, Rotation,
+    AngularInertia, CenterOfMass, Collider, ComputeMassProperties3d, GravityScale, Mass,
+    NoAutoAngularInertia, NoAutoCenterOfMass, NoAutoMass, Position, RigidBody, Rotation,
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -348,22 +348,22 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         record.rotation = Quat::IDENTITY.to_array();
         record.center_of_mass = [0.0; 3];
         record.volume = volume;
-        record.mass = volume * 2400.0;
-        let mut inertia = Mat3::ZERO;
-        for &(box_center, size) in &shape.boxes {
-            let mass = size.element_product() * 2400.0;
-            let offset = box_center - center;
-            inertia += Mat3::from_diagonal(
-                Vec3::new(
-                    size.y * size.y + size.z * size.z,
-                    size.x * size.x + size.z * size.z,
-                    size.x * size.x + size.y * size.y,
-                ) * (mass / 12.0),
-            ) + (Mat3::IDENTITY * offset.length_squared()
-                - Mat3::from_cols(offset * offset.x, offset * offset.y, offset * offset.z))
-                * mass;
-        }
-        record.inertia = inertia.to_cols_array_2d();
+        let mass_properties = Collider::compound(
+            shape
+                .boxes
+                .iter()
+                .map(|&(box_center, size)| {
+                    (
+                        box_center - center,
+                        Quat::IDENTITY,
+                        Collider::cuboid(size.x, size.y, size.z),
+                    )
+                })
+                .collect(),
+        )
+        .mass_properties(manifest.materials[&record.material].density);
+        record.mass = mass_properties.mass;
+        record.inertia = Mat3::from(mass_properties.angular_inertia_tensor()).to_cols_array_2d();
         record.colliders = shape
             .boxes
             .iter()
@@ -432,6 +432,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 alive: true,
                 triangles,
                 transform: record.transform(),
+                mass_properties,
                 material: "concrete".into(),
                 detail: None,
                 cluster: Some(body),
@@ -569,6 +570,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 alive: true,
                 triangles: chunk.triangles.clone(),
                 transform: chunk.transform,
+                mass_properties: chunk.mass_properties,
                 material: chunk.material.clone(),
                 detail: None,
                 cluster: Some(twin_body),
