@@ -17,8 +17,8 @@ permissions:
 
 jobs:
   rust:
-    uses: fedoraiver/bevy-cicd/.github/workflows/rust-checks.yml@21c26e2bec1580e7c4a7c37eba33d34dd4b1bf5f
+    uses: fedoraiver/bevy-cicd/.github/workflows/rust-checks.yml@8c34375fd50e0adf6a78acd6820131f7f2962a85
 
   compiler-rules:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.compiler-rules }}
-    uses: fedoraiver/bevy-cicd/.github/workflows/bevy-rules.yml@21c26e2bec1580e7c4a7c37eba33d34dd4b1bf5f
+    uses: fedoraiver/bevy-cicd/.github/workflows/bevy-rules.yml@8c34375fd50e0adf6a78acd6820131f7f2962a85
