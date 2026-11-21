@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bevy Destruction 架构图</title>
+  <style>
+    :root { font-family: system-ui, "Microsoft YaHei", sans-serif; line-height: 1.6; }
+    body { margin: 0; background: #f3f5f7; color: #202b34; }
+    main { box-sizing: border-box; max-width: 80rem; margin: auto; padding: 2rem clamp(1rem, 4vw, 3rem); }
+    h1 { line-height: 1.2; }
+    section { margin-block: 2rem; }
+    img { display: block; width: 100%; height: auto; }
+    a { color: #2256a0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Bevy Destruction 架构图</h1>
+    <p><a href="https://github.com/fedoraiver/bevy-destruction/tree/master/docs/adr">查看架构决策记录</a></p>
+    <section>
+      <h2>固定步与断裂反馈</h2>
+      <img src="images/fixed-step-fracture.svg" alt="锚定承载、刚体簇重建、接触与断裂反馈的固定步顺序">
+    </section>
+    <section>
+      <h2>离线预破碎与 v2 资产发布</h2>
+      <img src="images/asset-pipeline.svg" alt="从 Blender 共享分区、代理和接触复核到 GLB 与资产清单发布">
+    </section>
+    <section>
+      <h2>受力样本与诊断视图</h2>
+      <img src="images/force-diagnostics.svg" alt="结构受力数据进入热力总览和局部详查的路径">
+    </section>
+  </main>
+</body>
+</html>
