@@ -2,7 +2,7 @@
 
 这里记录现行设计、取舍和验证范围。运行方法和最近一次验证见[项目 README](../../README.md)。
 
-**当前限制。** 正式板式高楼上部落地后破坏偏轻，严格落地回归仍失败。独立接触事件的首次绑定已通过聚焦回归。两项验证的区别和诊断见 [ADR 0003](0003-collision-driven-fracture.md)。
+板式高楼的无窗口落地验证覆盖楼板和墙体分簇、上层内部断裂及质量守恒。验证方法和历史基线见 [ADR 0003](0003-collision-driven-fracture.md)。
 
 三张流程图分别说明[固定步与断裂反馈](0001-rigid-cluster-runtime.md#固定步和碰撞)、[离线预破碎与 v2 发布](0004-blender-asset-pipeline.md#决策与实现)和[受力样本到热力视图](0009-structural-diagnostics.md#总览拾取与详查)。
 
@@ -38,5 +38,6 @@
 | [0010](0010-runtime-performance.md) | 结构求解与碰撞性能 |
 | [0011](0011-rust-project-layout.md) | Rust 模块与测试布局 |
 | [0013](0013-shared-bevy-cicd.md) | 共享 Bevy 持续集成与架构发布 |
+| [0014](0014-generated-ecs-architecture.md) | 生成式 ECS 架构站点 |
 
-新增决策从 0014 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+新增决策从 0015 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

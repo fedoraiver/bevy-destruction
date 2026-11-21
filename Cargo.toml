@@ -3,7 +3,11 @@ name = "bevy-destruction"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+debugdump = ["dep:bevy-schedule-export", "bevy/debug"]
+
 [dependencies]
+bevy-schedule-export = { git = "https://github.com/fedoraiver/bevy-cicd", rev = "119b527b35b8226b2b4f043c63e5cf892bb54e12", optional = true }
 bevy = { version = "=0.20.0", default-features = false, features = ["3d_bevy_render", "default_app", "bevy_winit", "bevy_ui_render", "default_font", "multi_threaded", "png", "scene", "x11"] }
 avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "parallel"] }
 serde = { version = "1", features = ["derive"] }

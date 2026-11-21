@@ -1,4 +1,6 @@
 /target
 /output/
+/tmp/ecs-architecture/
+/tmp/ra/
 __pycache__/
 *.py[cod]
