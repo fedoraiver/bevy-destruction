@@ -476,6 +476,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 compression: 0.0,
                 shear: 0.0,
                 utilization,
+                strain_energy: 0.0,
                 section_exact: true,
             },
         );
