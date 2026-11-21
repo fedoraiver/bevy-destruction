@@ -1,0 +1,56 @@
+name: Architecture Pages
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package architecture diagrams
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PAGES_ARTIFACT_NAME: architecture-pages-${{ github.run_id }}-${{ github.run_attempt }}
+      PAGES_DIR: output/architecture-pages/${{ github.run_id }}-${{ github.run_attempt }}
+    outputs:
+      artifact-name: ${{ env.PAGES_ARTIFACT_NAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build the static site and publication proof
+        run: python3 .github/scripts/build-architecture-pages.py "$PAGES_DIR" "$GITHUB_SHA"
+
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}
+          path: ${{ env.PAGES_DIR }}
+          retention-days: 3
+
+      - name: Upload publication proof
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}-proof
+          path: ${{ env.PAGES_DIR }}/bevy-cicd-build.json
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    needs: build
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    uses: fedoraiver/bevy-cicd/.github/workflows/architecture-pages.yml@21c26e2bec1580e7c4a7c37eba33d34dd4b1bf5f
+    with:
+      artifact-name: ${{ needs.build.outputs.artifact-name }}
