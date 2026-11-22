@@ -41,6 +41,8 @@ pub const PROJECTILE_SPEED: f32 = 55.0;
 const IMPACT_DURATION: f32 = 0.01;
 const IMPACT_MIN_SPEED: f32 = 2.0;
 const IMPACT_BREAK_LIMIT: usize = 8;
+// 为同一步的局部接触保留一半断裂预算。
+const DYNAMIC_IMPACT_BREAK_LIMIT: usize = IMPACT_BREAK_LIMIT / 2;
 
 #[derive(Clone, Copy)]
 pub enum ProjectileShape {
@@ -218,7 +220,7 @@ fn impact_damage(world: &mut World) {
     let mut impulse_samples = Vec::new();
     let mut touching = BTreeSet::new();
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
-    let mut shocks = BTreeMap::<Entity, ClusterImpact>::new();
+    let mut shocks = BTreeMap::<(Entity, (Entity, Entity)), ClusterImpact>::new();
     let mut contact_count = 0;
     let mut max_impulse = 0.0_f32;
     for pair in world.resource::<ContactGraph>().iter_active_touching() {
@@ -284,7 +286,8 @@ fn impact_damage(world: &mut World) {
                     let center = chunk.center_in_building().as_dvec3();
                     let origin = world.get::<Position>(body).unwrap().0;
                     let inverse_rotation = world.get::<Rotation>(body).unwrap().0.conjugate();
-                    let shock = shocks.entry(body).or_insert_with(|| ClusterImpact {
+                    // 同一接触对的逐点冲量共享一次工况。其他接触有独立的受载来源。
+                    let shock = shocks.entry((body, key)).or_insert_with(|| ClusterImpact {
                         building: identity.building,
                         chunks: cluster.chunks.clone(),
                         loads: BTreeMap::new(),
@@ -355,17 +358,24 @@ fn impact_damage(world: &mut World) {
     let mut budget = IMPACT_BREAK_LIMIT;
     let mut structural_broken = 0;
     if let Some(report) = &mut structural
-        && let Some((building, id)) = report.fracture.take()
+        && let Some((building, bonds)) = report.fracture.take()
         && let Some(mut instance) = world.get_mut::<BuildingInstance>(building)
-        && instance.bonds.get(&id).copied().unwrap_or(false)
     {
-        instance.bonds.insert(id.clone(), false);
-        instance.topology_dirty = true;
-        broken.entry(building).or_default().push(id);
-        structural_broken = 1;
-        budget -= 1;
-        if let Some(shock) = report.continuation.take() {
-            state.shocks.push_back(shock);
+        for id in bonds {
+            if let Some(active) = instance.bonds.get_mut(&id)
+                && *active
+            {
+                *active = false;
+                broken.entry(building).or_default().push(id);
+                structural_broken += 1;
+                budget -= 1;
+            }
+        }
+        if structural_broken > 0 {
+            instance.topology_dirty = true;
+            if let Some(shock) = report.continuation.take() {
+                state.shocks.push_back(shock);
+            }
         }
     }
     let mut pending = state
@@ -587,9 +597,37 @@ struct DynamicImpactReport {
     moment_balance_ratio: f64,
     gauge_reaction_ratio: f64,
     max_utilization: f64,
-    fracture: Option<(Entity, String)>,
+    fracture: Option<(Entity, Vec<String>)>,
     continuation: Option<ClusterImpact>,
     force_sample: Option<DynamicForceSample>,
+}
+
+/// 从同一载荷解中选择可以同步起裂的连接，共用碎块的候选须等待下一次重算。
+fn simultaneous_fractures(manifest: &Manifest, solution: &stress::StressSolution) -> Vec<String> {
+    let mut candidates = manifest
+        .bonds
+        .iter()
+        .filter_map(|bond| {
+            let stress = solution.bonds.get(&bond.id)?;
+            (stress.utilization >= 1.0).then_some((bond, stress.strain_energy))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then(a.0.id.cmp(&b.0.id)));
+
+    let mut selected_chunks = BTreeSet::new();
+    let mut fractures = Vec::new();
+    for (bond, _) in candidates {
+        if selected_chunks.contains(&bond.a) || selected_chunks.contains(&bond.b) {
+            continue;
+        }
+        selected_chunks.insert(&bond.a);
+        selected_chunks.insert(&bond.b);
+        fractures.push(bond.id.clone());
+        if fractures.len() == DYNAMIC_IMPACT_BREAK_LIMIT {
+            break;
+        }
+    }
+    fractures
 }
 
 fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
@@ -712,15 +750,14 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                     .max(DVec3::from_array(reaction.moment).length() / case.moment_scale);
                 if report.gauge_reaction_ratio <= 1e-5 {
                     report.valid = true;
-                    if let Some((id, bond)) = solution.bonds.iter().min_by(|a, b| {
-                        b.1.utilization
-                            .total_cmp(&a.1.utilization)
-                            .then(a.0.cmp(b.0))
-                    }) {
-                        report.max_utilization = bond.utilization;
-                        if bond.utilization >= 1.0 {
-                            report.fracture = Some((shock.building, id.clone()));
-                        }
+                    report.max_utilization = solution
+                        .bonds
+                        .values()
+                        .map(|bond| bond.utilization)
+                        .fold(0.0, f64::max);
+                    let fractures = simultaneous_fractures(&asset.manifest, &solution);
+                    if !fractures.is_empty() {
+                        report.fracture = Some((shock.building, fractures));
                     }
                     if world
                         .get_resource::<ForceCapture>()
@@ -755,7 +792,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             }
         }
         if report.fracture.is_some() {
-            // Every further failure needs a fresh solution after rebuilding the graph.
+            // 下一批断裂须等待拓扑重建并重新求解。
             report.continuation = Some(shock);
         }
         report.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;

@@ -174,6 +174,28 @@ fn balanced_dynamic_loads_are_independent_of_numerical_gauge() {
     .unwrap();
     for result in [&first, &second] {
         close(result.bonds["bond-000"].force[0], -100.0, 1e-10);
+        let external_work = result
+            .displacements
+            .iter()
+            .map(|(id, displacement)| {
+                let load = &loads[id];
+                let values = [
+                    load.force[0],
+                    load.force[1],
+                    load.force[2],
+                    load.moment[0],
+                    load.moment[1],
+                    load.moment[2],
+                ];
+                dot6(displacement, &values)
+            })
+            .sum::<f64>();
+        close(
+            result.bonds["bond-000"].strain_energy,
+            0.5 * external_work,
+            1e-10,
+        );
+        assert!(result.bonds["bond-000"].strain_energy > 0.0);
         for reaction in result.reactions.values() {
             assert!(norm3(reaction.force) < 1e-8);
             assert!(norm3(reaction.moment) < 1e-8);

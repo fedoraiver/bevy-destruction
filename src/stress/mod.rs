@@ -60,6 +60,8 @@ pub struct BondStress {
     pub compression: f64,
     pub shear: f64,
     pub utilization: f64,
+    /// 各弹性面片储存的应变能之和，单位 J。
+    pub strain_energy: f64,
     pub section_exact: bool,
 }
 
@@ -507,7 +509,7 @@ impl Model {
                     internal[node][axis] += gradient[axis];
                 }
             }
-            let mut stress = element.stress(traction);
+            let mut stress = element.stress(traction, 0.5 * dot6(&deformation, &traction));
             stress.moment = add3(
                 stress.moment,
                 cross3(sub3(element.center, element.bond_center), stress.force),
@@ -521,6 +523,7 @@ impl Model {
                     total.compression = total.compression.max(stress.compression);
                     total.shear = total.shear.max(stress.shear);
                     total.utilization = total.utilization.max(stress.utilization);
+                    total.strain_energy += stress.strain_energy;
                     total.section_exact &= stress.section_exact;
                 })
                 .or_insert(stress);
@@ -566,7 +569,7 @@ impl Model {
 }
 
 impl Element {
-    fn stress(&self, traction: V6) -> BondStress {
+    fn stress(&self, traction: V6, strain_energy: f64) -> BondStress {
         let force = [traction[0], traction[1], traction[2]];
         let moment = [traction[3], traction[4], traction[5]];
         let axial = dot3(force, self.normal) / self.area;
@@ -612,6 +615,7 @@ impl Element {
             utilization: (tension / self.tension_strength)
                 .max(compression / self.compression_strength)
                 .max(shear / self.shear_strength),
+            strain_energy,
             section_exact: true,
         }
     }
