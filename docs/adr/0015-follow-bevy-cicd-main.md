@@ -2,7 +2,7 @@
 
 ## 状态
 
-2026-11-22 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的共享工作流固定 SHA 策略。
+2026-11-22 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的共享工作流固定 SHA 策略。项目对调度导出库的 Cargo 依赖由 [ADR 0016](0016-shared-schedule-export.md) 移除。
 
 ## 背景
 

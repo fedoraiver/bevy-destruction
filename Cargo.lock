@@ -99,14 +99,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "analysis-contract"
-version = "0.1.0"
-source = "git+https://github.com/fedoraiver/bevy-cicd#8372e62da77441de1d609237f25a0ea15ba324f5"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -432,29 +424,10 @@ version = "0.1.0"
 dependencies = [
  "avian3d",
  "bevy",
- "bevy-schedule-export",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "bevy-schedule-export"
-version = "0.1.0"
-source = "git+https://github.com/fedoraiver/bevy-cicd#8372e62da77441de1d609237f25a0ea15ba324f5"
-dependencies = [
- "analysis-contract",
- "bevy_app",
- "bevy_ecs",
- "bevy_extract",
- "bevy_log",
- "bevy_mod_debugdump",
- "bevy_tasks",
- "serde",
- "serde_json",
- "sha2",
- "toml",
 ]
 
 [[package]]
@@ -778,7 +751,6 @@ dependencies = [
  "indexmap",
  "log",
  "nonmax",
- "rand",
  "serde",
  "slotmap",
  "smallvec",
@@ -1229,21 +1201,6 @@ name = "bevy_mikktspace"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bff34eb29ff4b8a8688bc7299f14fb6b597461ca80fec03ed7d22939ab33e48f"
-
-[[package]]
-name = "bevy_mod_debugdump"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4478e56a0fc891dfda59ca90ca8e439e7cfc0daed3bfc4b30d3a0f5a8e72d0e"
-dependencies = [
- "bevy_app",
- "bevy_color",
- "bevy_ecs",
- "bevy_log",
- "bevy_platform",
- "bevy_utils",
- "disqualified",
-]
 
 [[package]]
 name = "bevy_pbr"

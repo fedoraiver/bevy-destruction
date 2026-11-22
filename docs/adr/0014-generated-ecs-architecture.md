@@ -2,7 +2,7 @@
 
 ## 状态
 
-2026-11-22 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的静态架构索引发布步骤。
+2026-11-22 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的静态架构索引发布步骤。项目二进制中的调度导出入口与依赖由 [ADR 0016](0016-shared-schedule-export.md) 替代。
 
 ## 背景
 

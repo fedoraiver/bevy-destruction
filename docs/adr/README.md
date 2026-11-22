@@ -40,5 +40,6 @@
 | [0013](0013-shared-bevy-cicd.md) | 共享 Bevy 持续集成与架构发布 |
 | [0014](0014-generated-ecs-architecture.md) | 生成式 ECS 架构站点 |
 | [0015](0015-follow-bevy-cicd-main.md) | 跟踪 bevy-cicd 主分支 |
+| [0016](0016-shared-schedule-export.md) | 共享工作流运行 Bevy 调度导出 |
 
-新增决策从 0016 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+新增决策从 0017 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
