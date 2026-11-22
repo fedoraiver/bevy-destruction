@@ -9,10 +9,7 @@ use bevy::{
     core_pipeline::prepass::DepthPrepass,
     mesh::{MeshTag, PrimitiveTopology},
     prelude::*,
-    render::view::{
-        DebandDither, Tonemapping,
-        screenshot::{Screenshot, ScreenshotCaptured},
-    },
+    render::view::{DebandDither, Tonemapping, screenshot::ScreenshotCaptured},
 };
 
 use crate::{
@@ -972,7 +969,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
     let retry_hold = wait.saturating_sub(10);
     let screenshot = (
         Name::new("Force smoke screenshot"),
-        Screenshot::primary_window(),
+        world.resource::<DemoOptions>().smoke_screenshot(),
     );
     world.spawn(screenshot).observe(
         move |capture: On<ScreenshotCaptured>, mut state: ResMut<ForceSmokeState>| {

@@ -70,6 +70,10 @@ pub struct RigidProjectile {
 pub struct ImpactStats {
     pub launched: u64,
     pub contacts: u64,
+    #[cfg(feature = "acceptance-test")]
+    pub sphere_contacts: u64,
+    #[cfg(feature = "acceptance-test")]
+    pub cube_contacts: u64,
     pub broken_bonds: u64,
     pub last_impulse: f32,
     pub max_impulse: f32,
@@ -224,6 +228,8 @@ fn impact_damage(world: &mut World) {
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
     let mut shocks = BTreeMap::<(Entity, (Entity, Entity)), ClusterImpact>::new();
     let mut contact_count = 0;
+    #[cfg(feature = "acceptance-test")]
+    let (mut sphere_contacts, mut cube_contacts) = (0, 0);
     let mut max_impulse = 0.0_f32;
     for pair in world.resource::<ContactGraph>().iter_active_touching() {
         let key = if pair.collider1 < pair.collider2 {
@@ -318,6 +324,16 @@ fn impact_damage(world: &mut World) {
         if structural_contact {
             touching.insert(key);
             contact_count += 1;
+            #[cfg(feature = "acceptance-test")]
+            for entity in [pair.collider1, pair.collider2] {
+                if world.get::<RigidProjectile>(entity).is_some()
+                    && let Some(collider) = world.get::<Collider>(entity)
+                {
+                    let shape = collider.shape();
+                    sphere_contacts += u64::from(shape.as_ball().is_some());
+                    cube_contacts += u64::from(shape.as_cuboid().is_some());
+                }
+            }
             max_impulse = max_impulse.max(magnitude);
         }
     }
@@ -416,6 +432,11 @@ fn impact_damage(world: &mut World) {
     }
     let mut stats = world.resource_mut::<ImpactStats>();
     stats.contacts += contact_count;
+    #[cfg(feature = "acceptance-test")]
+    {
+        stats.sphere_contacts += sphere_contacts;
+        stats.cube_contacts += cube_contacts;
+    }
     stats.last_impulse = max_impulse;
     stats.max_impulse = stats.max_impulse.max(max_impulse);
     if let Some(report) = structural {

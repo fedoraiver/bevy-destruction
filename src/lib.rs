@@ -1,52 +1,82 @@
+#[cfg(feature = "acceptance-test")]
+pub mod acceptance;
 mod asset;
 mod camera;
 mod catalog;
+#[cfg(any(test, feature = "acceptance-test"))]
+#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod collapse_smoke;
 mod contact_mask;
+#[cfg(any(test, feature = "acceptance-test"))]
+#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod contact_smoke;
 mod debug;
+#[cfg(any(test, feature = "acceptance-test"))]
+#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod diagnostics;
 mod dust_material;
 mod force_debug;
 mod force_samples;
+#[cfg(any(test, feature = "acceptance-test"))]
+#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod force_smoke;
 mod force_visibility;
 mod fracture_detail;
 mod interaction;
+#[cfg(feature = "acceptance-test")]
 mod landing_smoke;
 mod material;
+#[cfg(feature = "acceptance-test")]
 mod material_smoke;
 mod physics;
+#[cfg(feature = "acceptance-test")]
 mod physics_smoke;
 mod projectiles;
 mod rim_profile;
 mod scene;
+#[cfg(feature = "acceptance-test")]
 mod smoke;
 mod stress;
 mod stress_runtime;
+#[cfg(any(test, feature = "acceptance-test"))]
+#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod stress_smoke;
 mod structure;
 mod vfx;
 
 use avian3d::prelude::*;
-use bevy::prelude::*;
+use bevy::{app::PluginGroupBuilder, prelude::*};
+
+const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
 #[derive(Resource)]
 struct DemoOptions {
     pub asset: String,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub physics_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub stress_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub material_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub contact_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub force_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub landing_smoke_output: Option<std::path::PathBuf>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub collapse_smoke_output: Option<std::path::PathBuf>,
     pub no_vfx: bool,
     pub no_stress: bool,
     pub no_detail: bool,
     pub no_soft_particles: bool,
+    #[cfg(feature = "acceptance-test")]
     pub capture_replay: bool,
+    #[cfg(any(test, feature = "acceptance-test"))]
+    smoke_target: Option<Handle<Image>>,
+    #[cfg(any(test, feature = "acceptance-test"))]
     pub profile: bool,
 }
 
@@ -54,19 +84,31 @@ impl Default for DemoOptions {
     fn default() -> Self {
         Self {
             asset: "buildings/rectangle.destruction.json".into(),
+            #[cfg(any(test, feature = "acceptance-test"))]
             smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             physics_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             stress_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             material_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             contact_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             force_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             landing_smoke_output: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             collapse_smoke_output: None,
             no_vfx: false,
             no_stress: false,
             no_detail: false,
             no_soft_particles: false,
+            #[cfg(feature = "acceptance-test")]
             capture_replay: false,
+            #[cfg(any(test, feature = "acceptance-test"))]
+            smoke_target: None,
+            #[cfg(any(test, feature = "acceptance-test"))]
             profile: false,
         }
     }
@@ -74,14 +116,37 @@ impl Default for DemoOptions {
 
 impl DemoOptions {
     pub fn scripted(&self) -> bool {
-        self.smoke_output.is_some()
-            || self.physics_smoke_output.is_some()
-            || self.stress_smoke_output.is_some()
-            || self.material_smoke_output.is_some()
-            || self.contact_smoke_output.is_some()
-            || self.force_smoke_output.is_some()
-            || self.landing_smoke_output.is_some()
-            || self.collapse_smoke_output.is_some()
+        #[cfg(any(test, feature = "acceptance-test"))]
+        {
+            self.smoke_output.is_some()
+                || self.physics_smoke_output.is_some()
+                || self.stress_smoke_output.is_some()
+                || self.material_smoke_output.is_some()
+                || self.contact_smoke_output.is_some()
+                || self.force_smoke_output.is_some()
+                || self.landing_smoke_output.is_some()
+                || self.collapse_smoke_output.is_some()
+        }
+        #[cfg(not(any(test, feature = "acceptance-test")))]
+        false
+    }
+
+    fn force_probe(&self) -> bool {
+        #[cfg(any(test, feature = "acceptance-test"))]
+        {
+            self.force_smoke_output.is_some()
+        }
+        #[cfg(not(any(test, feature = "acceptance-test")))]
+        false
+    }
+
+    #[cfg(any(test, feature = "acceptance-test"))]
+    fn smoke_screenshot(&self) -> bevy::render::view::screenshot::Screenshot {
+        bevy::render::view::screenshot::Screenshot::image(
+            self.smoke_target
+                .clone()
+                .expect("Smoke probe requires an offscreen target"),
+        )
     }
 }
 
@@ -99,65 +164,9 @@ fn options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String
                     .1
                     .into();
             }
-            "--smoke-test" => {
-                options.smoke_output = Some(
-                    args.next()
-                        .ok_or("--smoke-test requires an output directory")?
-                        .into(),
-                )
-            }
-            "--physics-smoke-test" => {
-                options.physics_smoke_output = Some(
-                    args.next()
-                        .ok_or("--physics-smoke-test requires an output directory")?
-                        .into(),
-                )
-            }
-            "--stress-smoke-test" => {
-                options.stress_smoke_output = Some(
-                    args.next()
-                        .ok_or("--stress-smoke-test requires an output directory")?
-                        .into(),
-                )
-            }
-            "--material-smoke-test" => {
-                options.material_smoke_output = Some(
-                    args.next()
-                        .ok_or("--material-smoke-test requires an output directory")?
-                        .into(),
-                );
-            }
-            "--force-smoke-test" => {
-                options.force_smoke_output = Some(
-                    args.next()
-                        .ok_or("--force-smoke-test requires an output directory")?
-                        .into(),
-                );
-            }
-            "--contact-smoke-test" => {
-                options.contact_smoke_output = Some(
-                    args.next()
-                        .ok_or("--contact-smoke-test requires an output directory")?
-                        .into(),
-                );
-            }
-            "--landing-smoke-test" => {
-                options.landing_smoke_output = Some(
-                    args.next()
-                        .ok_or("--landing-smoke-test requires an output directory")?
-                        .into(),
-                );
-            }
-            "--collapse-smoke-test" => {
-                options.collapse_smoke_output = Some(
-                    args.next()
-                        .ok_or("--collapse-smoke-test requires an output directory")?
-                        .into(),
-                );
-            }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --contact-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: load heat | Alt: inspect loads | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: load heat | Alt: inspect loads | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -165,27 +174,8 @@ fn options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String
             "--no-stress" => options.no_stress = true,
             "--no-detail" => options.no_detail = true,
             "--no-soft-particles" => options.no_soft_particles = true,
-            "--capture-replay" => options.capture_replay = true,
-            "--profile" => options.profile = true,
             _ => return Err(format!("Unknown option: {arg}")),
         }
-    }
-    if [
-        options.smoke_output.is_some(),
-        options.physics_smoke_output.is_some(),
-        options.stress_smoke_output.is_some(),
-        options.material_smoke_output.is_some(),
-        options.contact_smoke_output.is_some(),
-        options.force_smoke_output.is_some(),
-        options.landing_smoke_output.is_some(),
-        options.collapse_smoke_output.is_some(),
-    ]
-    .into_iter()
-    .filter(|enabled| *enabled)
-    .count()
-        > 1
-    {
-        return Err("Choose one smoke-test mode".into());
     }
     Ok(options)
 }
@@ -203,8 +193,27 @@ pub fn build_app() -> App {
 }
 
 fn build_app_with_options(options: DemoOptions) -> App {
-    let smoke_test = options.scripted();
-    let profile = options.profile;
+    let mut app = App::new();
+    app.add_plugins(engine_plugins().set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Bevy Destruction · Physical fracture".into(),
+            resolution: (DEFAULT_VIEWPORT.x, DEFAULT_VIEWPORT.y).into(),
+            ..default()
+        }),
+        ..default()
+    }));
+    install_game(&mut app, options);
+    app
+}
+
+fn engine_plugins() -> PluginGroupBuilder {
+    DefaultPlugins.build().set(AssetPlugin {
+        file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
+        ..default()
+    })
+}
+
+fn install_game(app: &mut App, options: DemoOptions) {
     let vfx_settings = vfx::VfxSettings {
         enabled: !options.no_vfx,
         ..default()
@@ -213,38 +222,16 @@ fn build_app_with_options(options: DemoOptions) -> App {
         enabled: !options.no_stress,
         ..default()
     };
-    let mut app = App::new();
     app.insert_resource(options)
         .insert_resource(vfx_settings)
         .insert_resource(stress_settings)
         .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Bevy Destruction · Physical fracture".into(),
-                        resolution: (1280, 900).into(),
-                        present_mode: if profile {
-                            bevy::window::PresentMode::AutoNoVsync
-                        } else {
-                            default()
-                        },
-                        ..default()
-                    }),
-                    ..default()
-                }),
-        )
         .add_plugins((
             PhysicsPlugins::default(),
             asset::DestructibleAssetPlugin,
             material::BuildingMaterialPlugin,
             dust_material::DustMaterialPlugin,
-            diagnostics::MetricsPlugin,
             debug::FractureDebugPlugin,
             force_debug::ForceDebugPlugin,
             scene::DemoScenePlugin,
@@ -252,32 +239,11 @@ fn build_app_with_options(options: DemoOptions) -> App {
             camera::FreeCameraPlugin,
             interaction::InteractionPlugin,
             vfx::VfxPlugin,
-            smoke::SmokePlugin,
-            physics_smoke::PhysicsSmokePlugin,
-        ))
-        .add_plugins((
             stress_runtime::StressRuntimePlugin,
             projectiles::ProjectilePlugin,
-            stress_smoke::StressSmokePlugin,
             catalog::CatalogPlugin,
-            material_smoke::MaterialSmokePlugin,
-            contact_smoke::ContactSmokePlugin,
-            landing_smoke::LandingSmokePlugin,
-            collapse_smoke::CollapseSmokePlugin,
-            force_smoke::ForceSmokePlugin,
         ))
         .add_systems(Update, close_on_escape);
-    if smoke_test {
-        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-            std::time::Duration::from_secs_f64(1.0 / 60.0),
-        ));
-    }
-    if profile {
-        app.insert_resource(bevy::winit::WinitSettings::continuous());
-        app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
-            .add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-    }
-    app
 }
 
 fn close_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {

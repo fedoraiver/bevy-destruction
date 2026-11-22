@@ -51,6 +51,8 @@ impl Plugin for DemoScenePlugin {
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "acceptance-test", reflect(Component, no_auto_register))]
 pub struct DemoCamera;
 
 #[derive(Component)]
@@ -210,6 +212,7 @@ struct DetailMeshCache {
 #[derive(Component)]
 pub struct DamageDetail {
     pub patch_ids: Vec<String>,
+    #[cfg(feature = "acceptance-test")]
     pub triangles: usize,
 }
 
@@ -791,6 +794,7 @@ fn update_details(
                 mesh
             });
             let entity = if let Some(mesh) = combined {
+                #[cfg(feature = "acceptance-test")]
                 let triangles = mesh
                     .indices()
                     .map_or(mesh.count_vertices(), |indices| indices.len())
@@ -813,6 +817,7 @@ fn update_details(
                             Transform::IDENTITY,
                             DamageDetail {
                                 patch_ids,
+                                #[cfg(feature = "acceptance-test")]
                                 triangles,
                             },
                         ))

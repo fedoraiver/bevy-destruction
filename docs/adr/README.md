@@ -42,5 +42,6 @@
 | [0015](0015-follow-bevy-cicd-main.md) | 跟踪 bevy-cicd 主分支 |
 | [0016](0016-shared-schedule-export.md) | 共享工作流运行 Bevy 调度导出 |
 | [0017](0017-bevy-compiler-rules.md) | 在 Rust CI 中自动运行 Bevy 编译器规则 |
+| [0018](0018-windowless-acceptance.md) | 独立运行无窗验收 |
 
-新增决策从 0018 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+新增决策从 0019 开始顺序编号。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

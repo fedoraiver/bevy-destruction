@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use avian3d::prelude::*;
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
+use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
     DemoOptions,
@@ -89,11 +86,16 @@ fn roof_pair(manifest: &Manifest) -> Option<Vec<String>> {
         .map(|(_, a, b)| vec![a.clone(), b.clone()])
 }
 
-fn capture(commands: &mut Commands, directory: &std::path::Path, name: &str) {
+fn capture(
+    commands: &mut Commands,
+    options: &DemoOptions,
+    directory: &std::path::Path,
+    name: &str,
+) {
     commands
         .spawn((
             Name::new("Physics smoke screenshot"),
-            Screenshot::primary_window(),
+            options.smoke_screenshot(),
         ))
         .observe(save_to_disk(directory.join(name)));
 }
@@ -286,7 +288,7 @@ fn drive(
     match state.frame {
         10 => {
             std::fs::create_dir_all(directory).expect("Create physics smoke output");
-            capture(&mut commands, directory, "01-supported.png");
+            capture(&mut commands, &options, directory, "01-supported.png");
         }
         20 => {
             let Some(selected) = roof_pair(&asset.manifest) else {
@@ -395,7 +397,7 @@ fn drive(
                     .errors
                     .push("Unsupported cluster did not fall under gravity".into());
             }
-            capture(&mut commands, directory, "02-falling.png");
+            capture(&mut commands, &options, directory, "02-falling.png");
         }
         40 => {
             info!(
@@ -485,7 +487,7 @@ fn drive(
                         .push("Supported building moved while debris fell".into());
                 }
             }
-            capture(&mut commands, directory, "03-settled.png");
+            capture(&mut commands, &options, directory, "03-settled.png");
         }
         930 => {
             for name in ["01-supported.png", "02-falling.png", "03-settled.png"] {

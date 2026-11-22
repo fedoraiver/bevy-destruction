@@ -65,6 +65,7 @@ pub struct BondLoadState {
 }
 
 #[derive(Clone)]
+#[cfg_attr(not(any(test, feature = "acceptance-test")), expect(dead_code))]
 pub struct StressComponentReport {
     pub chunks: usize,
     pub valid: bool,

@@ -39,6 +39,13 @@ pub struct FreeCamera {
     pitch: f32,
 }
 
+#[cfg(feature = "acceptance-test")]
+impl FreeCamera {
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+}
+
 #[derive(Component)]
 pub struct Crosshair;
 

@@ -14,10 +14,13 @@ impl Plugin for MetricsPlugin {
 }
 
 #[derive(Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "acceptance-test", reflect(no_auto_register))]
 pub struct Samples {
     pub count: usize,
     pub total_ms: f64,
     pub max_ms: f64,
+    #[cfg_attr(feature = "acceptance-test", reflect(ignore))]
     last_measurement: Option<Instant>,
 }
 
@@ -34,10 +37,13 @@ impl Samples {
 }
 
 #[derive(Resource, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "acceptance-test", reflect(Resource, no_auto_register))]
 pub struct RunMetrics {
     pub phase: u32,
     pub wall_frame: Samples,
     pub render: BTreeMap<String, Samples>,
+    #[cfg_attr(feature = "acceptance-test", reflect(ignore))]
     last_frame: Option<Instant>,
 }
 
