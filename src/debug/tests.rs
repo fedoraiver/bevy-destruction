@@ -19,17 +19,17 @@ fn zero_toggles_on_press_edges_for_both_keyboard_locations() {
         .resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::Digit0);
     app.update();
-    assert!(app.world().resource::<DebugOverlay>().0);
+    assert!(app.world().resource::<DebugOverlay>().enabled);
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()
         .clear();
     app.update();
-    assert!(app.world().resource::<DebugOverlay>().0);
+    assert!(app.world().resource::<DebugOverlay>().enabled);
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::Numpad0);
     app.update();
-    assert!(!app.world().resource::<DebugOverlay>().0);
+    assert!(!app.world().resource::<DebugOverlay>().enabled);
 }
 
 #[test]
@@ -37,14 +37,14 @@ fn welds_material_primitives_and_removes_the_square_diagonal() {
     let a = triangle([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]]);
     let b = triangle([[0.000003, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]);
     let edges = fracture_edges([&a, &b]).unwrap();
-    assert_eq!(edges.0.len(), 4);
+    assert_eq!(edges.segments.len(), 4);
 }
 
 #[test]
 fn preserves_real_folds_and_open_boundaries() {
     let a = triangle([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
     let b = triangle([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
-    assert_eq!(fracture_edges([&a, &b]).unwrap().0.len(), 5);
+    assert_eq!(fracture_edges([&a, &b]).unwrap().segments.len(), 5);
 }
 
 #[test]
@@ -53,5 +53,5 @@ fn removes_coplanar_edges_at_material_t_junctions() {
     let b = triangle([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, -1.0, 0.0]]);
     let c = triangle([[2.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, -1.0, 0.0]]);
     let edges = fracture_edges([&a, &b, &c]).unwrap();
-    assert_eq!(edges.0.len(), 4);
+    assert_eq!(edges.segments.len(), 4);
 }

@@ -145,7 +145,9 @@ struct VfxAssets {
 }
 
 #[derive(Component)]
-struct PipelineWarmup(u16);
+struct PipelineWarmup {
+    frames_remaining: u16,
+}
 
 fn material_palette(material: &str) -> usize {
     match material {
@@ -279,7 +281,9 @@ fn setup(
     warmup_settings.update(0.0, 1.0, 0, 0.0, 0.0);
     commands.spawn((
         Name::new("Dust pipeline warmup"),
-        PipelineWarmup(90),
+        PipelineWarmup {
+            frames_remaining: 90,
+        },
         NoFrustumCulling,
         NotShadowCaster,
         Mesh3d(billboard.clone()),
@@ -292,7 +296,9 @@ fn setup(
     for material in solids[0].iter().take(2) {
         commands.spawn((
             Name::new("Debris pipeline warmup"),
-            PipelineWarmup(90),
+            PipelineWarmup {
+                frames_remaining: 90,
+            },
             NoFrustumCulling,
             NotShadowCaster,
             Mesh3d(debris[0].clone()),
@@ -318,8 +324,8 @@ fn prewarm_pipelines(
     mut warmups: Query<(Entity, &mut PipelineWarmup, &mut Transform), Without<DemoCamera>>,
 ) {
     for (entity, mut warmup, mut transform) in &mut warmups {
-        warmup.0 -= 1;
-        if warmup.0 == 0 {
+        warmup.frames_remaining -= 1;
+        if warmup.frames_remaining == 0 {
             commands.entity(entity).despawn();
         } else if let Ok(camera) = cameras.single() {
             transform.translation =

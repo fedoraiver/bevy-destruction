@@ -91,7 +91,10 @@ fn roof_pair(manifest: &Manifest) -> Option<Vec<String>> {
 
 fn capture(commands: &mut Commands, directory: &std::path::Path, name: &str) {
     commands
-        .spawn(Screenshot::primary_window())
+        .spawn((
+            Name::new("Physics smoke screenshot"),
+            Screenshot::primary_window(),
+        ))
         .observe(save_to_disk(directory.join(name)));
 }
 

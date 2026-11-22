@@ -64,7 +64,9 @@ pub struct FlightInput {
 }
 
 #[derive(Resource, Default)]
-pub struct ScriptedFlight(pub Option<FlightInput>);
+pub struct ScriptedFlight {
+    pub input: Option<FlightInput>,
+}
 
 fn initial_position(bounds: BuildingBounds, aspect: f32) -> Vec3 {
     let center = bounds.center();
@@ -163,7 +165,7 @@ pub(crate) fn move_camera(
         return;
     }
     let input = if smoke {
-        scripted.0.take().unwrap_or_default()
+        scripted.input.take().unwrap_or_default()
     } else {
         FlightInput {
             movement: keyboard_movement(&keys),

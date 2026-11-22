@@ -82,7 +82,9 @@ impl Default for BuildingSurface {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct SurfaceMeshCache(BTreeMap<(AssetId<Mesh>, [u32; 16]), Handle<Mesh>>);
+pub(crate) struct SurfaceMeshCache {
+    meshes: BTreeMap<(AssetId<Mesh>, [u32; 16]), Handle<Mesh>>,
+}
 
 impl SurfaceMeshCache {
     pub(crate) fn get_or_create(
@@ -95,7 +97,7 @@ impl SurfaceMeshCache {
             source.id(),
             rest_from_mesh.to_matrix().to_cols_array().map(f32::to_bits),
         );
-        self.0
+        self.meshes
             .entry(key)
             .or_insert_with(|| {
                 let mesh = meshes.get(source).expect("Validated building mesh").clone();
@@ -111,7 +113,7 @@ fn release_surface_meshes(
 ) {
     for event in events.read() {
         if let AssetEvent::Removed { id } = event {
-            cache.0.retain(|(source, _), _| source != id);
+            cache.meshes.retain(|(source, _), _| source != id);
         }
     }
 }

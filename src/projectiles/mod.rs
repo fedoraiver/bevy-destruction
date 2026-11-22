@@ -57,7 +57,9 @@ pub struct LaunchRequest {
 }
 
 #[derive(Resource, Default)]
-pub struct LaunchRequests(pub VecDeque<LaunchRequest>);
+pub struct LaunchRequests {
+    pub queue: VecDeque<LaunchRequest>,
+}
 
 #[derive(Component)]
 pub struct RigidProjectile {
@@ -109,7 +111,7 @@ struct ImpactState {
 }
 
 pub(crate) fn reset(world: &mut World) {
-    world.resource_mut::<LaunchRequests>().0.clear();
+    world.resource_mut::<LaunchRequests>().queue.clear();
     *world.resource_mut::<ImpactState>() = ImpactState::default();
     *world.resource_mut::<ImpactStats>() = ImpactStats::default();
 }
@@ -138,7 +140,7 @@ fn fire(
         return;
     };
     if let Ok(camera) = cameras.single() {
-        requests.0.push_back(LaunchRequest {
+        requests.queue.push_back(LaunchRequest {
             origin: camera.translation() + camera.forward() * 1.5,
             direction: camera.forward(),
             shape,
@@ -155,7 +157,7 @@ fn spawn_projectiles(
     mut stats: ResMut<ImpactStats>,
 ) {
     let mut count = projectiles.iter().len();
-    for request in requests.0.drain(..) {
+    for request in requests.queue.drain(..) {
         if count >= 12 {
             continue;
         }

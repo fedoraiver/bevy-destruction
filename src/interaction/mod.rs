@@ -27,10 +27,14 @@ impl Plugin for InteractionPlugin {
 }
 
 #[derive(Resource, Default)]
-pub struct DamageRequests(pub VecDeque<Ray3d>);
+pub struct DamageRequests {
+    pub rays: VecDeque<Ray3d>,
+}
 
 #[derive(Resource, Default)]
-pub struct ScriptedClick(pub Option<Vec2>);
+pub struct ScriptedClick {
+    pub cursor: Option<Vec2>,
+}
 
 pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[String]) {
     let instance = world.get::<BuildingInstance>(building).unwrap();
@@ -106,7 +110,7 @@ pub(crate) fn cursor_damage(
         return;
     };
     let cursor = if options.scripted() {
-        scripted.0.take()
+        scripted.cursor.take()
     } else {
         if !control.captured || control.suppress_click || !window.focused {
             return;
@@ -119,7 +123,7 @@ pub(crate) fn cursor_damage(
     if let Some(cursor) = cursor
         && let Ok(ray) = camera.viewport_to_world(&transform, cursor)
     {
-        requests.0.push_back(ray);
+        requests.rays.push_back(ray);
     }
 }
 
@@ -174,7 +178,7 @@ pub fn apply_damage(
     assets: Res<Assets<DestructibleAsset>>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
-    while let Some(ray) = requests.0.pop_front() {
+    while let Some(ray) = requests.rays.pop_front() {
         let hit = spatial.cast_ray_predicate(
             ray.origin,
             ray.direction,

@@ -406,6 +406,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             });
         let primitive = world
             .spawn((
+                Name::new(format!("{} force fixture primitive", shape.id)),
                 Mesh3d(mesh),
                 MeshMaterial3d(material.clone()),
                 MeshTag::new(0),
@@ -550,6 +551,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         let source_surface = original_material.building.clone();
         let primitive = world
             .spawn((
+                Name::new(format!("Neutral twin {id} primitive")),
                 Mesh3d(mesh),
                 MeshMaterial3d(source.clone()),
                 MeshTag::new(0),
@@ -790,7 +792,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
     }
     if state.applied != Some(state.phase) {
         world.resource_mut::<ForceCapture>().enabled = matches!(state.phase, 1..=3 | 6..=9);
-        world.resource_mut::<ScriptedForceInspection>().0 = matches!(state.phase, 3 | 8);
+        world.resource_mut::<ScriptedForceInspection>().held = matches!(state.phase, 3 | 8);
         if state.phase == 5 {
             state.fixture = Some(spawn_visibility_fixture(world));
         }
@@ -847,14 +849,14 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                     .looking_at(target, Vec3::Y)
                     .rotation
                     .to_euler(EulerRot::YXZ);
-                world.resource_mut::<crate::camera::ScriptedFlight>().0 =
+                world.resource_mut::<crate::camera::ScriptedFlight>().input =
                     Some(crate::camera::FlightInput {
                         movement: Vec3::ZERO,
                         mouse: Vec2::new(-yaw, -pitch) / crate::camera::LOOK_SENSITIVITY,
                     });
                 world
                     .resource_mut::<LaunchRequests>()
-                    .0
+                    .queue
                     .push_back(LaunchRequest {
                         origin: eye + *direction * 1.5,
                         direction,
@@ -968,7 +970,11 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
     let phase = state.phase;
     let path = directory.join(NAMES[phase]);
     let retry_hold = wait.saturating_sub(10);
-    world.spawn(Screenshot::primary_window()).observe(
+    let screenshot = (
+        Name::new("Force smoke screenshot"),
+        Screenshot::primary_window(),
+    );
+    world.spawn(screenshot).observe(
         move |capture: On<ScreenshotCaptured>, mut state: ResMut<ForceSmokeState>| {
             state.pending = false;
             match capture.image.clone().try_into_dynamic() {

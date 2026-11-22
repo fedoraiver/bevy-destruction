@@ -10,10 +10,14 @@ const WELD_TOLERANCE: f32 = 0.00001;
 const COPLANAR_COSINE: f32 = 0.99996;
 
 #[derive(Component, Debug, Clone, Default)]
-pub struct FractureEdges(pub Vec<[Vec3; 2]>);
+pub struct FractureEdges {
+    pub segments: Vec<[Vec3; 2]>,
+}
 
 #[derive(Resource, Default)]
-pub struct DebugOverlay(pub bool);
+pub struct DebugOverlay {
+    pub enabled: bool,
+}
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct FractureGizmos;
@@ -38,7 +42,7 @@ fn configure_lines(mut configs: ResMut<GizmoConfigStore>) {
 
 fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut overlay: ResMut<DebugOverlay>) {
     if keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0) {
-        overlay.0 = !overlay.0;
+        overlay.enabled = !overlay.enabled;
     }
 }
 
@@ -47,14 +51,14 @@ fn draw_edges(
     chunks: Query<(&FractureEdges, &GlobalTransform, &InheritedVisibility)>,
     mut gizmos: Gizmos<FractureGizmos>,
 ) {
-    if !overlay.0 {
+    if !overlay.enabled {
         return;
     }
     for (edges, transform, visibility) in &chunks {
         if !visibility.get() {
             continue;
         }
-        for [a, b] in &edges.0 {
+        for [a, b] in &edges.segments {
             gizmos.line(
                 transform.transform_point(*a),
                 transform.transform_point(*b),
@@ -159,7 +163,7 @@ pub fn fracture_edges<'a>(
             .find(|ordering| !ordering.is_eq())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    Ok(FractureEdges(edges))
+    Ok(FractureEdges { segments: edges })
 }
 
 fn weld(

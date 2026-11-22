@@ -34,7 +34,7 @@ fn app() -> App {
 fn launch(app: &mut App, shape: ProjectileShape) -> Entity {
     app.world_mut()
         .resource_mut::<LaunchRequests>()
-        .0
+        .queue
         .push_back(LaunchRequest {
             origin: Vec3::new(0.0, 1.1, 5.0),
             direction: Dir3::NEG_Z,

@@ -54,7 +54,9 @@ impl Default for StressSettings {
 
 /// Applied loads in building coordinates, with moments at the authored structural nodes.
 #[derive(Resource, Default)]
-pub struct StructuralLoads(pub BTreeMap<Entity, BTreeMap<String, NodeLoad>>);
+pub struct StructuralLoads {
+    pub by_building: BTreeMap<Entity, BTreeMap<String, NodeLoad>>,
+}
 
 pub struct BondLoadState {
     pub stress: BondStress,
@@ -183,7 +185,7 @@ pub(crate) fn update_stress(world: &mut World) {
         let empty_loads = BTreeMap::new();
         let loads = world
             .resource::<StructuralLoads>()
-            .0
+            .by_building
             .get(&building)
             .unwrap_or(&empty_loads);
         let unchanged = state.cache.is_some_and(|cache| {

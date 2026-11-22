@@ -6,11 +6,6 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
-    inputs:
-      compiler-rules:
-        description: Also run the Bevy entity-name and named-field checks
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -20,5 +15,4 @@ jobs:
     uses: fedoraiver/bevy-cicd/.github/workflows/rust-checks.yml@main
 
   compiler-rules:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.compiler-rules }}
     uses: fedoraiver/bevy-cicd/.github/workflows/bevy-rules.yml@main

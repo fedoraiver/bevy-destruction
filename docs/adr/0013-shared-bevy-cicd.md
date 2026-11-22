@@ -2,7 +2,7 @@
 
 ## 状态
 
-2026-11-21 采用。静态架构索引的发布方案由 [ADR 0014](0014-generated-ecs-architecture.md) 替代。共享工作流的固定 SHA 策略由 [ADR 0015](0015-follow-bevy-cicd-main.md) 替代。
+2026-11-21 采用。静态架构索引的发布方案由 [ADR 0014](0014-generated-ecs-architecture.md) 替代。共享工作流的固定 SHA 策略由 [ADR 0015](0015-follow-bevy-cicd-main.md) 替代。编译器规则的手动触发策略由 [ADR 0017](0017-bevy-compiler-rules.md) 替代。
 
 ## 背景
 

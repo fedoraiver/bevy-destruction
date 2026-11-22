@@ -163,14 +163,14 @@ fn unloaded_source_releases_cached_copies_without_removing_live_meshes() {
                 (live, cached.id())
             });
     let entity = app.world_mut().spawn(Mesh3d(live.clone())).id();
-    assert_eq!(app.world().resource::<SurfaceMeshCache>().0.len(), 2);
+    assert_eq!(app.world().resource::<SurfaceMeshCache>().meshes.len(), 2);
     app.world_mut()
         .resource_mut::<Assets<Mesh>>()
         .remove(source.id());
     for _ in 0..4 {
         app.update();
     }
-    assert!(app.world().resource::<SurfaceMeshCache>().0.is_empty());
+    assert!(app.world().resource::<SurfaceMeshCache>().meshes.is_empty());
     assert!(app.world().resource::<Assets<Mesh>>().get(&live).is_some());
     assert!(
         app.world()

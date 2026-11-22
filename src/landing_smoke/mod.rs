@@ -51,7 +51,10 @@ struct LandingState {
 fn capture(commands: &mut Commands, options: &DemoOptions, name: &str) {
     if !options.profile {
         commands
-            .spawn(Screenshot::primary_window())
+            .spawn((
+                Name::new("Landing smoke screenshot"),
+                Screenshot::primary_window(),
+            ))
             .observe(save_to_disk(
                 options.landing_smoke_output.as_ref().unwrap().join(name),
             ));

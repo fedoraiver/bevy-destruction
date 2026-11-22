@@ -66,7 +66,14 @@ fn capture(
     if options.profile {
         return;
     }
-    let entity = *pending.get_or_insert_with(|| commands.spawn(Screenshot::primary_window()).id());
+    let entity = *pending.get_or_insert_with(|| {
+        commands
+            .spawn((
+                Name::new("Destruction smoke screenshot"),
+                Screenshot::primary_window(),
+            ))
+            .id()
+    });
     commands
         .entity(entity)
         .observe(save_to_disk(directory.join(name)));
@@ -166,7 +173,7 @@ fn drive(
         let travel = destination - transform.translation;
         if travel.length() > 0.11 {
             let basis = Mat3::from_cols(*transform.right(), Vec3::Y, *transform.back());
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 movement: basis.inverse() * travel.normalize(),
                 ..default()
             });
@@ -185,7 +192,7 @@ fn drive(
         }
         20 => state.camera_origin = Some(*cameras.single().expect("Smoke camera").2),
         21 => {
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 movement: Vec3::new(1.0, 1.0, -1.0),
                 ..default()
             })
@@ -199,13 +206,13 @@ fn drive(
                     .errors
                     .push("Free flight did not move at normalized 6m/s".into());
             }
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 movement: Vec3::new(-1.0, -1.0, 1.0),
                 ..default()
             });
         }
         25 => {
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 mouse: Vec2::new(125.0, -75.0),
                 ..default()
             })
@@ -218,7 +225,7 @@ fn drive(
                     .errors
                     .push("Mouse look did not apply yaw and pitch".into());
             }
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 mouse: Vec2::new(-125.0, 75.0),
                 ..default()
             });
@@ -250,7 +257,7 @@ fn drive(
             }
         }
         65..=69 => {
-            flight.0 = Some(FlightInput {
+            flight.input = Some(FlightInput {
                 movement: Vec3::X,
                 ..default()
             })
@@ -285,7 +292,7 @@ fn drive(
                 window,
             });
         }
-        110 => debug.0 = true,
+        110 => debug.enabled = true,
         130 => capture(
             &mut commands,
             &mut pending_capture,
@@ -293,7 +300,7 @@ fn drive(
             directory,
             "02-fracture-edges.png",
         ),
-        145 => debug.0 = false,
+        145 => debug.enabled = false,
         148 => {
             if let Some(point) = target {
                 let transform = cameras.single().expect("Smoke camera").2;
@@ -301,7 +308,7 @@ fn drive(
                     Transform::from_translation(transform.translation).looking_at(point, Vec3::Y);
                 let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
                 let (target_yaw, target_pitch, _) = aimed.rotation.to_euler(EulerRot::YXZ);
-                flight.0 = Some(FlightInput {
+                flight.input = Some(FlightInput {
                     mouse: Vec2::new(yaw - target_yaw, pitch - target_pitch) / LOOK_SENSITIVITY,
                     ..default()
                 });
@@ -322,7 +329,7 @@ fn drive(
                         .push("Mouse look did not aim the centre ray at the target".into());
                 }
                 data.set_cursor_position(Some(cursor));
-                scripted.0 = Some(cursor);
+                scripted.cursor = Some(cursor);
                 commands.write_message(bevy::input::mouse::MouseButtonInput {
                     button: MouseButton::Left,
                     state: bevy::input::ButtonState::Pressed,
@@ -488,7 +495,7 @@ fn drive(
                     Transform::from_translation(transform.translation).looking_at(point, Vec3::Y);
                 let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
                 let (target_yaw, target_pitch, _) = aimed.rotation.to_euler(EulerRot::YXZ);
-                flight.0 = Some(FlightInput {
+                flight.input = Some(FlightInput {
                     mouse: Vec2::new(yaw - target_yaw, pitch - target_pitch) / LOOK_SENSITIVITY,
                     ..default()
                 });
@@ -514,7 +521,7 @@ fn drive(
                 .take(48)
             {
                 requests
-                    .0
+                    .rays
                     .push_back(Ray3d::new(point + Vec3::Z * 20.0, Dir3::NEG_Z));
             }
         }

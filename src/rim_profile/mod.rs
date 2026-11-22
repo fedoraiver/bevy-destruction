@@ -11,12 +11,14 @@ pub struct RimSample {
     pub embed: f32,
 }
 
-struct Random(u64);
+struct Random {
+    state: u64,
+}
 
 impl Random {
     fn unit(&mut self) -> f32 {
-        self.0 = self.0.wrapping_add(0x9e3779b97f4a7c15);
-        let mut value = self.0;
+        self.state = self.state.wrapping_add(0x9e3779b97f4a7c15);
+        let mut value = self.state;
         value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
         value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
         value ^= value >> 31;
@@ -65,7 +67,7 @@ fn reduce(samples: &mut Vec<RimSample>, limit: usize) {
 }
 
 fn channel(samples: &[RimSample], seed: u64, range: [f32; 2], span: [f32; 2]) -> Vec<f32> {
-    let mut random = Random(seed);
+    let mut random = Random { state: seed };
     let mut start = 0.0;
     let mut end = random.range(span[0], span[1]);
     let mut first = random.range(range[0], range[1]);
@@ -105,7 +107,7 @@ pub fn rim_profile(id: &str, start: Vec3, end: Vec3) -> Vec<RimSample> {
     ) {
         seed = (seed ^ u64::from(byte)).wrapping_mul(0x100000001b3);
     }
-    let mut random = Random(seed);
+    let mut random = Random { state: seed };
     let length = first.distance(last);
     let mut samples = vec![sample(0.0, 0.0)];
     let mut distance = 0.0;

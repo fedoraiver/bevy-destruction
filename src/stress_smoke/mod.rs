@@ -285,6 +285,7 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
             .add(Cuboid::from_size(size));
         let primitive = world
             .spawn((
+                Name::new(format!("{} stress fixture primitive", record.id)),
                 Mesh3d(mesh),
                 MeshMaterial3d(material.clone()),
                 Transform::IDENTITY,
@@ -327,7 +328,10 @@ pub(crate) fn remove_left_support(world: &mut World, root: Entity) {
 
 fn capture(commands: &mut Commands, directory: &std::path::Path, name: &str) {
     commands
-        .spawn(Screenshot::primary_window())
+        .spawn((
+            Name::new("Stress smoke screenshot"),
+            Screenshot::primary_window(),
+        ))
         .observe(save_to_disk(directory.join(name)));
 }
 
@@ -554,7 +558,7 @@ fn drive(
                     projectiles.iter().map(|projectile| projectile.0).collect();
                 state.before_contacts = impacts.contacts;
                 state.before_impact_breaks = impacts.broken_bonds;
-                launches.0.push_back(LaunchRequest {
+                launches.queue.push_back(LaunchRequest {
                     origin: target + Vec3::Z * 5.0,
                     direction: Dir3::NEG_Z,
                     shape: if state.frame == 800 {

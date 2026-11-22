@@ -175,7 +175,9 @@ fn release_geometry_cache(
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct RimMaterials(BTreeMap<String, Handle<BuildingMaterial>>);
+pub(crate) struct RimMaterials {
+    by_material: BTreeMap<String, Handle<BuildingMaterial>>,
+}
 
 impl RimMaterials {
     fn get_or_create(
@@ -183,7 +185,7 @@ impl RimMaterials {
         material_id: &str,
         materials: &mut Assets<BuildingMaterial>,
     ) -> Handle<BuildingMaterial> {
-        self.0
+        self.by_material
             .entry(material_id.into())
             .or_insert_with(|| materials.add(rim_material(material_id)))
             .clone()
@@ -191,7 +193,9 @@ impl RimMaterials {
 }
 
 #[derive(Component)]
-struct RimPipelineWarmup(u32);
+struct RimPipelineWarmup {
+    frames_remaining: u32,
+}
 
 struct CachedDetailMesh {
     mesh: Mesh,
@@ -199,9 +203,9 @@ struct CachedDetailMesh {
 }
 
 #[derive(Resource, Default)]
-struct DetailMeshCache(
-    BTreeMap<(AssetId<DestructibleAsset>, usize, bool), Option<Arc<CachedDetailMesh>>>,
-);
+struct DetailMeshCache {
+    by_patch: BTreeMap<(AssetId<DestructibleAsset>, usize, bool), Option<Arc<CachedDetailMesh>>>,
+}
 
 #[derive(Component)]
 pub struct DamageDetail {
@@ -239,6 +243,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
         Node { position_type: PositionType::Absolute, width: percent(100.0), height: percent(100.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center }
         Visibility::Visible
         Children [
+            Name::new("Crosshair glyph")
             Text::new("+")
             TextFont { font_size: px(24.0) }
             TextColor(Color::srgb(0.95, 0.7, 0.3))
@@ -259,6 +264,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
         ));
     commands
         .spawn_scene(bsn! {
+            Name::new("Building status")
             Text::new("Loading building…")
             TextFont { font_size: px(19.0) }
             TextColor(Color::srgb(0.88, 0.9, 0.94))
@@ -291,7 +297,9 @@ fn warm_rim_pipeline(
     let mesh = surface_coordinates(mesh, Transform::IDENTITY);
     commands.spawn((
         Name::new("Fracture rim pipeline warmup"),
-        RimPipelineWarmup(90),
+        RimPipelineWarmup {
+            frames_remaining: 90,
+        },
         NoFrustumCulling,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(rim_materials.get_or_create("concrete", &mut materials)),
@@ -306,8 +314,8 @@ fn maintain_rim_warmup(
     mut warmups: Query<(Entity, &mut RimPipelineWarmup, &mut Transform), Without<DemoCamera>>,
 ) {
     for (entity, mut warmup, mut transform) in &mut warmups {
-        warmup.0 -= 1;
-        if warmup.0 == 0 {
+        warmup.frames_remaining -= 1;
+        if warmup.frames_remaining == 0 {
             commands.entity(entity).despawn();
         } else if let Ok(camera) = cameras.single() {
             transform.translation =
@@ -745,7 +753,7 @@ fn update_details(
             for &patch_index in exposed.get(&id).into_iter().flatten() {
                 let patch = &instance.patches[patch_index];
                 let cached = detail_cache
-                    .0
+                    .by_patch
                     .entry((instance.asset.id(), patch_index, patch.a == id))
                     .or_insert_with(|| {
                         detail_mesh(patch, &id).map(|mesh| {
@@ -819,12 +827,12 @@ fn update_details(
     stats.active_meshes = mesh_count;
     stats.triangles = triangle_count;
     stats.cached_meshes = detail_cache
-        .0
+        .by_patch
         .values()
         .filter(|mesh| mesh.is_some())
         .count();
     stats.cached_triangles = detail_cache
-        .0
+        .by_patch
         .values()
         .flatten()
         .map(|mesh| mesh.triangles)

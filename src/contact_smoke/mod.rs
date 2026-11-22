@@ -278,7 +278,9 @@ fn setup(
     ));
     let rest = rest();
     let inverse = Transform::from_matrix(rest.to_matrix().inverse());
-    let parent = commands.spawn((rest, Visibility::Visible)).id();
+    let parent = commands
+        .spawn((Name::new("Contact probe root"), rest, Visibility::Visible))
+        .id();
     state.parent = Some(parent);
     let imported = GltfMaterial {
         double_sided: true,
@@ -359,6 +361,7 @@ fn setup(
     );
     let camera = commands
         .spawn((
+            Name::new("Contact probe camera"),
             Camera3d::default(),
             Camera {
                 order: -1,
@@ -385,6 +388,7 @@ fn setup(
     state.light = Some(
         commands
             .spawn((
+                Name::new("Contact probe light"),
                 DirectionalLight {
                     illuminance: 6500.0,
                     shadow_maps_enabled: false,
@@ -408,9 +412,10 @@ fn setup(
         })
         .collect();
     let marker = meshes.add(rectangle(Vec2::splat(-0.5), Vec2::splat(0.5), 0.0));
-    for _ in 0..6 {
+    for index in 0..6 {
         let entity = commands
             .spawn((
+                Name::new(format!("Contact probe marker {index}")),
                 Mesh3d(marker.clone()),
                 MeshMaterial3d(state.marker_materials[0].clone()),
                 Transform::IDENTITY,
@@ -595,7 +600,10 @@ fn tick(world: &mut World, state: &mut ContactState, directory: &std::path::Path
     ));
     let rejected = directory.join("rejected-first-readback.png");
     world
-        .spawn(Screenshot::image(state.target.clone()))
+        .spawn((
+            Name::new("Contact smoke screenshot"),
+            Screenshot::image(state.target.clone()),
+        ))
         .observe(
             move |capture: On<ScreenshotCaptured>, mut state: ResMut<ContactState>| {
                 state.pending = false;

@@ -61,7 +61,9 @@ Rust 二进制入口位于 `src/main.rs`，应用装配位于 `src/lib.rs`。模
 
 ## 验证
 
-PR 和 master 推送运行 GitHub Actions 中的 Rust CI。实体命名和具名字段检查可在 Rust CI 中手动启用。独立的 Pages 工作流通过 bevy-cicd 构建并运行调度导出入口，用 Rust 编译事实和实际注册的 Bevy 调度生成站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0016](docs/adr/0016-shared-schedule-export.md)
+面向 `master` 的 PR、`master` 推送和手动启动都会运行 Rust CI，包括 bevy-cicd 的 `entity-names`（实体命名）和 `named-fields`（具名字段）检查。[ADR 0017](docs/adr/0017-bevy-compiler-rules.md)
+
+独立的 Pages 工作流通过 bevy-cicd 构建并运行调度导出入口，用 Rust 编译事实和实际注册的 Bevy 调度生成站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0016](docs/adr/0016-shared-schedule-export.md)
 
 制作端的 63 项不同 Blender 测试及独立插件安装/启停通过，六个正式 v2 目录的清单、GLB 哈希/材质、真实接触覆盖、自重平衡均通过。矩形楼点击破坏、偏侧支撑倾倒已有实际画面验证。受力热力与局部详查通过 11 阶段图形检查，含遮挡、窗洞拾取和实例隔离。断面着色通过 8 组/40 张真实 GPU 对照及材质运动检查。当前 Rust 完整回归包含 147 项，包括板式高楼落地分簇与内部断裂。正常构建、严格 Clippy 和格式检查通过。各次验证的资产快照与范围见 [设计决策索引](docs/adr/README.md)。
 

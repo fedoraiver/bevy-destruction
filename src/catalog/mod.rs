@@ -55,7 +55,7 @@ fn switch_scene(
     for entity in instances.iter().chain(projectiles.iter()) {
         commands.entity(entity).despawn();
     }
-    loads.0.clear();
+    loads.by_building.clear();
     for mut particle in &mut particles {
         particle.age = particle.lifetime;
     }

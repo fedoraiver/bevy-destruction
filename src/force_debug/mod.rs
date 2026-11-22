@@ -33,7 +33,9 @@ enum ForceHud {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct ScriptedForceInspection(pub bool);
+pub(crate) struct ScriptedForceInspection {
+    pub held: bool,
+}
 
 #[derive(Resource, Default)]
 struct Aim {
@@ -110,8 +112,9 @@ fn setup(mut commands: Commands, mut configs: ResMut<GizmoConfigStore>) {
     let (config, _) = configs.config_mut::<ForceGizmos>();
     config.depth_bias = -1.0;
     config.line.width = 2.5;
-    for (panel, position) in [
+    for (name, panel, position) in [
         (
+            "Force legend",
             ForceHud::Legend,
             Node {
                 left: px(18.0),
@@ -120,6 +123,7 @@ fn setup(mut commands: Commands, mut configs: ResMut<GizmoConfigStore>) {
             },
         ),
         (
+            "Force inspection",
             ForceHud::Inspection,
             Node {
                 right: px(18.0),
@@ -131,6 +135,7 @@ fn setup(mut commands: Commands, mut configs: ResMut<GizmoConfigStore>) {
         ),
     ] {
         commands.spawn((
+            Name::new(name),
             panel,
             Text::new(""),
             TextFont {
@@ -180,7 +185,7 @@ fn pick_target(
         return;
     }
     let held = if options.scripted() {
-        scripted.0
+        scripted.held
     } else {
         control.captured
             && window.single().is_ok_and(|window| window.focused)

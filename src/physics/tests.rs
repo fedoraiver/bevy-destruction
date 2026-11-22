@@ -627,7 +627,7 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
     let normal = rotation * Vec3::Z;
     app.world_mut()
         .resource_mut::<DamageRequests>()
-        .0
+        .rays
         .push_back(Ray3d::new(
             world_hit + normal * 3.0,
             Dir3::new(-normal).unwrap(),

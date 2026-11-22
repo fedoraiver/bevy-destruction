@@ -232,7 +232,7 @@ fn healthy_cache_tracks_load_gravity_settings_and_topology_changes() {
 
     app.world_mut()
         .resource_mut::<StructuralLoads>()
-        .0
+        .by_building
         .entry(root)
         .or_default()
         .insert(
@@ -401,7 +401,7 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
     assert!(app.world().get::<Collider>(entity).is_none());
     app.world_mut()
         .resource_mut::<StructuralLoads>()
-        .0
+        .by_building
         .entry(root)
         .or_default()
         .insert(

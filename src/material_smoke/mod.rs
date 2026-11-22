@@ -124,6 +124,7 @@ fn setup(
         state.pieces.push((entity, rest, mesh));
     }
     commands.spawn((
+        Name::new("Material probe camera"),
         Camera3d::default(),
         Camera {
             order: -1,
@@ -147,6 +148,7 @@ fn setup(
         Msaa::Off,
     ));
     commands.spawn((
+        Name::new("Material probe light"),
         DirectionalLight {
             illuminance: 6500.0,
             shadow_maps_enabled: false,
@@ -265,7 +267,10 @@ fn drive(
     let phase = state.phase;
     let name = NAMES[phase];
     commands
-        .spawn(Screenshot::image(state.target.clone()))
+        .spawn((
+            Name::new("Material smoke screenshot"),
+            Screenshot::image(state.target.clone()),
+        ))
         .observe(save_to_disk(directory.join(name)))
         .observe(
             move |capture: On<ScreenshotCaptured>, mut state: ResMut<ProbeState>| {
