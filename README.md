@@ -82,7 +82,7 @@ cargo fmt --all -- --check
 ```powershell
 python -m venv tmp/acceptance-venv
 .\tmp\acceptance-venv\Scripts\python.exe -m pip install -r scripts/acceptance/requirements.txt
-cargo build --locked --release -p bevy-destruction-acceptance
+cargo build --locked --release -p bevy-destruction-acceptance --features acceptance-test
 $acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```

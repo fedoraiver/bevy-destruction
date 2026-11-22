@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[[bin]]
+name = "bevy-destruction-acceptance"
+required-features = ["acceptance-test"]
+
+[features]
+acceptance-test = ["dep:bevy", "dep:bevy-destruction", "dep:bevy-acceptance-test"]
+
 [dependencies]
-bevy.workspace = true
-bevy-destruction = { path = "../..", features = ["acceptance-test"] }
-bevy-acceptance-test = { git = "https://github.com/fedoraiver/bevy-acceptance-test.git", rev = "4a50239b27fd6c05e49ce7662832d718e094d95c" }
+bevy = { workspace = true, optional = true }
+bevy-destruction = { path = "../..", features = ["acceptance-test"], optional = true }
+bevy-acceptance-test = { git = "https://github.com/fedoraiver/bevy-acceptance-test.git", rev = "4a50239b27fd6c05e49ce7662832d718e094d95c", optional = true }

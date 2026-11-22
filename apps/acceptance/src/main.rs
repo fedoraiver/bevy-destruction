@@ -76,6 +76,7 @@ fn main() -> AppExit {
         std::process::exit(2);
     });
     let profile = args.probe.as_ref().is_some_and(|run| run.profile);
+    let synchronously_compile_pipelines = args.probe.is_some() && !profile;
     let app = acceptance::build_app(
         args.game.into_iter(),
         args.probe,
@@ -99,7 +100,8 @@ fn main() -> AppExit {
                     .disable::<WinitPlugin>()
                     .set(window)
                     .set(RenderPlugin {
-                        synchronous_pipeline_compilation: !profile,
+                        // Fixed-frame captures need pipelines ready on the frame they request.
+                        synchronous_pipeline_compilation: synchronously_compile_pipelines,
                         ..default()
                     }),
             )
