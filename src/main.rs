@@ -28,6 +28,9 @@ mod stress_smoke;
 mod structure;
 mod vfx;
 
+#[cfg(feature = "debugdump")]
+use std::path::PathBuf;
+
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -85,9 +88,8 @@ impl DemoOptions {
     }
 }
 
-fn options() -> Result<DemoOptions, String> {
+fn options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String> {
     let mut options = DemoOptions::default();
-    let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--asset" => options.asset = args.next().ok_or("--asset requires an asset path")?,
@@ -158,7 +160,7 @@ fn options() -> Result<DemoOptions, String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --contact-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: load heat | Alt: inspect loads | Esc: exit"
+                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nArchitecture: --dump-schedules DIR (requires the debugdump feature)\nValidation: --smoke-test DIR | --physics-smoke-test DIR | --stress-smoke-test DIR | --material-smoke-test DIR | --contact-smoke-test DIR | --landing-smoke-test DIR | --collapse-smoke-test DIR | --force-smoke-test DIR\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles --capture-replay --profile\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: load heat | Alt: inspect loads | Esc: exit"
                 );
                 std::process::exit(0);
             }
@@ -192,10 +194,18 @@ fn options() -> Result<DemoOptions, String> {
 }
 
 fn main() -> AppExit {
-    let options = options().unwrap_or_else(|error| {
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().is_some_and(|arg| arg == "--dump-schedules") {
+        return export_schedules(args.skip(1));
+    }
+    let options = options(args).unwrap_or_else(|error| {
         eprintln!("{error}");
         std::process::exit(2);
     });
+    build_app(options).run()
+}
+
+fn build_app(options: DemoOptions) -> App {
     let smoke_test = options.scripted();
     let profile = options.profile;
     let vfx_settings = vfx::VfxSettings {
@@ -270,7 +280,34 @@ fn main() -> AppExit {
         app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
             .add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
-    app.run()
+    app
+}
+
+#[cfg(feature = "debugdump")]
+fn export_schedules(mut args: impl Iterator<Item = String>) -> AppExit {
+    let Some(directory) = args.next() else {
+        eprintln!("--dump-schedules requires an output directory");
+        return AppExit::error();
+    };
+    if directory.starts_with('-') || args.next().is_some() {
+        eprintln!("Usage: bevy-destruction --dump-schedules DIR");
+        return AppExit::error();
+    }
+    let mut app = build_app(DemoOptions::default());
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    match bevy_schedule_export::dump_schedules(&mut app, &PathBuf::from(directory), root) {
+        Ok(_) => AppExit::Success,
+        Err(error) => {
+            eprintln!("Schedule export failed: {error}");
+            AppExit::error()
+        }
+    }
+}
+
+#[cfg(not(feature = "debugdump"))]
+fn export_schedules(_: impl Iterator<Item = String>) -> AppExit {
+    eprintln!("--dump-schedules requires the debugdump feature");
+    AppExit::error()
 }
 
 fn close_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
