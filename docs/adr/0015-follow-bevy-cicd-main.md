@@ -21,10 +21,12 @@
 
 核对四个工作流引用和锁文件中的上游提交，运行带 `debugdump` 的锁定编译检查。远端验收以 Rust CI、架构构建和 Pages 发布通过为准。
 
+已确认 GitHub Actions 通过 `@main` 成功运行。Rust 检查和两项编译器规则使用 `1f760e6` 通过，架构构建和 Pages 发布使用 `421c7af` 通过。[Rust CI](https://github.com/fedoraiver/bevy-destruction/actions/runs/45121800823) · [Architecture Pages](https://github.com/fedoraiver/bevy-destruction/actions/runs/45049457337)
+
 ## 未决问题
 
-待验证 GitHub 上使用 `@main` 的首次运行。
+无。
 
 ## 来源
 
-[bevy-cicd 使用说明](https://github.com/fedoraiver/bevy-cicd/blob/main/README.md)。
+[bevy-cicd 工作流接入指南](https://github.com/fedoraiver/bevy-cicd/blob/main/docs/workflows.md)。
