@@ -11,7 +11,7 @@
 
 ## 调度、通信与命令
 
-- 启动装配放在 `Startup`，逐次应用更新的输入和表现逻辑放在 `Update` 或 `PostUpdate`，固定步模拟使用 `FixedUpdate` 或 `FixedPostUpdate` 并读取 `Time<Fixed>`。每次应用更新可运行零次或多次固定步，物理逻辑使用固定步的实际经过时间。[插件装配](../src/lib.rs) · [过载更新](../src/stress_runtime/mod.rs)
+- 启动装配放在 `Startup`，逐次应用更新的输入和表现逻辑放在 `Update` 或 `PostUpdate`，固定步模拟使用 `FixedUpdate` 或 `FixedPostUpdate` 并读取 `Time<Fixed>`。每次应用更新可运行零次或多次固定步，物理逻辑使用固定步的实际经过时间。[插件装配](../apps/game/src/lib.rs) · [过载更新](../src/stress_runtime/mod.rs)
 - 同一调度内的依赖通过 `.before()`、`.after()`、`.chain()` 或已配置相对顺序的 `SystemSet` 表达。`.in_set()` 只确定成员归属，插件安装和元组注册顺序不建立系统依赖。跨调度的数据交接按实际调度阶段安排。例如，过载求解先于刚体簇重建，Avian 物理完成后才读取接触冲量并更新断键状态。[过载调度](../src/stress_runtime/mod.rs) · [簇调度](../src/physics/mod.rs) · [撞击调度](../src/projectiles/mod.rs)
 - 常规实体增删及组件结构变更使用 `Commands`，后续系统在延迟命令应用后才能读到它们。Bevy 默认会为有序系统的相关延迟操作安排同步点，自定义调度或同步配置需要单独核对。即刻换属、清理旧接触并重算质量的流程可以使用独占 `&mut World`，在读取后续状态前明确刷新相关变更。[簇重建与质量更新](../src/physics/mod.rs)
 - 用注册的 `Message` 进行缓冲通信，例如破坏逻辑发布 `BreakBurst`，特效系统用 `MessageReader` 读取。需要触发式响应时使用 `Event` 或 `EntityEvent` 与 Observer。`World::trigger` 立即触发，`Commands::trigger` 随命令一起应用。必须跨系统停用期保留的请求使用组件、资源或明确管理的队列。[点击破坏](../src/interaction/mod.rs) · [破坏特效](../src/vfx/mod.rs)
@@ -19,7 +19,7 @@
 ## 场景装配与模块
 
 - 用 `bsn!` 和 `spawn_scene` 声明适合组合的场景、UI、初始组件及子实体。运行时交互和逐帧更新放在系统或 Observer 中，动态计算的实体可用 `Commands` 或在必要时用 `World` 创建。[演示场景](../src/scene/mod.rs) · [撞击物生成](../src/projectiles/mod.rs)
-- 按功能模块保持类型和系统的归属，需要初始化 ECS 数据或注册系统的功能通过 Plugin 封装装配。`DestructionPlugin` 组合建筑破坏功能，桌面和无窗入口分别装配 Bevy 的运行器、窗口和验收配置。[插件装配](../src/lib.rs) · [桌面入口](../apps/game/src/main.rs) · [无窗入口](../apps/acceptance/src/main.rs)
+- 按功能模块保持类型和系统的归属，需要初始化 ECS 数据或注册系统的功能通过 Plugin 封装装配。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块，由 `DestructionPlugin` 组合建筑破坏功能。桌面和无窗入口分别配置 Bevy 的运行器、窗口和验收选项。[桌面装配](../apps/game/src/lib.rs) · [无窗入口](../apps/acceptance/src/main.rs)
 - 有独立业务含义的常量保留在负责该语义的模块，名称或注释注明单位与容差。注释解释调度、数值条件及生命周期等不易从代码读出的约束。优化缓存或存储前先测量，使用变更检测或条件运行时保留对连续模拟的覆盖。[撞击参数](../src/projectiles/mod.rs) · [应力缓存](../src/stress_runtime/mod.rs)
 
 ## 检查与验证

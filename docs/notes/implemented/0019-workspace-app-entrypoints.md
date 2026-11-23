@@ -4,6 +4,8 @@
 
 2026-11-23 采用。替代 [ADR 0011](0011-rust-project-layout.md) 的二进制入口位置、[ADR 0016](0016-shared-schedule-export.md) 的根包装配和 Pages 触发方式，并更新 [ADR 0017](0017-bevy-compiler-rules.md) 与 [ADR 0018](0018-windowless-acceptance.md) 的包范围。
 
+独立架构分析包的决定由 [ADR 0020](0020-game-architecture-export.md) 替代。
+
 ## 背景
 
 桌面和无窗验收需要不同的窗口、输入和渲染配置。原先由同一个游戏库构造两种 App，架构分析也选择仓库根包。Cargo workspace 可以为每种用途提供独立入口，并继续复用现有的游戏模块和资产目录。

@@ -3,8 +3,8 @@ name = "bevy-destruction"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-path = "../../src/lib.rs"
+[package.metadata.bevy-architecture]
+app-factory = "build_app"
 
 [features]
 acceptance-test = []
@@ -16,6 +16,3 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-
-[lints]
-workspace = true

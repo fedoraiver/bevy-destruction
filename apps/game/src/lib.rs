@@ -1,52 +1,77 @@
 #[cfg(feature = "acceptance-test")]
+#[path = "../../../src/acceptance/mod.rs"]
 pub mod acceptance;
-#[cfg(ecs_architecture)]
-#[path = "../tools/ecs-architecture/src/assembly.rs"]
-mod architecture;
+#[path = "../../../src/asset/mod.rs"]
 mod asset;
+#[path = "../../../src/camera/mod.rs"]
 mod camera;
+#[path = "../../../src/catalog/mod.rs"]
 mod catalog;
 #[cfg(any(test, feature = "acceptance-test"))]
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
+#[path = "../../../src/collapse_smoke/mod.rs"]
 mod collapse_smoke;
+#[path = "../../../src/contact_mask/mod.rs"]
 mod contact_mask;
 #[cfg(any(test, feature = "acceptance-test"))]
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
+#[path = "../../../src/contact_smoke/mod.rs"]
 mod contact_smoke;
+#[path = "../../../src/debug/mod.rs"]
 mod debug;
 #[cfg(any(test, feature = "acceptance-test"))]
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
+#[path = "../../../src/diagnostics/mod.rs"]
 mod diagnostics;
+#[path = "../../../src/dust_material/mod.rs"]
 mod dust_material;
-#[cfg(ecs_architecture)]
-pub use architecture::build_app;
+#[path = "../../../src/force_debug/mod.rs"]
 mod force_debug;
+#[path = "../../../src/force_samples/mod.rs"]
 mod force_samples;
 #[cfg(any(test, feature = "acceptance-test"))]
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
+#[path = "../../../src/force_smoke/mod.rs"]
 mod force_smoke;
+#[path = "../../../src/force_visibility/mod.rs"]
 mod force_visibility;
+#[path = "../../../src/fracture_detail/mod.rs"]
 mod fracture_detail;
+#[path = "../../../src/interaction/mod.rs"]
 mod interaction;
 #[cfg(feature = "acceptance-test")]
+#[path = "../../../src/landing_smoke/mod.rs"]
 mod landing_smoke;
+#[path = "../../../src/material/mod.rs"]
 mod material;
 #[cfg(feature = "acceptance-test")]
+#[path = "../../../src/material_smoke/mod.rs"]
 mod material_smoke;
+#[path = "../../../src/physics/mod.rs"]
 mod physics;
 #[cfg(feature = "acceptance-test")]
+#[path = "../../../src/physics_smoke/mod.rs"]
 mod physics_smoke;
+#[path = "../../../src/projectiles/mod.rs"]
 mod projectiles;
+#[path = "../../../src/rim_profile/mod.rs"]
 mod rim_profile;
+#[path = "../../../src/scene/mod.rs"]
 mod scene;
 #[cfg(feature = "acceptance-test")]
+#[path = "../../../src/smoke/mod.rs"]
 mod smoke;
+#[path = "../../../src/stress/mod.rs"]
 mod stress;
+#[path = "../../../src/stress_runtime/mod.rs"]
 mod stress_runtime;
 #[cfg(any(test, feature = "acceptance-test"))]
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
+#[path = "../../../src/stress_smoke/mod.rs"]
 mod stress_smoke;
+#[path = "../../../src/structure/mod.rs"]
 mod structure;
+#[path = "../../../src/vfx/mod.rs"]
 mod vfx;
 
 use std::path::{Path, PathBuf};
@@ -211,6 +236,24 @@ pub fn desktop_window() -> WindowPlugin {
         }),
         ..default()
     }
+}
+
+/// 按默认选项装配桌面应用，供架构导出器读取调度。
+pub fn build_app() -> App {
+    prepare_app(DemoOptions::default())
+}
+
+/// 按指定选项运行桌面应用。
+pub fn run(options: DemoOptions) -> AppExit {
+    prepare_app(options).run()
+}
+
+fn prepare_app(options: DemoOptions) -> App {
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(asset_plugin()).set(desktop_window()))
+        .insert_resource(options)
+        .add_plugins(DestructionPlugin);
+    app
 }
 
 pub struct DestructionPlugin;
