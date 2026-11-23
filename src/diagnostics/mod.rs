@@ -1,6 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use bevy::{diagnostic::DiagnosticsStore, platform::time::Instant, prelude::*};
+use bevy::{
+    diagnostic::{DiagnosticPath, DiagnosticsStore},
+    platform::time::Instant,
+    prelude::*,
+};
 
 use crate::DemoOptions;
 
@@ -15,13 +19,10 @@ impl Plugin for MetricsPlugin {
 
 #[derive(Default)]
 #[cfg_attr(feature = "acceptance-test", derive(Reflect))]
-#[cfg_attr(feature = "acceptance-test", reflect(no_auto_register))]
 pub struct Samples {
     pub count: usize,
     pub total_ms: f64,
     pub max_ms: f64,
-    #[cfg_attr(feature = "acceptance-test", reflect(ignore))]
-    last_measurement: Option<Instant>,
 }
 
 impl Samples {
@@ -38,13 +39,11 @@ impl Samples {
 
 #[derive(Resource, Default)]
 #[cfg_attr(feature = "acceptance-test", derive(Reflect))]
-#[cfg_attr(feature = "acceptance-test", reflect(Resource, no_auto_register))]
+#[cfg_attr(feature = "acceptance-test", reflect(Resource))]
 pub struct RunMetrics {
     pub phase: u32,
     pub wall_frame: Samples,
     pub render: BTreeMap<String, Samples>,
-    #[cfg_attr(feature = "acceptance-test", reflect(ignore))]
-    last_frame: Option<Instant>,
 }
 
 impl RunMetrics {
@@ -57,9 +56,11 @@ fn collect_metrics(
     options: Res<DemoOptions>,
     diagnostics: Option<Res<DiagnosticsStore>>,
     mut metrics: ResMut<RunMetrics>,
+    mut last_frame: Local<Option<Instant>>,
+    mut last_measurements: Local<HashMap<DiagnosticPath, Instant>>,
 ) {
     let now = Instant::now();
-    let previous = metrics.last_frame.replace(now);
+    let previous = last_frame.replace(now);
     if !options.profile || metrics.phase < 80 {
         return;
     }
@@ -73,14 +74,16 @@ fn collect_metrics(
             d.path().as_str().ends_with("elapsed_gpu") || d.path().as_str().ends_with("elapsed_cpu")
         }) {
             if let Some(measurement) = diagnostic.measurement() {
-                let samples = metrics
-                    .render
-                    .entry(diagnostic.path().as_str().to_owned())
-                    .or_default();
-                if samples.last_measurement != Some(measurement.time) {
-                    samples.last_measurement = Some(measurement.time);
-                    samples.record(measurement.value);
+                let path = diagnostic.path();
+                if last_measurements.get(path) == Some(&measurement.time) {
+                    continue;
                 }
+                last_measurements.insert(path.clone(), measurement.time);
+                metrics
+                    .render
+                    .entry(path.as_str().to_owned())
+                    .or_default()
+                    .record(measurement.value);
             }
         }
     }

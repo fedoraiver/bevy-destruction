@@ -5,7 +5,11 @@ use bevy::{
     winit::WinitPlugin,
 };
 use bevy_acceptance_test::{AcceptanceCamera, AcceptancePlugin, OFFSCREEN_IMAGE};
-use bevy_destruction::acceptance::{self, DemoCamera, Probe, ProbeRun};
+use bevy_destruction::{
+    DEFAULT_VIEWPORT, DestructionPlugin,
+    acceptance::{AcceptanceScenarioPlugin, DemoCamera, Probe, ProbeRun},
+    asset_plugin, parse_options,
+};
 
 struct Arguments {
     game: Vec<String>,
@@ -75,45 +79,49 @@ fn main() -> AppExit {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    let profile = args.probe.as_ref().is_some_and(|run| run.profile);
-    let synchronously_compile_pipelines = args.probe.is_some() && !profile;
-    let app = acceptance::build_app(
-        args.game.into_iter(),
-        args.probe,
-        OFFSCREEN_IMAGE,
-        |app, plugins| {
-            let acceptance = AcceptancePlugin::from_env()?.with_size(acceptance::VIEWPORT);
-            let window = acceptance.input_window_plugin();
-            let runner = if profile {
-                ScheduleRunnerPlugin::run_loop(Duration::ZERO)
-            } else {
-                acceptance.runner_plugin()
-            };
-
-            app.register_required_components_with::<DemoCamera, AcceptanceCamera>(|| {
-                AcceptanceCamera
-            })
-            .register_required_components::<DemoCamera, IsDefaultUiCamera>()
-            .add_plugins(acceptance)
-            .add_plugins(
-                plugins
-                    .disable::<WinitPlugin>()
-                    .set(window)
-                    .set(RenderPlugin {
-                        // Fixed-frame captures need pipelines ready on the frame they request.
-                        synchronous_pipeline_compilation: synchronously_compile_pipelines,
-                        ..default()
-                    }),
-            )
-            .add_plugins(runner);
-            Ok(())
-        },
-    );
-    match app {
-        Ok(mut app) => app.run(),
+    let mut options = match parse_options(args.game.into_iter()) {
+        Ok(options) => options,
         Err(error) => {
             eprintln!("{error}");
-            AppExit::error()
+            return AppExit::error();
         }
-    }
+    };
+    let acceptance = match AcceptancePlugin::from_env() {
+        Ok(acceptance) => acceptance.with_size(DEFAULT_VIEWPORT),
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
+    let profile = args.probe.as_ref().is_some_and(|run| run.profile);
+    let probe = args
+        .probe
+        .map(|run| run.configure(&mut options, OFFSCREEN_IMAGE));
+    let window = acceptance.input_window_plugin();
+    let runner = if profile {
+        ScheduleRunnerPlugin::run_loop(Duration::ZERO)
+    } else {
+        acceptance.runner_plugin()
+    };
+
+    App::new()
+        .register_required_components_with::<DemoCamera, AcceptanceCamera>(|| AcceptanceCamera)
+        .register_required_components::<DemoCamera, IsDefaultUiCamera>()
+        .add_plugins(acceptance)
+        .add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<WinitPlugin>()
+                .set(asset_plugin())
+                .set(window)
+                .set(RenderPlugin {
+                    // Fixed-frame captures need pipelines ready on the frame they request.
+                    synchronous_pipeline_compilation: probe.is_some() && !profile,
+                    ..default()
+                }),
+        )
+        .add_plugins(runner)
+        .insert_resource(options)
+        .add_plugins((DestructionPlugin, AcceptanceScenarioPlugin { probe }))
+        .run()
 }

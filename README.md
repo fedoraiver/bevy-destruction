@@ -59,13 +59,13 @@ cargo run -- --scene bridge
 
 破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。源三角形按规范接触区域直接选择 grid 或粗糙断面材质，邻块移走后断面自然显露；不再以共面显示层竞争深度，避免两种材质闪烁。暴露侧另有可选的闭合骨料边带，两者都不改变碰撞或质量，见 [断面着色决策](docs/adr/0007-fracture-surface-rendering.md)和[边带决策](docs/adr/0008-destruction-effects-and-rims.md)。
 
-桌面入口位于 `src/main.rs`，无窗验收入口位于 `apps/acceptance`，共用的游戏装配位于 `src/lib.rs`。模块使用 `src/<module>/mod.rs`，模块测试集中于相邻 `tests.rs`。布局与 v2 导入规则分别见 [ADR 0011](docs/adr/0011-rust-project-layout.md)和 [ADR 0005](docs/adr/0005-v2-asset-contract.md)。
+仓库根是 Cargo workspace，默认运行 `apps/game` 中的桌面应用。桌面和无窗验收各自在 `apps/game` 与 `apps/acceptance` 的入口装配 Bevy，复用 `src/` 的游戏模块。模块测试集中于相邻的 `tests.rs`。入口布局和资产格式见 [ADR 0019](docs/adr/0019-workspace-app-entrypoints.md)和 [ADR 0005](docs/adr/0005-v2-asset-contract.md)。
 
 ## 验证
 
-面向 `master` 的 PR、`master` 推送和手动启动都会运行 Rust CI，包括 bevy-cicd 的 `entity-names`（实体命名）和 `named-fields`（具名字段）检查。[ADR 0017](docs/adr/0017-bevy-compiler-rules.md)
+面向 `master` 的 PR、`master` 推送和手动启动都会运行 Rust CI。bevy-cicd 对 `apps/game` 运行 `entity-names`（实体命名）和 `named-fields`（具名字段）检查。[ADR 0017](docs/adr/0017-bevy-compiler-rules.md)
 
-独立的 Pages 工作流通过 bevy-cicd 构建并运行调度导出入口，用 Rust 编译事实和实际注册的 Bevy 调度生成站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0016](docs/adr/0016-shared-schedule-export.md)
+推送到 `master` 时，Pages 工作流通过 bevy-cicd 构建专用的 `ecs-architecture` 分析包，用 Rust 编译事实和实际注册的 Bevy 调度生成、校验并发布站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0019](docs/adr/0019-workspace-app-entrypoints.md)
 
 ```powershell
 cargo test --locked --workspace

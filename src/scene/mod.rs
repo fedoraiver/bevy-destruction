@@ -52,7 +52,7 @@ impl Plugin for DemoScenePlugin {
 
 #[derive(Component)]
 #[cfg_attr(feature = "acceptance-test", derive(Reflect))]
-#[cfg_attr(feature = "acceptance-test", reflect(Component, no_auto_register))]
+#[cfg_attr(feature = "acceptance-test", reflect(Component))]
 pub struct DemoCamera;
 
 #[derive(Component)]

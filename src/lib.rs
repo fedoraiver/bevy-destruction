@@ -1,5 +1,8 @@
 #[cfg(feature = "acceptance-test")]
 pub mod acceptance;
+#[cfg(ecs_architecture)]
+#[path = "../tools/ecs-architecture/src/assembly.rs"]
+mod architecture;
 mod asset;
 mod camera;
 mod catalog;
@@ -15,6 +18,8 @@ mod debug;
 #[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
 mod diagnostics;
 mod dust_material;
+#[cfg(ecs_architecture)]
+pub use architecture::build_app;
 mod force_debug;
 mod force_samples;
 #[cfg(any(test, feature = "acceptance-test"))]
@@ -44,40 +49,42 @@ mod stress_smoke;
 mod structure;
 mod vfx;
 
-use avian3d::prelude::*;
-use bevy::{app::PluginGroupBuilder, prelude::*};
+use std::path::{Path, PathBuf};
 
-const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
+use avian3d::prelude::*;
+use bevy::prelude::*;
+
+pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
 #[derive(Resource)]
-struct DemoOptions {
-    pub asset: String,
+pub struct DemoOptions {
+    asset: String,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub smoke_output: Option<std::path::PathBuf>,
+    smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub physics_smoke_output: Option<std::path::PathBuf>,
+    physics_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub stress_smoke_output: Option<std::path::PathBuf>,
+    stress_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub material_smoke_output: Option<std::path::PathBuf>,
+    material_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub contact_smoke_output: Option<std::path::PathBuf>,
+    contact_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub force_smoke_output: Option<std::path::PathBuf>,
+    force_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub landing_smoke_output: Option<std::path::PathBuf>,
+    landing_smoke_output: Option<std::path::PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub collapse_smoke_output: Option<std::path::PathBuf>,
-    pub no_vfx: bool,
-    pub no_stress: bool,
-    pub no_detail: bool,
-    pub no_soft_particles: bool,
+    collapse_smoke_output: Option<std::path::PathBuf>,
+    no_vfx: bool,
+    no_stress: bool,
+    no_detail: bool,
+    no_soft_particles: bool,
     #[cfg(feature = "acceptance-test")]
-    pub capture_replay: bool,
+    capture_replay: bool,
     #[cfg(any(test, feature = "acceptance-test"))]
     smoke_target: Option<Handle<Image>>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    pub profile: bool,
+    profile: bool,
 }
 
 impl Default for DemoOptions {
@@ -150,7 +157,7 @@ impl DemoOptions {
     }
 }
 
-fn options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String> {
+pub fn parse_options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String> {
     let mut options = DemoOptions::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -180,70 +187,68 @@ fn options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String
     Ok(options)
 }
 
-pub fn run(args: impl Iterator<Item = String>) -> AppExit {
-    let options = options(args).unwrap_or_else(|error| {
-        eprintln!("{error}");
-        std::process::exit(2);
-    });
-    build_app_with_options(options).run()
+fn asset_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("Package must be two levels below the workspace root")
+        .join("assets")
 }
 
-pub fn build_app() -> App {
-    build_app_with_options(DemoOptions::default())
+pub fn asset_plugin() -> AssetPlugin {
+    AssetPlugin {
+        file_path: asset_root().to_string_lossy().into_owned(),
+        ..default()
+    }
 }
 
-fn build_app_with_options(options: DemoOptions) -> App {
-    let mut app = App::new();
-    app.add_plugins(engine_plugins().set(WindowPlugin {
+pub fn desktop_window() -> WindowPlugin {
+    WindowPlugin {
         primary_window: Some(Window {
             title: "Bevy Destruction · Physical fracture".into(),
             resolution: (DEFAULT_VIEWPORT.x, DEFAULT_VIEWPORT.y).into(),
             ..default()
         }),
         ..default()
-    }));
-    install_game(&mut app, options);
-    app
+    }
 }
 
-fn engine_plugins() -> PluginGroupBuilder {
-    DefaultPlugins.build().set(AssetPlugin {
-        file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
-        ..default()
-    })
-}
+pub struct DestructionPlugin;
 
-fn install_game(app: &mut App, options: DemoOptions) {
-    let vfx_settings = vfx::VfxSettings {
-        enabled: !options.no_vfx,
-        ..default()
-    };
-    let stress_settings = stress_runtime::StressSettings {
-        enabled: !options.no_stress,
-        ..default()
-    };
-    app.insert_resource(options)
-        .insert_resource(vfx_settings)
-        .insert_resource(stress_settings)
-        .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
-        .insert_resource(Time::<Fixed>::from_hz(60.0))
-        .add_plugins((
-            PhysicsPlugins::default(),
-            asset::DestructibleAssetPlugin,
-            material::BuildingMaterialPlugin,
-            dust_material::DustMaterialPlugin,
-            debug::FractureDebugPlugin,
-            force_debug::ForceDebugPlugin,
-            scene::DemoScenePlugin,
-            physics::DestructionPhysicsPlugin,
-            camera::FreeCameraPlugin,
-            interaction::InteractionPlugin,
-            vfx::VfxPlugin,
-            stress_runtime::StressRuntimePlugin,
-            projectiles::ProjectilePlugin,
-            catalog::CatalogPlugin,
-        ))
-        .add_systems(Update, close_on_escape);
+impl Plugin for DestructionPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<DemoOptions>();
+        let options = app.world().resource::<DemoOptions>();
+        let vfx_settings = vfx::VfxSettings {
+            enabled: !options.no_vfx,
+            ..default()
+        };
+        let stress_settings = stress_runtime::StressSettings {
+            enabled: !options.no_stress,
+            ..default()
+        };
+        app.insert_resource(vfx_settings)
+            .insert_resource(stress_settings)
+            .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .add_plugins((
+                PhysicsPlugins::default(),
+                asset::DestructibleAssetPlugin,
+                material::BuildingMaterialPlugin,
+                dust_material::DustMaterialPlugin,
+                debug::FractureDebugPlugin,
+                force_debug::ForceDebugPlugin,
+                scene::DemoScenePlugin,
+                physics::DestructionPhysicsPlugin,
+                camera::FreeCameraPlugin,
+                interaction::InteractionPlugin,
+                vfx::VfxPlugin,
+                stress_runtime::StressRuntimePlugin,
+                projectiles::ProjectilePlugin,
+                catalog::CatalogPlugin,
+            ))
+            .add_systems(Update, close_on_escape);
+    }
 }
 
 fn close_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {

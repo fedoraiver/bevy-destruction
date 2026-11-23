@@ -197,10 +197,7 @@ fn rejects_mesh_hash_mismatch() {
 fn authored_manifest_and_mesh_hash_are_valid() {
     let path = std::env::var_os("DESTRUCTION_ASSET_CHECK")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("assets/buildings/rectangle.destruction.json")
-        });
+        .unwrap_or_else(|| crate::asset_root().join("buildings/rectangle.destruction.json"));
     let manifest: Manifest = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     manifest.validate().unwrap();
     let mesh = std::fs::read(path.parent().unwrap().join(&manifest.mesh_file)).unwrap();
@@ -242,7 +239,7 @@ fn triangles_support_indexed_and_nonindexed_primitives() {
 
 #[test]
 fn bundled_buildings_match_manifests_and_all_material_primitives() {
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/buildings");
+    let directory = crate::asset_root().join("buildings");
     for name in [
         "rectangle",
         "l_shape",

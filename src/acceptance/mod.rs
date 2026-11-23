@@ -1,19 +1,17 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use avian3d::prelude::Collider;
-use bevy::{app::PluginGroupBuilder, prelude::*};
+use bevy::prelude::*;
 
 pub use crate::scene::DemoCamera;
 
 use crate::{
     DemoOptions,
     camera::FreeCamera,
-    diagnostics, engine_plugins, install_game, options,
+    diagnostics,
     projectiles::{ImpactStats, RigidProjectile},
     scene::BuildingInstance,
 };
-
-pub const VIEWPORT: UVec2 = crate::DEFAULT_VIEWPORT;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
@@ -52,65 +50,61 @@ pub struct ProbeRun {
     pub profile: bool,
 }
 
-pub fn build_app(
-    args: impl Iterator<Item = String>,
-    run: Option<ProbeRun>,
-    smoke_target: Handle<Image>,
-    configure_engine: impl FnOnce(&mut App, PluginGroupBuilder) -> Result<(), String>,
-) -> Result<App, String> {
-    let mut options = options(args)?;
-    let mut app = App::new();
-    configure_engine(&mut app, engine_plugins())?;
-    app.register_type::<DemoCamera>();
-
-    match run {
-        Some(run) => {
-            options.smoke_target = Some(smoke_target);
-            options.capture_replay = run.capture_replay;
-            options.profile = run.profile;
-            let output = Some(run.output);
-            match run.probe {
-                Probe::Smoke => options.smoke_output = output,
-                Probe::Physics => options.physics_smoke_output = output,
-                Probe::Stress => options.stress_smoke_output = output,
-                Probe::Material => options.material_smoke_output = output,
-                Probe::Contact => options.contact_smoke_output = output,
-                Probe::Force => options.force_smoke_output = output,
-                Probe::Landing => options.landing_smoke_output = output,
-                Probe::Collapse => options.collapse_smoke_output = output,
-            }
-            install_game(&mut app, options);
-            app.add_plugins(diagnostics::MetricsPlugin).insert_resource(
-                bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)),
-            );
-            if run.profile {
-                app.register_type::<diagnostics::RunMetrics>()
-                    .init_resource::<bevy::diagnostic::DiagnosticsStore>()
-                    .add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-            }
-            match run.probe {
-                Probe::Smoke => app.add_plugins(crate::smoke::SmokePlugin),
-                Probe::Physics => app.add_plugins(crate::physics_smoke::PhysicsSmokePlugin),
-                Probe::Stress => app.add_plugins(crate::stress_smoke::StressSmokePlugin),
-                Probe::Material => app.add_plugins(crate::material_smoke::MaterialSmokePlugin),
-                Probe::Contact => app.add_plugins(crate::contact_smoke::ContactSmokePlugin),
-                Probe::Force => app.add_plugins(crate::force_smoke::ForceSmokePlugin),
-                Probe::Landing => app.add_plugins(crate::landing_smoke::LandingSmokePlugin),
-                Probe::Collapse => app.add_plugins(crate::collapse_smoke::CollapseSmokePlugin),
-            };
+impl ProbeRun {
+    pub fn configure(self, options: &mut DemoOptions, smoke_target: Handle<Image>) -> Probe {
+        options.smoke_target = Some(smoke_target);
+        options.capture_replay = self.capture_replay;
+        options.profile = self.profile;
+        let output = Some(self.output);
+        match self.probe {
+            Probe::Smoke => options.smoke_output = output,
+            Probe::Physics => options.physics_smoke_output = output,
+            Probe::Stress => options.stress_smoke_output = output,
+            Probe::Material => options.material_smoke_output = output,
+            Probe::Contact => options.contact_smoke_output = output,
+            Probe::Force => options.force_smoke_output = output,
+            Probe::Landing => options.landing_smoke_output = output,
+            Probe::Collapse => options.collapse_smoke_output = output,
         }
-        None => {
-            install_game(&mut app, options);
-            app.register_type::<GameplayState>()
-                .init_resource::<GameplayState>()
-                .add_systems(Last, observe_gameplay);
-        }
+        self.probe
     }
-    Ok(app)
+}
+
+pub struct AcceptanceScenarioPlugin {
+    pub probe: Option<Probe>,
+}
+
+impl Plugin for AcceptanceScenarioPlugin {
+    fn build(&self, app: &mut App) {
+        let Some(probe) = self.probe else {
+            app.init_resource::<GameplayState>()
+                .add_systems(Last, observe_gameplay);
+            return;
+        };
+
+        let profile = app.world().resource::<DemoOptions>().profile;
+        app.add_plugins(diagnostics::MetricsPlugin).insert_resource(
+            bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)),
+        );
+        if profile {
+            app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
+                .add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        }
+        match probe {
+            Probe::Smoke => app.add_plugins(crate::smoke::SmokePlugin),
+            Probe::Physics => app.add_plugins(crate::physics_smoke::PhysicsSmokePlugin),
+            Probe::Stress => app.add_plugins(crate::stress_smoke::StressSmokePlugin),
+            Probe::Material => app.add_plugins(crate::material_smoke::MaterialSmokePlugin),
+            Probe::Contact => app.add_plugins(crate::contact_smoke::ContactSmokePlugin),
+            Probe::Force => app.add_plugins(crate::force_smoke::ForceSmokePlugin),
+            Probe::Landing => app.add_plugins(crate::landing_smoke::LandingSmokePlugin),
+            Probe::Collapse => app.add_plugins(crate::collapse_smoke::CollapseSmokePlugin),
+        };
+    }
 }
 
 #[derive(Default, Reflect, Resource)]
-#[reflect(Resource, no_auto_register)]
+#[reflect(Resource)]
 struct GameplayState {
     frame: u64,
     asset: String,

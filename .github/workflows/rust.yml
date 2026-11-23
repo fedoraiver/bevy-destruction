@@ -16,3 +16,5 @@ jobs:
 
   compiler-rules:
     uses: fedoraiver/bevy-cicd/.github/workflows/bevy-rules.yml@main
+    with:
+      package-path: apps/game

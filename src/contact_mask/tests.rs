@@ -338,7 +338,7 @@ fn bundled_assets_keep_source_geometry_and_report_shared_buffer_costs() {
         asset::Manifest,
         fracture_detail::{SurfaceGeometry, build_patches},
     };
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/buildings");
+    let directory = crate::asset_root().join("buildings");
     for name in [
         "rectangle",
         "l_shape",
