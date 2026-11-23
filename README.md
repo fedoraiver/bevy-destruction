@@ -20,6 +20,8 @@ cargo run -- --scene highrise_slab
 cargo run -- --scene bridge
 ```
 
+桌面演示窗口和无窗验收画布的默认逻辑尺寸均为 1920×1080。
+
 `WASD` 沿相机前后左右移动，鼠标转向，`Space` 沿世界竖直方向上升，左/右 `Ctrl` 下降。视角采用透视投影，加载完成后只取景一次，此后由用户自由移动。
 
 窗口获得控制时隐藏并锁定鼠标，画面中央显示准星。左键删除准星指向的局部碎块；右键发射刚性球，`R` 发射刚性方块。`Tab` 释放或重新锁定鼠标；失去窗口焦点时暂停移动并释放鼠标，重新点击窗口恢复控制，这次点击不触发破坏。`0` 切换橙色预破碎边界，`9` 切换受力热力（均支持数字小键盘），`Esc` 退出。开启热力后按住 `Alt`，查看准星指向的碎块。
@@ -57,68 +59,61 @@ cargo run -- --scene bridge
 
 破坏依次产生短促粉爆、不规则主碎屑、扩散烟尘和边缘落灰；少量主碎屑与存活建筑碰撞、反弹。烟尘具有连续淡出、主光明暗和交界深度淡出。源三角形按规范接触区域直接选择 grid 或粗糙断面材质，邻块移走后断面自然显露；不再以共面显示层竞争深度，避免两种材质闪烁。暴露侧另有可选的闭合骨料边带，两者都不改变碰撞或质量，见 [断面着色决策](docs/adr/0007-fracture-surface-rendering.md)和[边带决策](docs/adr/0008-destruction-effects-and-rims.md)。
 
-Rust 二进制入口位于 `src/main.rs`，应用装配位于 `src/lib.rs`。模块使用 `src/<module>/mod.rs`，模块测试集中于相邻 `tests.rs`。布局与 v2 导入规则分别见 [ADR 0011](docs/adr/0011-rust-project-layout.md)和 [ADR 0005](docs/adr/0005-v2-asset-contract.md)。
+仓库根是 Cargo workspace，默认运行 `apps/game` 中的桌面应用。桌面和无窗验收各自在 `apps/game` 与 `apps/acceptance` 的入口装配 Bevy，复用 `src/` 的游戏模块。模块测试集中于相邻的 `tests.rs`。入口布局和资产格式见 [ADR 0019](docs/adr/0019-workspace-app-entrypoints.md)和 [ADR 0005](docs/adr/0005-v2-asset-contract.md)。
 
 ## 验证
 
-面向 `master` 的 PR、`master` 推送和手动启动都会运行 Rust CI，包括 bevy-cicd 的 `entity-names`（实体命名）和 `named-fields`（具名字段）检查。[ADR 0017](docs/adr/0017-bevy-compiler-rules.md)
+面向 `master` 的 PR、`master` 推送和手动启动都会运行 Rust CI。bevy-cicd 对 `apps/game` 运行 `entity-names`（实体命名）和 `named-fields`（具名字段）检查。[ADR 0017](docs/adr/0017-bevy-compiler-rules.md)
 
-独立的 Pages 工作流通过 bevy-cicd 构建并运行调度导出入口，用 Rust 编译事实和实际注册的 Bevy 调度生成站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0016](docs/adr/0016-shared-schedule-export.md)
-
-制作端的 63 项不同 Blender 测试及独立插件安装/启停通过，六个正式 v2 目录的清单、GLB 哈希/材质、真实接触覆盖、自重平衡均通过。矩形楼点击破坏、偏侧支撑倾倒已有实际画面验证。受力热力与局部详查通过 11 阶段图形检查，含遮挡、窗洞拾取和实例隔离。断面着色通过 8 组/40 张真实 GPU 对照及材质运动检查。当前 Rust 完整回归包含 147 项，包括板式高楼落地分簇与内部断裂。正常构建、严格 Clippy 和格式检查通过。各次验证的资产快照与范围见 [设计决策索引](docs/adr/README.md)。
+推送到 `master` 时，Pages 工作流通过 bevy-cicd 构建专用的 `ecs-architecture` 分析包，用 Rust 编译事实和实际注册的 Bevy 调度生成、校验并发布站点。[在线 ECS 架构图](https://fedoraiver.github.io/bevy-destruction/) · [ADR 0019](docs/adr/0019-workspace-app-entrypoints.md)
 
 ```powershell
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
-cargo run -- --contact-smoke-test output/acceptance/contact-surfaces
-cargo run -- --scene rectangle --force-smoke-test output/acceptance/forces
-cargo run -- --material-smoke-test output/acceptance/material-attached
-cargo run -- --scene rectangle --collapse-smoke-test output/acceptance/support-tipping
-cargo run -- --scene highrise_slab --landing-smoke-test output/acceptance/selective-landing-highrise_slab
-cargo run -- --scene rectangle --stress-smoke-test output/acceptance/stress-rectangle
-cargo run -- --scene highrise_slab --stress-smoke-test output/acceptance/stress-highrise_slab
-cargo run -- --scene highrise_l --stress-smoke-test output/acceptance/stress-highrise_l
-cargo run -- --scene bridge --stress-smoke-test output/acceptance/stress-bridge
-cargo run -- --scene courtyard --stress-smoke-test output/acceptance/stress-courtyard
-cargo run -- --scene l_shape --stress-smoke-test output/acceptance/stress-l_shape
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
 ```
 
-`--stress-smoke-test` 先检查所选真实资产的完整自重求解，再用具有明确 SI 质量和截面的双柱混凝土梁检查支撑移除、仍连通时的过载、自动断键、下落与休眠，最后发射球和方块验证真实碰撞、撞击断裂与撞击物保持完整。输出 7 张阶段截图和 `report.json`，失败返回非零退出码。验证以固定 60 Hz 接收预定输入，截图由引擎直接生成；正常运行使用实际时间和输入。
+迁移前的验证覆盖 63 项 Blender 测试和插件安装/启停、六个正式 v2 场景的 GLB 校验和自重平衡、矩形楼破坏和倾倒、受力详查的 11 阶段截图、断面着色的 40 张 GPU 对照图，以及 147 项 Rust 回归。各次验证的资产快照与范围见[设计决策索引](docs/adr/README.md)。
 
-原交互与刚体簇路径保留独立验证入口：
+### 本地无窗验收
+
+需要 Rust 1.97.1 或以上、Python 3.11 或以上，以及支持 wgpu 离屏渲染的适配器。在仓库根目录执行以下命令。Python 和 Rust 依赖固定在同一个 `bevy-acceptance-test` 修订。
 
 ```powershell
-cargo run -- --smoke-test output/acceptance/rectangle
-cargo run -- --asset buildings/l_shape.destruction.json --smoke-test output/acceptance/l_shape
-cargo run -- --asset buildings/courtyard.destruction.json --smoke-test output/acceptance/courtyard
-cargo run -- --physics-smoke-test output/acceptance/physics
-cargo run -- --asset buildings/l_shape.destruction.json --physics-smoke-test output/acceptance/physics_l_shape
-cargo run -- --asset buildings/courtyard.destruction.json --physics-smoke-test output/acceptance/physics_courtyard
+python -m venv tmp/acceptance-venv
+.\tmp\acceptance-venv\Scripts\python.exe -m pip install -r scripts/acceptance/requirements.txt
+cargo build --locked --release -p bevy-destruction-acceptance --features acceptance-test
+$acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```
 
-`--smoke-test` 会打开演示窗口，以固定 60 Hz 模拟执行加载后再次实例化、相机控制、鼠标点击、连续破坏与特效回收检查，保存截图和 `report.json`，然后退出；失败返回非零退出码。验证模式只接收预定的控制输入，正常运行使用实际时间和实际输入。截图由引擎直接生成，无需桌面自动化。
+macOS 或 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件路径省略 `.exe`。默认 `all` 先运行 `controls` 和 `gameplay` 两组交互验收，再运行 17 个固定帧基线。`controls` 通过 Bevy 原生键鼠消息验证 WASD、鼠标转向、左键破坏、右键刚球与 R 键方块。`gameplay` 经 BRP 放置初始相机，随后飞近矩形楼、瞄准、破坏底层墙面并发射两种撞击物，读取破坏、接触与断键状态。
 
-`--physics-smoke-test` 独立检查屋顶双块失支撑下落、运动中再次拆分、质量/位姿/速度继承及接触后休眠，保存 3 张阶段截图和报告。各验证模式互斥；原表现对照可加 `--no-stress`。
+`baseline` 仅运行固定帧基线。各探针在应用进程中以固定 60 Hz 模拟步骤验证原有断言。
 
-`--material-smoke-test` 比较真实材质在平移、旋转前后的图像，并加入世界锁定负对照，输出四张对照图和报告。`--landing-smoke-test` 暖机后移除高楼下半部分，使完整上半部分仅受重力落地；检查接触前不损坏、内部楼层断键、保留成组结构、质量保留、有限状态和力/力矩平衡，输出四张阶段图及含簇成员/空间范围的报告。建议使用 `highrise_slab` 或 `highrise_l`。
+| 用例 | 基线场景 | 验证内容 |
+| --- | --- | --- |
+| `smoke` | `rectangle`、`l_shape`、`courtyard` | 重复实例化、相机控制、局部点击破坏、边带与粒子预算，以及最后一次出尘后的粒子回收。每次保存 12 张阶段图，涵盖破坏后 0.05、0.15、0.4、1、3 秒及烟尘散尽的近景。 |
+| `physics` | `rectangle`、`l_shape`、`courtyard` | 屋顶双块失支撑后下落、运动中再次拆分、质量与位姿速度继承、接触后休眠。每次保存 3 张。 |
+| `stress` | 六个正式场景 | 真实自重求解，双柱梁失去支撑后的渐进过载、自动断键、下落与休眠，刚球与方块碰撞断裂且保持刚体完整。每次保存 7 张。 |
+| `material` | `rectangle` | 材质随构件刚体平移和旋转保持一致，世界锁定材质作为负对照。保存 4 张 512×256 图。 |
+| `contact` | `rectangle` | 纯断面参考、旧共面显示层与单次着色对照，覆盖视角、深度预通道、接触范围外 grid 和前方遮挡。保存 40 张 512×512 图。 |
+| `force` | `rectangle` | 自重内力、断键、刚球接触冲量、关闭清空，以及热力阈值、遮挡、窗洞拾取、实例隔离、松开 Alt 和原色恢复。保存 11 张。 |
+| `landing` | `highrise_slab` | 移除下半部分后检查接触前完整、内部楼层碰撞断键、成组残骸、质量保留、有限状态以及力和力矩平衡。保存 4 张及簇成员和空间范围报告，也可指定 `highrise_l`。 |
+| `collapse` | `rectangle` | 从资产几何选取偏侧支撑，移除其他首层支撑后检查上部下降、倾斜及与残墙接触的实际冲量。保存 4 张和可回放的 `damage.json`。 |
 
-`--collapse-smoke-test` 使用默认矩形楼，从当前几何中选择偏侧支撑路径并移除其他首层支撑，检查强度断裂后大块上部下降、倾斜及其与静态残墙的真实接触冲量，不注入速度或力矩。输出四张阶段图、可回放的 `damage.json` 和数值/质量报告。
-
-`--force-smoke-test` 验证真实自重内力、断键失效、刚球命中的实际接触冲量和关闭清空，再用同源网格检查热力阈值、遮挡、窗洞拾取、共享资产的实例隔离、Alt 松开和原色恢复。输出实际渲染截图和 `report.json`。
-
-`--contact-smoke-test` 对照纯断面参考、旧共面显示层与源网格单次着色，检查透视深度精度、移动视角、深度预通道、接触范围外 grid 和前方遮挡。
-
-验证包含 0.05 / 0.15 / 0.4 / 1 / 3 秒分阶段画面，以及烟尘散尽后的破口近景。可用以下参数做同路径比较：
+每次运行在 `output/acceptance/run-*` 下生成 `summary.json`、各用例的验收报告和进程日志。固定帧探针同时写出 `report.json` 和阶段截图。失败返回非零退出码。可用 `--output`、`--exe`、`--port` 和 `--timeout` 指定输出目录、可执行文件、回环 BRP 端口和单次等待的秒数。启动和输入等待默认限时 180 秒，固定帧探针默认限时 600 秒。并行运行时为每个进程指定不同端口。单个固定帧探针或 `profile` 可用 `--scene` 或 `--asset` 选择场景，并可传入 `--no-stress`、`--no-vfx`、`--no-detail` 或 `--no-soft-particles`。
 
 ```powershell
-cargo run -- --smoke-test output/vfx-replay --capture-replay
-cargo run -- --smoke-test output/geometry-only --no-vfx
-cargo run -- --smoke-test output/baseline --no-vfx --no-detail --no-soft-particles
-cargo run --release -- --smoke-test output/profile --profile
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py gameplay --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py stress --scene bridge --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py smoke --scene rectangle --capture-replay --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py profile --exe $acceptanceExe
 ```
 
-`--capture-replay` 另存 30fps 的 PNG 序列到 `replay`。`--profile` 关闭截图，启用无垂直同步的连续更新，记录实际墙钟帧间隔、VFX 生成/更新、边带缓存/更新及渲染通道 CPU/GPU 时间（GPU 项取决于设备支持）；固定模拟时间不作为帧率测量，正常运行保留默认窗口更新设置。`--no-detail` 关闭可选边带，仍保留真实接触面断面材质；`--no-soft-particles` 关闭深度预通道和交界淡出。粒子总量限 640，边带显示几何限 180,000 三角形；这些数量上限不代表 60fps 保证。
+`smoke --capture-replay` 另存每模拟秒 30 帧的 PNG 序列到 `replay`。`profile` 连续运行离屏更新并关闭截图，使用实际墙钟帧间隔计算离屏帧率。报告还记录 VFX、边带缓存和渲染通道的耗时，GPU 项取决于设备支持。架构和验证范围见 [ADR 0018](docs/adr/0018-windowless-acceptance.md)。
+
+`--no-detail` 关闭可选边带，保留真实接触面断面材质。`--no-soft-particles` 关闭深度预通道和交界淡出。用例检查 640 个粒子和 180,000 个边带三角形的预算。
 
 Blender 资产测试与插件使用方法见[工具说明](tools/blender/README.md)。
 

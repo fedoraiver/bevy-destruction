@@ -2,7 +2,7 @@
 
 ## 状态与日期
 
-2026-11-17 采用并实现，目录迁移对应提交 `1ec85cb`。应用装配随后移至库入口 `src/lib.rs`，见 [ADR 0016](0016-shared-schedule-export.md)。
+2026-11-17 采用并实现，目录迁移对应提交 `1ec85cb`。二进制入口的初始布局随后由 [ADR 0016](0016-shared-schedule-export.md) 调整，现行 workspace 与应用入口见 [ADR 0019](0019-workspace-app-entrypoints.md)。模块和测试的目录规则继续沿用。
 
 ## 背景
 
@@ -10,7 +10,7 @@
 
 ## 决策与实现
 
-- `src/main.rs` 为二进制入口，其余模块使用 `src/<module>/mod.rs`，保留 `crate::<module>` 导入路径。
+- 初始布局以 `src/main.rs` 为二进制入口。其余模块使用 `src/<module>/mod.rs`，保留 `crate::<module>` 导入路径。
 - 单元测试和仅供测试使用的辅助函数放入同目录的 `tests.rs`，实现文件通过 `#[cfg(test)] mod tests;` 引用。按主题分组的测试可在 `tests.rs` 内使用子模块。
 - 随迁移更新 `include_str!` 等相对路径，保持资源位置、资产根目录和测试的私有访问范围。资源版本迁移按 [ADR 0005](0005-v2-asset-contract.md) 独立验证。
 
@@ -28,4 +28,4 @@
 
 ## 来源
 
-[二进制入口](../../src/main.rs)、[结构模块与测试](../../src/structure)、[物理模块与测试](../../src/physics)。
+[原二进制入口](https://github.com/fedoraiver/bevy-destruction/blob/1ec85cb/src/main.rs)、[结构模块与测试](../../src/structure)、[物理模块与测试](../../src/physics)。

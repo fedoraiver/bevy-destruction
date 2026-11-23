@@ -2,7 +2,7 @@
 
 ## 状态
 
-2026-11-22 采用。替代 [ADR 0014](0014-generated-ecs-architecture.md) 中项目内的调度导出入口和 [ADR 0015](0015-follow-bevy-cicd-main.md) 中的调度导出库依赖。
+2026-11-22 采用。替代 [ADR 0014](0014-generated-ecs-architecture.md) 中项目内的调度导出入口和 [ADR 0015](0015-follow-bevy-cicd-main.md) 中的调度导出库依赖。根包提供应用构造函数和 Pages 的原有触发方式已由 [ADR 0019](0019-workspace-app-entrypoints.md) 替代。共享启动器继续使用。
 
 ## 背景
 
@@ -10,7 +10,7 @@
 
 ## 决策与实现
 
-- 项目通过 `package.metadata.bevy-architecture.app-factory` 指定库函数 `build_app`。它与游戏入口复用同一套装配逻辑，返回使用默认选项的 Bevy `App`。
+- 当时项目在根包通过 `package.metadata.bevy-architecture.app-factory` 指定库函数 `build_app`。它与游戏入口复用同一套装配逻辑，返回使用默认选项的 Bevy `App`。
 - bevy-cicd 构建并运行专用入口，启用 Bevy 的调试信息，读取插件完成准备后的主应用和子应用调度。编译事实记录该入口的二进制哈希及运行快照哈希，关联本次调度导出。
 - 项目移除 `debugdump` feature、导出库依赖和 `--dump-schedules` 参数。架构工作流继续按原有触发条件生成和发布站点。
 

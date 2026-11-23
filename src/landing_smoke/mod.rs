@@ -1,8 +1,5 @@
 use avian3d::prelude::*;
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
+use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
     DemoOptions,
@@ -53,7 +50,7 @@ fn capture(commands: &mut Commands, options: &DemoOptions, name: &str) {
         commands
             .spawn((
                 Name::new("Landing smoke screenshot"),
-                Screenshot::primary_window(),
+                options.smoke_screenshot(),
             ))
             .observe(save_to_disk(
                 options.landing_smoke_output.as_ref().unwrap().join(name),

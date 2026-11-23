@@ -447,7 +447,7 @@ fn draw(
                 stats.static_bonds += 1;
             }
             stats.max_force_n = stats.max_force_n.max(force_n);
-            if options.force_smoke_output.is_some() {
+            if options.force_probe() {
                 stats.valid_bonds.push((building, bond.id.clone()));
             }
 

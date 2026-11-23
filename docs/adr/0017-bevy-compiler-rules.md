@@ -2,7 +2,7 @@
 
 ## 状态
 
-2026-11-23 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的编译器规则手动触发策略。
+2026-11-23 采用。替代 [ADR 0013](0013-shared-bevy-cicd.md) 的编译器规则手动触发策略。工作流转向 `apps/game` 包进行检查，见 [ADR 0019](0019-workspace-app-entrypoints.md)。
 
 ## 背景
 
@@ -11,7 +11,7 @@ Rust CI 已能调用 bevy-cicd 的编译器规则。原先需手动勾选运行�
 ## 决策与实现
 
 - 面向 `master` 的 PR、对 `master` 的推送和手动运行均执行 `compiler-rules`，工作流继续按 [ADR 0015](0015-follow-bevy-cicd-main.md) 引用 `bevy-cicd@main`。
-- 共享工作流对仓库根目录的 Cargo 包运行 `entity-names` 和 `named-fields`。生产代码创建实体时提供可辨认的 `Name`，单字段元组结构体改用描述用途的具名字段。
+- 共享工作流当时对仓库根目录的 Cargo 包运行 `entity-names` 和 `named-fields`。生产代码创建实体时提供可辨认的 `Name`，单字段元组结构体改用描述用途的具名字段。
 
 ## 备选方案与取舍
 

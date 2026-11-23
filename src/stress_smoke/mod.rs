@@ -1,8 +1,5 @@
 use avian3d::prelude::*;
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
+use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
     DemoOptions,
@@ -326,11 +323,16 @@ pub(crate) fn remove_left_support(world: &mut World, root: Entity) {
         .insert((RemovedChunk, Visibility::Hidden));
 }
 
-fn capture(commands: &mut Commands, directory: &std::path::Path, name: &str) {
+fn capture(
+    commands: &mut Commands,
+    options: &DemoOptions,
+    directory: &std::path::Path,
+    name: &str,
+) {
     commands
         .spawn((
             Name::new("Stress smoke screenshot"),
-            Screenshot::primary_window(),
+            options.smoke_screenshot(),
         ))
         .observe(save_to_disk(directory.join(name)));
 }
@@ -450,7 +452,12 @@ fn drive(
                     })
                 })
                 .collect();
-            capture(&mut commands, directory, "01-intact-selfweight.png");
+            capture(
+                &mut commands,
+                &options,
+                directory,
+                "01-intact-selfweight.png",
+            );
         }
         20 => {
             commands.queue(|world: &mut World| {
@@ -472,7 +479,7 @@ fn drive(
             } else {
                 state.errors.push("Missing stress beam fixture".into());
             }
-            capture(&mut commands, directory, "02-two-supports.png");
+            capture(&mut commands, &options, directory, "02-two-supports.png");
         }
         100 => {
             if let Some(root) = state.probe {
@@ -502,7 +509,12 @@ fn drive(
                     );
                 }
             }
-            capture(&mut commands, directory, "03-overloaded-connection.png");
+            capture(
+                &mut commands,
+                &options,
+                directory,
+                "03-overloaded-connection.png",
+            );
         }
         160 => {
             if !state.stress_released {
@@ -510,7 +522,7 @@ fn drive(
                     .errors
                     .push("Calculated overload did not fracture and release the beam".into());
             }
-            capture(&mut commands, directory, "04-stress-release.png");
+            capture(&mut commands, &options, directory, "04-stress-release.png");
         }
         760 => {
             if !state.fell || !state.slept {
@@ -518,7 +530,7 @@ fn drive(
                     .errors
                     .push("Stress-released beam did not fall and reach physical sleep".into());
             }
-            capture(&mut commands, directory, "05-settled.png");
+            capture(&mut commands, &options, directory, "05-settled.png");
         }
         800 | 900 => {
             let bounds = building.bounds.unwrap();
@@ -600,6 +612,7 @@ fn drive(
             }
             capture(
                 &mut commands,
+                &options,
                 directory,
                 if state.frame == 810 {
                     "06-rigid-sphere-impact.png"

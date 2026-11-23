@@ -1,9 +1,5 @@
 use avian3d::prelude::Collider;
-use bevy::{
-    ecs::system::SystemParam,
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
+use bevy::{ecs::system::SystemParam, prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
     DemoOptions,
@@ -15,6 +11,12 @@ use crate::{
     scene::{BuildingInstance, DamageDetail, DemoCamera, DetailStats, RemovedChunk},
     vfx::{PARTICLE_LIMIT, Particle, VfxStats},
 };
+
+const SETTLE_START: u32 = 760;
+// The longest burst particle (including its spawn delay) expires within 3 simulated seconds.
+const VFX_QUIET_FRAMES: u32 = 180;
+const SETTLE_DEADLINE: u32 = 1200;
+const SCREENSHOT_READBACK_FRAMES: u32 = 30;
 
 pub struct SmokePlugin;
 
@@ -34,6 +36,9 @@ struct SmokeState {
     first_point: Option<Vec3>,
     first_particles: usize,
     stress_time: f32,
+    observed_bursts: u64,
+    last_burst_frame: u32,
+    settled_frame: Option<u32>,
     camera_origin: Option<Transform>,
     camera_checks: bool,
     replay_frames: u32,
@@ -70,7 +75,7 @@ fn capture(
         commands
             .spawn((
                 Name::new("Destruction smoke screenshot"),
-                Screenshot::primary_window(),
+                options.smoke_screenshot(),
             ))
             .id()
     });
@@ -130,6 +135,13 @@ fn drive(
     };
     state.frames += 1;
     metrics.phase = state.frames;
+    if vfx.received != state.observed_bursts {
+        state.observed_bursts = vfx.received;
+        state.last_burst_frame = state.frames;
+        if state.frames < SETTLE_DEADLINE {
+            state.settled_frame = None;
+        }
+    }
     let mut pending_capture = None;
     if options.capture_replay
         && (150..=390).contains(&state.frames)
@@ -532,8 +544,17 @@ fn drive(
             directory,
             "04-budget-stress.png",
         ),
-        760 => {
-            if particles.iter().len() != 0 {
+        frame
+            if frame >= SETTLE_START
+                && state.settled_frame.is_none()
+                && (frame - state.last_burst_frame >= VFX_QUIET_FRAMES
+                    || frame >= SETTLE_DEADLINE) =>
+        {
+            if frame - state.last_burst_frame < VFX_QUIET_FRAMES {
+                state
+                    .errors
+                    .push("Fracture effects were still emitting before the settle deadline".into());
+            } else if !particles.is_empty() {
                 state
                     .errors
                     .push("Particles outlived their maximum lifetime".into());
@@ -545,8 +566,18 @@ fn drive(
                 directory,
                 "05-settled.png",
             );
+            state.settled_frame = Some(frame);
         }
-        790 => {
+        frame
+            if state
+                .settled_frame
+                .is_some_and(|settled| frame == settled + SCREENSHOT_READBACK_FRAMES) =>
+        {
+            if state.last_burst_frame > state.settled_frame.unwrap() {
+                state
+                    .errors
+                    .push("New fracture effects appeared after the settle deadline".into());
+            }
             for name in [
                 "01-grid.png",
                 "02-fracture-edges.png",
@@ -591,7 +622,7 @@ fn drive(
             let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": instance.chunks.values().map(|c| c.primitives.len()).sum::<usize>(),
                 "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
-                "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time,
+                "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time, "last_burst_frame": state.last_burst_frame, "settled_frame": state.settled_frame,
                 "remaining_particle_ages": particles.iter().take(6).map(|p| [p.age, p.lifetime]).collect::<Vec<_>>(),
                 "vfx": {"spawned_by_layer":vfx.spawned,"dropped_by_layer":vfx.dropped,"retired":vfx.retired,"received":vfx.received,"feedback_bursts":vfx.feedback_bursts,"collision_queries":vfx.collision_queries,"collisions":vfx.collisions,"max_update_cpu_ms":vfx.max_update_cpu_ms,"max_emit_cpu_ms":vfx.max_emit_cpu_ms,"estimated_coverage":vfx.estimated_coverage,"peak_estimated_coverage":vfx.peak_estimated_coverage},
                 "detail":{"cached_patches":detail.patches,"cached_meshes":detail.cached_meshes,"cached_triangles":detail.cached_triangles,"active_meshes":detail.active_meshes,"triangles":detail.triangles,"cache_build_ms":detail.cache_build_ms,"max_update_ms":detail.max_update_ms},

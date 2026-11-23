@@ -4,7 +4,7 @@ use bevy::mesh::VertexAttributeValues;
 
 #[test]
 fn catalog_convex_proxies_build_runtime_colliders() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let root = crate::asset_root();
     for (name, path) in crate::catalog::SCENES {
         let manifest: crate::asset::Manifest =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();

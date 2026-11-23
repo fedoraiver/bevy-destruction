@@ -1,0 +1,24 @@
+[package]
+name = "ecs-architecture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.bevy-architecture]
+app-factory = "build_app"
+
+[lib]
+path = "../../src/lib.rs"
+test = false
+doctest = false
+
+[dependencies]
+avian3d.workspace = true
+bevy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

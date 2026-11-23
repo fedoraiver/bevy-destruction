@@ -814,10 +814,7 @@ fn bundled_graphs_converge_with_balanced_self_weight_reactions() {
         "l_shape",
         "courtyard",
     ] {
-        let path = format!(
-            "{}/assets/buildings/{file}.destruction.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
+        let path = crate::asset_root().join(format!("buildings/{file}.destruction.json"));
         let contents = std::fs::read_to_string(path).unwrap();
         let manifest: Manifest = serde_json::from_str(&contents).unwrap();
         let gravity = DVec3::NEG_Y * 9.81;
