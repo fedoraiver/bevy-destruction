@@ -21,7 +21,6 @@ impl Plugin for DestructionPhysicsPlugin {
 
 #[derive(Component, Clone)]
 pub struct Cluster {
-    pub building: Entity,
     pub chunks: Vec<String>,
     pub anchored: bool,
 }
@@ -211,7 +210,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     Friction::new(0.7),
                     Restitution::new(0.0),
                     Cluster {
-                        building,
                         chunks: component.chunks.clone(),
                         anchored: component.anchored,
                     },

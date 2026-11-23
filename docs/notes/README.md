@@ -16,6 +16,7 @@
 | [0002](implemented/0002-elastic-structure-and-overload.md) | 六自由度结构承载与过载断裂 |
 | [0003](implemented/0003-collision-driven-fracture.md) | 碰撞驱动的断裂与事件卸载 |
 | [0012](implemented/0012-density-derived-mass-properties.md) | Avian 按碰撞体与密度计算质量属性 |
+| [0021](implemented/0021-explicit-ecs-access-and-cluster-ownership.md) | 承载系统的显式访问与刚体簇归属 |
 
 ### 资产制作
 
@@ -48,4 +49,4 @@
 | [0019](implemented/0019-workspace-app-entrypoints.md) | 独立应用入口与 ECS 架构分析包 |
 | [0020](implemented/0020-game-architecture-export.md) | 从桌面游戏包导出 ECS 架构 |
 
-两个目录共用连续编号，下一个编号为 0021。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+两个目录共用连续编号，下一个编号为 0022。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

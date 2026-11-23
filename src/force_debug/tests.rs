@@ -102,8 +102,8 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
     let body = world
         .spawn((
             GlobalTransform::IDENTITY,
+            ChildOf(building),
             Cluster {
-                building,
                 chunks: vec!["front".into()],
                 anchored: true,
             },
@@ -202,23 +202,41 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
         captured_at: 0.0,
     };
     let mut cluster = Cluster {
-        building,
         chunks: sample.chunks.clone(),
         anchored: false,
     };
-    assert!(sample_members_current(&sample, &instance, &cluster));
+    let parent = ChildOf(building);
+    assert!(sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
+    assert!(!sample_members_current(
+        &sample,
+        &instance,
+        &cluster,
+        &ChildOf(other)
+    ));
     instance.chunks.get_mut("b").unwrap().alive = false;
-    assert!(!sample_members_current(&sample, &instance, &cluster));
+    assert!(!sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
     instance.chunks.get_mut("b").unwrap().alive = true;
     instance.chunks.get_mut("b").unwrap().cluster = Some(other);
-    assert!(!sample_members_current(&sample, &instance, &cluster));
+    assert!(!sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
     instance.chunks.get_mut("b").unwrap().cluster = Some(body);
     cluster.chunks.pop();
-    assert!(!sample_members_current(&sample, &instance, &cluster));
+    assert!(!sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
     cluster.chunks.push("b".into());
     instance.bonds.insert("a-b".into(), true);
     sample.bond_signature = bond_signature(&instance.bonds);
-    assert!(sample_members_current(&sample, &instance, &cluster));
+    assert!(sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
     instance.bonds.insert("a-b".into(), false);
-    assert!(!sample_members_current(&sample, &instance, &cluster));
+    assert!(!sample_members_current(
+        &sample, &instance, &cluster, &parent
+    ));
 }

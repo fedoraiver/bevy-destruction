@@ -143,16 +143,32 @@ fn initial_overload_can_fracture_before_the_first_cluster_exists() {
     app.world_mut()
         .resource_mut::<StressSettings>()
         .immediate_utilization = 2.0;
-    let root = spawn_beam(app.world_mut(), Vec3::ZERO);
+    let origin = Vec3::new(6.0, 0.0, 3.0);
+    let root = spawn_beam(app.world_mut(), origin);
     remove_left_support(app.world_mut(), root);
-    assert!(
-        app.world()
-            .get::<BuildingInstance>(root)
-            .unwrap()
-            .clusters
-            .is_empty()
+    let bond = beam_manifest()
+        .bonds
+        .into_iter()
+        .find(|bond| bond.id == RIGHT_BOND)
+        .unwrap();
+    let expected_point = origin + Vec3::from(bond.center);
+    app.add_systems(
+        FixedPostUpdate,
+        (move |instances: Query<&BuildingInstance>, mut bursts: MessageReader<BreakBurst>| {
+            let instance = instances.get(root).unwrap();
+            assert!(instance.clusters.is_empty());
+            assert!(!instance.bonds[RIGHT_BOND]);
+            let mut bursts = bursts.read();
+            let burst = bursts
+                .next()
+                .expect("Fracture feedback before cluster rebuilding");
+            assert!(burst.point.abs_diff_eq(expected_point, 1e-6));
+            assert!(bursts.next().is_none());
+        })
+        .after(update_stress)
+        .before(physics::rebuild_clusters),
     );
-    tick(&mut app, 3);
+    tick(&mut app, 1);
     assert_eq!(
         app.world().get::<StressState>(root).unwrap().broken_total,
         1
@@ -189,7 +205,7 @@ fn self_weight_uses_collider_mass_and_shifts_moment_to_the_structural_node() {
         .entity_mut(entity)
         .insert((collider, ColliderDensity(density)));
 
-    update_stress(app.world_mut());
+    app.world_mut().run_system_cached(update_stress).unwrap();
     let stress = app.world().get::<StressState>(root).unwrap();
     let bond = &stress.bonds[RIGHT_BOND].stress;
     assert!((bond.force[1].abs() - 1440.0).abs() < 1e-3);

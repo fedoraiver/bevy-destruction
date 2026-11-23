@@ -491,7 +491,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
     let chunks = instance.chunks.keys().cloned().collect::<Vec<_>>();
     let signature = bond_signature(&instance.bonds);
     world.entity_mut(body).insert(Cluster {
-        building,
         chunks: chunks.clone(),
         anchored: false,
     });
@@ -578,7 +577,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         );
     }
     world.entity_mut(twin_body).insert(Cluster {
-        building: twin,
         chunks: chunks.clone(),
         anchored: false,
     });

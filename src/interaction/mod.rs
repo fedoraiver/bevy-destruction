@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::{
     DemoOptions,
-    asset::DestructibleAsset,
+    asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
     debug::FractureEdges,
     scene::{BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, RemovedChunk},
@@ -42,23 +42,31 @@ pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[Strin
         .resource::<Assets<DestructibleAsset>>()
         .get(&instance.asset)
         .unwrap();
-    let Some(bond) = asset
-        .manifest
-        .bonds
-        .iter()
-        .find(|bond| broken.contains(&bond.id))
-    else {
-        return;
-    };
-    let chunk = &instance.chunks[&bond.a];
-    let pose_for = |id: &str| {
-        if let Some(body) = instance.chunks[id].cluster {
+    let burst = build_bond_feedback(instance, &asset.manifest, broken, |body| {
+        if let Some(body) = body {
             Transform::from_translation(world.get::<Position>(body).unwrap().0)
                 .with_rotation(world.get::<Rotation>(body).unwrap().0)
         } else {
             crate::physics::global_transform(world, building).compute_transform()
         }
-    };
+    });
+    if let Some(burst) = burst {
+        world.write_message(burst);
+    }
+}
+
+pub(crate) fn build_bond_feedback(
+    instance: &BuildingInstance,
+    manifest: &Manifest,
+    broken: &[String],
+    world_pose: impl Fn(Option<Entity>) -> Transform,
+) -> Option<BreakBurst> {
+    let bond = manifest
+        .bonds
+        .iter()
+        .find(|bond| broken.contains(&bond.id))?;
+    let chunk = &instance.chunks[&bond.a];
+    let pose_for = |id: &str| world_pose(instance.chunks[id].cluster);
     let pose = pose_for(&bond.a);
     let mut surfaces = Vec::new();
     let mut area = 0.0;
@@ -75,7 +83,7 @@ pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[Strin
         }));
     }
     surfaces.truncate(256);
-    let burst = BreakBurst {
+    Some(BreakBurst {
         point: pose.transform_point(bond.center.into()),
         normal: pose.rotation * Vec3::from(bond.normal),
         seed: broken
@@ -88,8 +96,7 @@ pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[Strin
         removed_volume: 0.0,
         exposed_area: area,
         surfaces,
-    };
-    world.write_message(burst);
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

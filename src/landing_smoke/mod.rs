@@ -72,6 +72,7 @@ fn drive(
         &LinearVelocity,
         &AngularVelocity,
         &ComputedMass,
+        &ChildOf,
     )>,
     impacts: Res<ImpactStats>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
@@ -126,7 +127,7 @@ fn drive(
     }
     let selected_bodies = bodies
         .iter()
-        .filter(|body| body.0.building == building)
+        .filter(|(.., parent)| parent.parent() == building)
         .collect::<Vec<_>>();
     if !state.upper.is_empty() {
         let finite = selected_bodies.iter().all(|body| {

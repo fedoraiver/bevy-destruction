@@ -686,8 +686,10 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                 continue;
             }
             let Some(cluster) = world.get::<Cluster>(body).filter(|cluster| {
-                cluster.building == shock.building
-                    && !cluster.anchored
+                !cluster.anchored
+                    && world
+                        .get::<ChildOf>(body)
+                        .is_some_and(|parent| parent.parent() == shock.building)
                     && world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
             }) else {
                 state.released += 1;

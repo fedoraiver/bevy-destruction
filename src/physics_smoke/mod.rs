@@ -206,6 +206,7 @@ fn drive(
         &ComputedCenterOfMass,
         &ComputedMass,
         Has<Sleeping>,
+        &ChildOf,
     )>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut exit: MessageWriter<AppExit>,
@@ -261,22 +262,22 @@ fn drive(
     }
     state.frame += 1;
 
-    let selected_bodies = bodies
-        .iter()
-        .filter(|(_, cluster, ..)| {
-            cluster.building == building
-                && cluster.chunks.iter().any(|id| state.selected.contains(id))
-        })
+    let building_bodies = || {
+        bodies
+            .iter()
+            .filter(|(.., parent)| parent.parent() == building)
+    };
+    let selected_bodies = building_bodies()
+        .filter(|(_, cluster, ..)| cluster.chunks.iter().any(|id| state.selected.contains(id)))
         .collect::<Vec<_>>();
     if !state.non_finite
-        && bodies.iter().any(|(_, cluster, _, p, r, v, w, c, m, _)| {
-            cluster.building == building
-                && (!p.0.is_finite()
-                    || !r.0.is_finite()
-                    || !v.0.is_finite()
-                    || !w.0.is_finite()
-                    || !c.0.is_finite()
-                    || !m.value().is_finite())
+        && building_bodies().any(|(_, _, _, p, r, v, w, c, m, ..)| {
+            !p.0.is_finite()
+                || !r.0.is_finite()
+                || !v.0.is_finite()
+                || !w.0.is_finite()
+                || !c.0.is_finite()
+                || !m.value().is_finite()
         })
     {
         state.non_finite = true;
@@ -304,9 +305,7 @@ fn drive(
                 .sum();
             info!(
                 "Physics smoke: releasing roof pair {selected:?}; existing clusters={:?}",
-                bodies
-                    .iter()
-                    .filter(|body| body.1.building == building)
+                building_bodies()
                     .map(|body| (body.0, body.1.anchored, body.1.chunks.len()))
                     .collect::<Vec<_>>()
             );
@@ -402,14 +401,11 @@ fn drive(
         40 => {
             info!(
                 "Physics smoke: splitting the falling pair; existing clusters={:?}",
-                bodies
-                    .iter()
-                    .filter(|body| body.1.building == building)
+                building_bodies()
                     .map(|body| (body.0, body.1.anchored, body.1.chunks.len()))
                     .collect::<Vec<_>>()
             );
-            for (_, cluster, _, position, rotation, linear, angular, center, _, _) in
-                &selected_bodies
+            for (_, cluster, _, position, rotation, linear, angular, center, ..) in &selected_bodies
             {
                 let parent_center = position.0 + rotation.0 * center.0;
                 for id in &cluster.chunks {
@@ -475,9 +471,8 @@ fn drive(
                     state.settled_centers.insert(id.clone(), center);
                 }
             }
-            for (_, cluster, kind, position, rotation, ..) in &bodies {
-                if cluster.building == building
-                    && cluster.anchored
+            for (_, cluster, kind, position, rotation, ..) in building_bodies() {
+                if cluster.anchored
                     && (*kind != RigidBody::Static
                         || position.0.length() > 0.0001
                         || rotation.0.angle_between(Quat::IDENTITY) > 0.0001)

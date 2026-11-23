@@ -8,10 +8,12 @@ use bevy::{math::DVec3, prelude::*};
 
 use crate::{
     asset::DestructibleAsset,
+    interaction::build_bond_feedback,
     physics,
     scene::{BuildingInstance, ChunkInstance},
     stress::{self, BondStress, NodeLoad, SolverSettings, node_center},
     structure,
+    vfx::BreakBurst,
 };
 
 #[cfg(test)]
@@ -23,7 +25,7 @@ impl Plugin for StressRuntimePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StressSettings>()
             .init_resource::<StructuralLoads>()
-            .add_message::<crate::vfx::BreakBurst>()
+            .add_message::<BreakBurst>()
             .add_systems(
                 FixedPostUpdate,
                 update_stress.before(physics::rebuild_clusters),
@@ -137,58 +139,50 @@ fn hash_weight(chunk: &ChunkInstance, hash: &mut impl Hasher) {
         .hash(hash);
 }
 
-pub(crate) fn update_stress(world: &mut World) {
-    if !world.resource::<StressSettings>().enabled {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_stress(
+    mut commands: Commands,
+    mut buildings: Query<(Entity, &mut BuildingInstance, Option<&mut StressState>)>,
+    settings: Res<StressSettings>,
+    time: Res<Time<Fixed>>,
+    gravity: Res<Gravity>,
+    loads: Res<StructuralLoads>,
+    assets: Res<Assets<DestructibleAsset>>,
+    transforms: TransformHelper,
+    poses: Query<(&Position, &Rotation)>,
+    mut bursts: MessageWriter<BreakBurst>,
+) {
+    if !settings.enabled {
         return;
     }
-    let dt = world.resource::<Time<Fixed>>().delta_secs_f64();
-    let now = world.resource::<Time<Fixed>>().elapsed_secs_f64();
-    let gravity = world.resource::<Gravity>().0;
-    let buildings = world
-        .query::<(Entity, &BuildingInstance)>()
-        .iter(world)
-        .filter(|(_, instance)| instance.bounds.is_some() && instance.error.is_none())
-        .map(|(entity, _)| entity)
-        .collect::<Vec<_>>();
-    for building in buildings {
-        if world.get::<StressState>(building).is_none() {
-            world.entity_mut(building).insert(StressState::default());
+    let dt = time.delta_secs_f64();
+    let now = time.elapsed_secs_f64();
+    let loads_tick = loads.last_changed().get();
+    let settings_tick = settings.last_changed().get();
+    let empty_loads = BTreeMap::new();
+    for (building, mut instance, mut state) in &mut buildings {
+        if instance.bounds.is_none() || instance.error.is_some() {
+            continue;
         }
-        let mut state = std::mem::take(&mut *world.get_mut::<StressState>(building).unwrap());
+        let mut initial_state = None;
+        let state = match state.as_deref_mut() {
+            Some(state) => state,
+            None => initial_state.insert(StressState::default()),
+        };
         state.last_broken.clear();
-        let source_tick = world
-            .entity(building)
-            .get_ref::<BuildingInstance>()
-            .unwrap()
-            .last_changed()
-            .get();
-        let loads_tick = world
-            .get_resource_ref::<StructuralLoads>()
-            .unwrap()
-            .last_changed()
-            .get();
-        let settings_tick = world
-            .get_resource_ref::<StressSettings>()
-            .unwrap()
-            .last_changed()
-            .get();
-        let instance = world.get::<BuildingInstance>(building).unwrap();
-        let Some(asset) = world
-            .resource::<Assets<DestructibleAsset>>()
-            .get(&instance.asset)
-        else {
-            *world.get_mut::<StressState>(building).unwrap() = state;
+        let source_tick = instance.last_changed().get();
+        let Some(asset) = assets.get(&instance.asset) else {
+            if let Some(state) = initial_state {
+                commands.entity(building).insert(state);
+            }
             continue;
         };
-        let settings = world.resource::<StressSettings>();
-        let root = physics::global_transform(world, building).compute_transform();
-        let local_gravity = root.rotation.conjugate() * gravity;
-        let empty_loads = BTreeMap::new();
-        let loads = world
-            .resource::<StructuralLoads>()
-            .by_building
-            .get(&building)
-            .unwrap_or(&empty_loads);
+        let root = transforms
+            .compute_global_transform(building)
+            .expect("A loaded building has a valid transform hierarchy")
+            .compute_transform();
+        let local_gravity = root.rotation.conjugate() * gravity.0;
+        let loads = loads.by_building.get(&building).unwrap_or(&empty_loads);
         let unchanged = state.cache.is_some_and(|cache| {
             cache.source_tick == source_tick
                 && cache.loads_tick == loads_tick
@@ -429,35 +423,46 @@ pub(crate) fn update_stress(world: &mut World) {
                 state.cache.unwrap().retry_at
             },
         });
-        if !state.requires_damage_update {
-            *world.get_mut::<StressState>(building).unwrap() = state;
-            continue;
-        }
-        let mut candidates = Vec::new();
-        for (id, bond) in &mut state.bonds {
-            if !bond.valid || !instance.bonds.get(id).copied().unwrap_or(false) {
-                continue;
+        if state.requires_damage_update {
+            let mut candidates = Vec::new();
+            for (id, bond) in &mut state.bonds {
+                if !bond.valid || !instance.bonds.get(id).copied().unwrap_or(false) {
+                    continue;
+                }
+                let utilization = bond.stress.utilization;
+                bond.damage += dt * (utilization - 1.0).max(0.0) / settings.damage_seconds;
+                if utilization >= settings.immediate_utilization || bond.damage >= 1.0 {
+                    candidates.push((id.clone(), utilization));
+                }
             }
-            let utilization = bond.stress.utilization;
-            bond.damage += dt * (utilization - 1.0).max(0.0) / settings.damage_seconds;
-            if utilization >= settings.immediate_utilization || bond.damage >= 1.0 {
-                candidates.push((id.clone(), utilization));
+            candidates.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            candidates.truncate(settings.max_breaks_per_step);
+            if !candidates.is_empty() {
+                for (id, _) in candidates {
+                    instance.bonds.insert(id.clone(), false);
+                    state.broken_total += 1;
+                    state.last_broken.push(id);
+                }
+                instance.topology_dirty = true;
+
+                // 在刚体簇重建前，从断裂瞬间的位姿生成反馈。
+                if let Some(burst) =
+                    build_bond_feedback(&instance, &asset.manifest, &state.last_broken, |body| {
+                        match body {
+                            Some(body) => {
+                                let (position, rotation) = poses.get(body).unwrap();
+                                Transform::from_translation(position.0).with_rotation(rotation.0)
+                            }
+                            None => root,
+                        }
+                    })
+                {
+                    bursts.write(burst);
+                }
             }
         }
-        candidates.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        candidates.truncate(settings.max_breaks_per_step);
-        if !candidates.is_empty() {
-            let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
-            for (id, _) in candidates {
-                instance.bonds.insert(id.clone(), false);
-                state.broken_total += 1;
-                state.last_broken.push(id);
-            }
-            instance.topology_dirty = true;
+        if let Some(state) = initial_state {
+            commands.entity(building).insert(state);
         }
-        if !state.last_broken.is_empty() {
-            crate::interaction::bond_feedback(world, building, &state.last_broken);
-        }
-        *world.get_mut::<StressState>(building).unwrap() = state;
     }
 }

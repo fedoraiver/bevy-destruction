@@ -380,6 +380,7 @@ fn drive(
         &LinearVelocity,
         &AngularVelocity,
         &ComputedMass,
+        &ChildOf,
     )>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut metrics: ResMut<RunMetrics>,
@@ -463,8 +464,8 @@ fn drive(
     if state.frame > 20 && !instance.topology_dirty {
         state.strength_breaks = stress.broken_total.saturating_sub(state.before_broken);
         let mut total_mass = 0.0_f64;
-        for (cluster, kind, position, rotation, linear, angular, mass) in &bodies {
-            if cluster.building != building {
+        for (cluster, kind, position, rotation, linear, angular, mass, parent) in &bodies {
+            if parent.parent() != building {
                 continue;
             }
             state.finite &= position.0.is_finite()

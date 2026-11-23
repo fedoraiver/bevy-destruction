@@ -259,8 +259,9 @@ pub(crate) fn sample_members_current(
     sample: &DynamicForceSample,
     instance: &BuildingInstance,
     cluster: &Cluster,
+    parent: &ChildOf,
 ) -> bool {
-    cluster.building == sample.building
+    parent.parent() == sample.building
         && !cluster.anchored
         && sample.bond_signature == bond_signature(&instance.bonds)
         && cluster.chunks.len() == sample.chunks.len()
@@ -347,7 +348,7 @@ fn draw(
         Option<&StressState>,
         &GlobalTransform,
     )>,
-    bodies: Query<(&GlobalTransform, &RigidBody, &Cluster)>,
+    bodies: Query<(&GlobalTransform, &RigidBody, &Cluster, &ChildOf)>,
     mut tags: Query<&mut MeshTag>,
     mut painted: Local<BTreeMap<Entity, u32>>,
     mut gizmos: Gizmos<ForceGizmos>,
@@ -367,9 +368,9 @@ fn draw(
                 .get(sample.building)
                 .ok()
                 .zip(bodies.get(sample.body).ok())
-                .is_some_and(|((_, instance, _, _), (_, kind, cluster))| {
+                .is_some_and(|((_, instance, _, _), (_, kind, cluster, parent))| {
                     *kind == RigidBody::Dynamic
-                        && sample_members_current(sample, &instance, cluster)
+                        && sample_members_current(sample, &instance, cluster, parent)
                 })
         },
         |sample| {
@@ -418,7 +419,7 @@ fn draw(
             else {
                 continue;
             };
-            let Ok((pose, kind, _)) = bodies.get(body) else {
+            let Ok((pose, kind, _, _)) = bodies.get(body) else {
                 continue;
             };
             let impact = *kind == RigidBody::Dynamic;

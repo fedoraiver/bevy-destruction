@@ -232,6 +232,11 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     rebuild_clusters(app.world_mut());
     let old = body(app.world(), damaged, "a");
     let untouched = body(app.world(), intact, "a");
+    assert_eq!(app.world().get::<ChildOf>(old).unwrap().parent(), damaged);
+    assert_eq!(
+        app.world().get::<ChildOf>(untouched).unwrap().parent(),
+        intact
+    );
     assert_eq!(app.world().get::<RigidBody>(old), Some(&RigidBody::Static));
     assert_mass(app.world(), old, 14.0);
     assert_eq!(app.world().get::<RigidBodyColliders>(old).unwrap().len(), 4);
@@ -242,6 +247,10 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let detached = body(app.world(), damaged, "b");
     assert_ne!(old, detached);
     assert!(app.world().get_entity(old).is_err());
+    assert_eq!(
+        app.world().get::<ChildOf>(detached).unwrap().parent(),
+        damaged
+    );
     assert_eq!(
         app.world().get::<RigidBody>(detached),
         Some(&RigidBody::Dynamic)
