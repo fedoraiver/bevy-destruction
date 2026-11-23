@@ -30,4 +30,4 @@
 
 ## 来源
 
-[Avian 0.8 Collider](https://docs.rs/avian3d/0.8.0/avian3d/collision/collider/struct.Collider.html)、[Avian 质量属性组件](https://docs.rs/avian3d/latest/avian3d/dynamics/rigid_body/mass_properties/components/index.html)、[刚体簇实现](../../src/physics/mod.rs)及[碎块载荷实现](../../src/stress_runtime/mod.rs)。
+[Avian 0.8 Collider](https://docs.rs/avian3d/0.8.0/avian3d/collision/collider/struct.Collider.html)、[Avian 质量属性组件](https://docs.rs/avian3d/latest/avian3d/dynamics/rigid_body/mass_properties/components/index.html)、[刚体簇实现](../../../src/physics/mod.rs)及[碎块载荷实现](../../../src/stress_runtime/mod.rs)。

@@ -8,8 +8,9 @@
 
 ## 2. 记录设计决策与设定
 
-- 设计决策、架构取舍和重要设定写入 `docs/adr/xxx.md`。
-- 文件采用连续编号和描述性名称，例如 `docs/adr/0001-rigid-cluster-runtime.md`。
+- 设计决策、架构取舍和重要设定写入 `docs/notes/`。未落地的方案放入 `proposed/`，已经落地的决策及其历史记录放入 `implemented/`。
+- 两个目录共用连续编号，文件采用描述性名称，例如 `docs/notes/implemented/0001-rigid-cluster-runtime.md`。提案落地后保留原编号迁入 `implemented/`，并更新索引与引用。
+- 设计记录的索引与交叉引用维护在 `docs/notes/` 内。项目说明文档独立介绍当前实现。
 - 每份 ADR 记录状态、日期、背景、决策或提议、备选方案与取舍、验证要求和未决问题；涉及外部资料时注明来源。
 - 明确区分提议、已采用的决策、已经实现的功能和已经完成的验证。方案变更时同步更新相关 ADR；替代既有决策时保留历史并建立引用。
 - 相关代码、参数和 ADR 应保持一致，并随对应逻辑变更一起提交。
@@ -85,3 +86,8 @@ BREAKING CHANGE: assets must include stable bond identifiers; regenerate existin
 - 每完成一个 bug 修复或小功能，agent 必须完成适当验证并主动执行 Git 提交。
 - 提交前检查实际差异和暂存内容，只提交本次任务负责的文件，不混入用户或其他任务的无关修改。
 - 完成独立的文档或设计记录变更后，同样按逻辑变更提交。
+
+## 5. 开发与验证
+
+- 修改 Rust 代码前阅读[开发规范](docs/development.md)和对应的[插件说明](docs/plugin.md)。
+- 按变更影响选择[测试指南](docs/testing.md)中的验证入口。文档变更核对实现、路径、锚点和命令。

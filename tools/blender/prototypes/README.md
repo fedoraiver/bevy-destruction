@@ -24,4 +24,4 @@
   --python tools/blender/prototypes/test_curved_partition.py
 ```
 
-隔离原型覆盖二维薄墙沿厚度挤出的分块，输出保存在独立目录。正式资产使用共享分区和 v2 多面片接口，见 [ADR 0004](../../../docs/adr/0004-blender-asset-pipeline.md)和 [ADR 0005](../../../docs/adr/0005-v2-asset-contract.md)。
+隔离原型覆盖二维薄墙沿厚度挤出的分块，输出保存在独立目录。正式资产使用共享分区和 v2 多面片接口。详见 [v2 资产格式](../ASSET_FORMAT.md)。

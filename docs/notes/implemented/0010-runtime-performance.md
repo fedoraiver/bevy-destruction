@@ -31,4 +31,4 @@
 
 ## 来源
 
-[开发配置](../../Cargo.toml)、[结构求解](../../src/stress/mod.rs)、[承载运行时](../../src/stress_runtime/mod.rs)、[物理簇](../../src/physics/mod.rs)和[撞击实现](../../src/projectiles/mod.rs)。
+[开发配置](../../../Cargo.toml)、[结构求解](../../../src/stress/mod.rs)、[承载运行时](../../../src/stress_runtime/mod.rs)、[物理簇](../../../src/physics/mod.rs)和[撞击实现](../../../src/projectiles/mod.rs)。

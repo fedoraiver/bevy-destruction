@@ -10,7 +10,7 @@
 
 ## 决策与实现
 
-![构件经共享分区生成源网格和 v2 结构数据，双端接触复核后发布 GLB 和清单](../images/asset-pipeline.svg)
+![构件经共享分区生成源网格和 v2 结构数据，双端接触复核后发布 GLB 和清单](../../images/asset-pipeline.svg)
 
 源网格和结构数据在发布前依据实际 GLB 一起复核。运行时从清单读取并校验同目录的 GLB。
 
@@ -28,12 +28,12 @@
 
 | 场景 | 逻辑块 / 代理 / 连接 / 面片 | 资产 ID |
 | --- | --- | --- |
-| [矩形](../../assets/buildings/rectangle.destruction.json) | 163 / 2143 / 524 / 3661 | `28d80db4a70baff023c26c907b2aab492e93c830225a101b2ec60bb7e5b68fee` |
-| [L 形](../../assets/buildings/l_shape.destruction.json) | 269 / 3180 / 894 / 6332 | `b6bde21c7ddaa5a0f78110782ab667b92dba20d3e13babd3799f8f24343d471e` |
-| [庭院](../../assets/buildings/courtyard.destruction.json) | 283 / 3700 / 941 / 6730 | `4555e4605eea1a0ad47d1e13c5bdad293cad4a195cabdedc29a725e08804ded9` |
-| [板式高楼](../../assets/buildings/highrise_slab.destruction.json) | 228 / 2577 / 734 / 4308 | `4e05bcd6cd187cacf83a7f6683e29d08449233bc9e1f915061a47bbebebafbed` |
-| [L 形高楼](../../assets/buildings/highrise_l.destruction.json) | 227 / 2190 / 749 / 4529 | `c0b1b43ade54c27b65d5a0633cc8e25cb1eeed159ab0cb7f8f24e2d8d2f73fbb` |
-| [桥梁](../../assets/buildings/bridge.destruction.json) | 71 / 362 / 164 / 964 | `3cc25d7a6f7aa5b518bf5e4ab4e20c30d3380ea01dddb268aa91107360bc8952` |
+| [矩形](../../../assets/buildings/rectangle.destruction.json) | 163 / 2143 / 524 / 3661 | `28d80db4a70baff023c26c907b2aab492e93c830225a101b2ec60bb7e5b68fee` |
+| [L 形](../../../assets/buildings/l_shape.destruction.json) | 269 / 3180 / 894 / 6332 | `b6bde21c7ddaa5a0f78110782ab667b92dba20d3e13babd3799f8f24343d471e` |
+| [庭院](../../../assets/buildings/courtyard.destruction.json) | 283 / 3700 / 941 / 6730 | `4555e4605eea1a0ad47d1e13c5bdad293cad4a195cabdedc29a725e08804ded9` |
+| [板式高楼](../../../assets/buildings/highrise_slab.destruction.json) | 228 / 2577 / 734 / 4308 | `4e05bcd6cd187cacf83a7f6683e29d08449233bc9e1f915061a47bbebebafbed` |
+| [L 形高楼](../../../assets/buildings/highrise_l.destruction.json) | 227 / 2190 / 749 / 4529 | `c0b1b43ade54c27b65d5a0633cc8e25cb1eeed159ab0cb7f8f24e2d8d2f73fbb` |
+| [桥梁](../../../assets/buildings/bridge.destruction.json) | 71 / 362 / 164 / 964 | `3cc25d7a6f7aa5b518bf5e4ab4e20c30d3380ea01dddb268aa91107360bc8952` |
 
 ## 备选方案与取舍
 
@@ -47,4 +47,4 @@
 
 ## 来源
 
-[制作工具说明](../../tools/blender/README.md)、[目录生成入口](../../tools/blender/build_catalog.py)、[桥梁显式构件示例](../../tools/blender/examples/bridge.json)、[自然分区实现](../../tools/blender/bevy_destruction/natural.py)、[凸合并实现](../../tools/blender/bevy_destruction/natural_union.py)。
+[制作工具说明](../../../tools/blender/README.md)、[目录生成入口](../../../tools/blender/build_catalog.py)、[桥梁显式构件示例](../../../tools/blender/examples/bridge.json)、[自然分区实现](../../../tools/blender/bevy_destruction/natural.py)、[凸合并实现](../../../tools/blender/bevy_destruction/natural_union.py)。

@@ -64,14 +64,14 @@ $$
 ## 验证要求与结果
 
 - 检查解析悬臂、真实截面应力、多支点载荷分担、闭环稠密参考、刚体运动零应变，以及支柱移除后的全分量重分配、持续过载和无效解诊断。六个正式 v2 场景的完整自重平衡验证通过。
-- 固定 [v2 窄支撑夹具](../../src/stress/fixtures/README.md)通过原问题的受损图回归。它保留独立的 255 块、845 条连接图，以隔离正式分块变更。验收核对自由节点残差、总力矩平衡、真实下落和残桩接触。
+- 固定 [v2 窄支撑夹具](../../../src/stress/fixtures/README.md)通过原问题的受损图回归。它保留独立的 255 块、845 条连接图，以隔离正式分块变更。验收核对自由节点残差、总力矩平衡、真实下落和残桩接触。
 - `--stress-smoke-test` 使用所选正式场景和独立 SI 双柱梁分别验证完整自重、单支柱移除后的仍连通超载、断键、下落与休眠。`--collapse-smoke-test` 从矩形楼当前几何和连接图选取偏侧支撑。提交 `223660d` 记录的正式 v2 矩形验证通过，上部成组下落并倾转，记录了实际静态残桩接触冲量。
 
 ### 矩形楼失支撑过程
 
 | 完整楼体 | 保留偏侧窄支撑 | 上部成组倾倒 |
 | --- | --- | --- |
-| ![首层支撑完整的矩形楼](../images/rectangle-intact.webp) | ![移除首层大部分支撑后，上部只由偏侧窄支撑承托](../images/rectangle-narrow-support.webp) | ![上部保持成组并倾转](../images/rectangle-tipping.webp) |
+| ![首层支撑完整的矩形楼](../../images/rectangle-intact.webp) | ![移除首层大部分支撑后，上部只由偏侧窄支撑承托](../../images/rectangle-narrow-support.webp) | ![上部保持成组并倾转](../../images/rectangle-tipping.webp) |
 
 三张图来自正式矩形楼的 `--collapse-smoke-test`。移除大部分首层支撑后，上部在重力和真实接触下成组倾转，报告记录了与静态残桩的接触冲量。
 
@@ -81,4 +81,4 @@ $$
 
 ## 来源
 
-[应力求解](../../src/stress/mod.rs)、[解析和数值回归](../../src/stress/tests.rs)、[承载运行时](../../src/stress_runtime/mod.rs)和 [Itasca Linear Parallel Bond Model](https://docs.itascacg.com/itasca950/common/contactmodel/linearpbond/doc/manual/cmlinearpbond.html)。
+[应力求解](../../../src/stress/mod.rs)、[解析和数值回归](../../../src/stress/tests.rs)、[承载运行时](../../../src/stress_runtime/mod.rs)和 [Itasca Linear Parallel Bond Model](https://docs.itascacg.com/itasca950/common/contactmodel/linearpbond/doc/manual/cmlinearpbond.html)。

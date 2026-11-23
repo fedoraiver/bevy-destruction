@@ -20,7 +20,7 @@
 
 ### 固定步和碰撞
 
-![固定步依次处理锚定承载、重建刚体簇、Avian 接触和撞击断裂，断键反馈到下一固定步](../images/fixed-step-fracture.svg)
+![固定步依次处理锚定承载、重建刚体簇、Avian 接触和撞击断裂，断键反馈到下一固定步](../../images/fixed-step-fracture.svg)
 
 图中的回路从撞击断键返回下一固定步。子簇在下一次重建时继承当前刚体运动。
 
@@ -58,4 +58,4 @@ $$
 
 ## 来源
 
-[结构图](../../src/structure/mod.rs)、[物理接入](../../src/physics/mod.rs)、[场景与凸代理构造](../../src/scene/mod.rs)、[Avian 0.8.0 调度](https://docs.rs/avian3d/0.8.0/avian3d/schedule/enum.PhysicsSystems.html)及[锁定依赖](../../Cargo.lock)。
+[结构图](../../../src/structure/mod.rs)、[物理接入](../../../src/physics/mod.rs)、[场景与凸代理构造](../../../src/scene/mod.rs)、[Avian 0.8.0 调度](https://docs.rs/avian3d/0.8.0/avian3d/schedule/enum.PhysicsSystems.html)及[锁定依赖](../../../Cargo.lock)。

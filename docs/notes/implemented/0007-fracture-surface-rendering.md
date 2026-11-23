@@ -29,7 +29,7 @@
 
 ### 破口近景
 
-![实际破口中的浅色粗糙断面与灰色外墙网格](../images/fracture-closeup.webp)
+![实际破口中的浅色粗糙断面与灰色外墙网格](../../images/fracture-closeup.webp)
 
 正式矩形楼局部破坏后的引擎截图。浅色区域是暴露接触面的粗糙断面，周围灰色表面仍保留网格。该次验收关闭了 VFX，便于观察材质交界。
 
@@ -39,5 +39,5 @@
 
 ## 来源
 
-- [材质实现](../../src/material/mod.rs)、[接触遮罩](../../src/contact_mask/mod.rs)、[表面着色器](../../assets/shaders/building_surface.wesl)及锁定 Bevy 的标准顶点、深度预通道和缓冲接口。
+- [材质实现](../../../src/material/mod.rs)、[接触遮罩](../../../src/contact_mask/mod.rs)、[表面着色器](../../../assets/shaders/building_surface.wesl)及锁定 Bevy 的标准顶点、深度预通道和缓冲接口。
 - 坐标、源网格接触覆盖及单次着色分别见提交 `1f17b8d`、`525be3e`、`8761ca9`。

@@ -40,4 +40,4 @@
 
 ## 来源
 
-[资产格式规范](../../tools/blender/ASSET_FORMAT.md)、[Rust 资产加载](../../src/asset/mod.rs)、[接触导出](../../tools/blender/bevy_destruction/contact_export.py)和[承载组装](../../src/stress/mod.rs)。
+[资产格式规范](../../../tools/blender/ASSET_FORMAT.md)、[Rust 资产加载](../../../src/asset/mod.rs)、[接触导出](../../../tools/blender/bevy_destruction/contact_export.py)和[承载组装](../../../src/stress/mod.rs)。

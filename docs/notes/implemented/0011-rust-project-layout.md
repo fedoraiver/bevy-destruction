@@ -28,4 +28,4 @@
 
 ## 来源
 
-[原二进制入口](https://github.com/fedoraiver/bevy-destruction/blob/1ec85cb/src/main.rs)、[结构模块与测试](../../src/structure)、[物理模块与测试](../../src/physics)。
+[原二进制入口](https://github.com/fedoraiver/bevy-destruction/blob/1ec85cb/src/main.rs)、[结构模块与测试](../../../src/structure)、[物理模块与测试](../../../src/physics)。

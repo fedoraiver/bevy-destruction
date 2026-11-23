@@ -48,13 +48,13 @@ $\tau$ 是游戏载荷标定时间。扣除整体加速后，力及相对簇质�
 
 - 球、方块的真实接触断键、反作用速度、撞击物质量与形状保留，以及低于门槛接触和后续静止接触的回归通过。多块动态测试覆盖总力和总力矩平衡、规范点选择不改变连接内力、纯刚体速度变化产生零内部载荷、面片细分一致性和图形采样开关不改变断裂选择。
 - 三块自由梁先被其他断裂分为 `2+1` 后，仍在两块子簇上的独立新事件只绑定一次。承载率、载荷平衡及所选断键与直接求解该子簇一致，刚体速度保持原值。已求解的父事件在分离后卸载，尚未求解且受载来源分居两侧的事件结束。以上独立事件回归通过。
-- 严格落地回归使用正式 [highrise_slab 清单](../../assets/buildings/highrise_slab.destruction.json)，检查含楼板和墙体的连通簇分离、接触层以上的内部断键及质量守恒。修复前的 `e42321d` 记录为 18 条断键，剩余大簇 116 块。当前无窗口回归通过，记录 42 条断键，断裂高度为 16.120–22.400 m。
+- 严格落地回归使用正式 [highrise_slab 清单](../../../assets/buildings/highrise_slab.destruction.json)，检查含楼板和墙体的连通簇分离、接触层以上的内部断键及质量守恒。修复前的 `e42321d` 记录为 18 条断键，剩余大簇 116 块。当前无窗口回归通过，记录 42 条断键，断裂高度为 16.120–22.400 m。
 - `--landing-smoke-test` 从正式高楼去除下半部，验证零初速自由落体、真实接地、内部断裂、成组保留、质量及载荷平衡。设置 `DESTRUCTION_LANDING_TRACE=1` 可从严格回归记录求解前速度、断键、面片和事件状态。
 - [ADR 0012](0012-density-derived-mass-properties.md) 记录了质量属性切换时的严格回归和游戏内落地烟测基线。
 
 ### 实际接触冲量
 
-![刚球撞击正式矩形楼后，局部详查面板显示接触冲量 J](../images/contact-impulse.webp)
+![刚球撞击正式矩形楼后，局部详查面板显示接触冲量 J](../../images/contact-impulse.webp)
 
 正式矩形楼的刚球撞击验收帧。右上角显示所选碎块的真实法向接触冲量，约为 722 kN·s。该碎块此时暂无有效连接内力。
 
@@ -64,4 +64,4 @@ $\tau$ 是游戏载荷标定时间。扣除整体加速后，力及相对簇质�
 
 ## 来源
 
-[撞击处理](../../src/projectiles/mod.rs)、[碰撞与落地回归](../../src/projectiles/tests.rs)、Avian 0.8.0 的窄相位 `normal_speed` 与求解后法向冲量，以及 [NVIDIA Blast Stress Solver](https://nvidia-omniverse.github.io/PhysX/blast/docs/api/extensions/ext_stress.html) 的载荷传播参考。
+[撞击处理](../../../src/projectiles/mod.rs)、[碰撞与落地回归](../../../src/projectiles/tests.rs)、Avian 0.8.0 的窄相位 `normal_speed` 与求解后法向冲量，以及 [NVIDIA Blast Stress Solver](https://nvidia-omniverse.github.io/PhysX/blast/docs/api/extensions/ext_stress.html) 的载荷传播参考。

@@ -40,5 +40,5 @@
 
 ## 来源
 
-- [特效模块](../../src/vfx/mod.rs)、[烟尘材质](../../src/dust_material/mod.rs)、[边带构造](../../src/fracture_detail/mod.rs)和[崩口轮廓](../../src/rim_profile/mod.rs)。
+- [特效模块](../../../src/vfx/mod.rs)、[烟尘材质](../../../src/dust_material/mod.rs)、[边带构造](../../../src/fracture_detail/mod.rs)和[崩口轮廓](../../../src/rim_profile/mod.rs)。
 - 分层效果、崩口修订和共享烟尘对应提交 `b0ca904`、`22f6a8a`、`205c713`。破口、碎屑发射与交界淡出的早期调研参考 [Destruction Masking in Frostbite](https://advances.realtimerendering.com/s2010/Kihl-Destruction%20in%20Frostbite%28SIGGRAPH%202010%20Advanced%20RealTime%20Rendering%20Course%29.pdf)、[SideFX Debris Source](https://www.sidefx.com/docs/houdini/nodes/sop/debrissource.html)和 [GPU Gems 3 第 23 章](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-23-high-speed-screen-particles)。

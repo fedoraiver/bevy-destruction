@@ -39,4 +39,4 @@
 
 ## 来源
 
-[运行方式](../../README.md)、[场景目录](../../src/catalog/mod.rs)、[场景组合](../../src/scene/mod.rs)、[相机](../../src/camera/mod.rs)和[局部交互](../../src/interaction/mod.rs)。
+[运行方式](../../../README.md)、[场景目录](../../../src/catalog/mod.rs)、[场景组合](../../../src/scene/mod.rs)、[相机](../../../src/camera/mod.rs)和[局部交互](../../../src/interaction/mod.rs)。

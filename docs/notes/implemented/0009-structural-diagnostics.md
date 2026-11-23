@@ -23,7 +23,7 @@
 
 ### 总览、拾取与详查
 
-![有效连接数据分别供热力总览和局部详查，真实接触冲量单独进入详查面板](../images/force-diagnostics.svg)
+![有效连接数据分别供热力总览和局部详查，真实接触冲量单独进入详查面板](../../images/force-diagnostics.svg)
 
 - 按 `9` 或小键盘 `9` 切换，默认关闭。每块使用有效相邻连接的最高 $U$。无有效结果或 $U$ 小于 50% 时保留原色，50% 至低于 100% 为琥珀色，100% 及以上为红色。
 - 每个网格实例以 `MeshTag` 表达颜色档位。只在档位变化时更新，按 [ADR 0007](0007-fracture-surface-rendering.md) 的源材质着色混色，保留正常深度遮挡、预通道和实例隔离。关闭后清空样本与热力标记。
@@ -41,7 +41,7 @@
 
 ### 窗洞拾取验收
 
-![双实例验收场景中，准星穿过窗洞选中后方琥珀色碎块](../images/window-load-inspection.webp)
+![双实例验收场景中，准星穿过窗洞选中后方琥珀色碎块](../../images/window-load-inspection.webp)
 
 `--force-smoke-test` 的双实例验收场景。按住 `Alt` 时，准星穿过窗洞选中后方的碎块，右上角面板列出对应连接的承载率、力和力矩。
 
@@ -51,5 +51,5 @@
 
 ## 来源
 
-- [受力样本](../../src/force_samples/mod.rs)、[视图与标记](../../src/force_debug/mod.rs)、[图形验证](../../src/force_smoke/mod.rs)和用户确认的交互。
+- [受力样本](../../../src/force_samples/mod.rs)、[视图与标记](../../../src/force_debug/mod.rs)、[图形验证](../../../src/force_smoke/mod.rs)和用户确认的交互。
 - 初版数据采样、可见线框和现行热力详查分别对应提交 `8c45741`、`48e58f1`、`d462e4d`。
