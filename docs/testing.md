@@ -16,13 +16,13 @@
 
 ## 选择离屏用例
 
-| 用例 | 主要覆盖 |
+| 独立脚本 | 主要覆盖 |
 | --- | --- |
-| `controls`、`gameplay` | 原生键鼠消息、飞行瞄准、点击破坏和发射撞击物。BRP 可用于布置初始相机，行为由实际输入触发。 |
-| `smoke` | 场景实例化、点击破坏、边带与粒子预算、烟尘回收及可选回放。 |
-| `physics`、`stress` | 失支撑、运动拆簇、质量与速度继承、休眠、自重和渐进断裂、刚球与方块。 |
-| `landing`、`collapse` | 大块落地后的内部断裂、成组残骸和质量平衡，以及偏侧残余支撑引起的自然倾倒。 |
-| `material`、`contact`、`force` | 材质随刚体运动、断面遮罩和深度遮挡，以及受力热力、详查和实际冲量。 |
-| `profile` | 离屏墙钟帧耗时和热路径采样。通过单独运行获取。 |
+| [controls.py](../scripts/acceptance/controls.py)、[gameplay.py](../scripts/acceptance/gameplay.py) | 原生键鼠消息、飞行瞄准、点击破坏和发射撞击物。BRP 可用于布置初始相机，行为由实际输入触发。 |
+| [smoke.py](../scripts/acceptance/smoke.py) | 场景实例化、点击破坏、边带与粒子预算、烟尘回收及可选回放。 |
+| [physics.py](../scripts/acceptance/physics.py)、[stress.py](../scripts/acceptance/stress.py) | 失支撑、运动拆簇、质量与速度继承、休眠、自重和渐进断裂、刚球与方块。 |
+| [landing.py](../scripts/acceptance/landing.py)、[collapse.py](../scripts/acceptance/collapse.py) | 大块落地后的内部断裂、成组残骸、质量守恒及力和力矩平衡，以及偏侧残余支撑引起的自然倾倒。 |
+| [material.py](../scripts/acceptance/material.py)、[contact.py](../scripts/acceptance/contact.py)、[force.py](../scripts/acceptance/force.py) | 材质随刚体运动、断面遮罩和深度遮挡，以及受力热力、详查和实际冲量。 |
+| [profile.py](../scripts/acceptance/profile.py) | 离屏墙钟帧耗时和热路径采样。 |
 
-离屏用例应以程序状态、数值或图像判据给出结果。每次运行按用例保存证据，报告验证的场景、预期、实际结果和覆盖范围。验证结果可从 `summary.json` 跟踪到各用例报告。固定帧截图和原生输入均由项目验收脚本采集。[验收脚本](../scripts/acceptance/run.py) · [交互步骤](../scripts/acceptance/gameplay.py)
+各脚本使用同一个无窗可执行文件。固定帧脚本在启动时传入场景及探针配置，探针在 Bevy 内消费固定步及渲染结果。离屏用例按程序状态、数值或图像判据给出结果。每次运行按用例保存证据，可从 `summary.json` 跟踪到报告、日志和截图。[汇总入口](../scripts/acceptance/run.py)

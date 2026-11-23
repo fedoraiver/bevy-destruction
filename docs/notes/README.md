@@ -48,5 +48,6 @@
 | [0018](implemented/0018-windowless-acceptance.md) | 独立运行无窗验收 |
 | [0019](implemented/0019-workspace-app-entrypoints.md) | 独立应用入口与 ECS 架构分析包 |
 | [0020](implemented/0020-game-architecture-export.md) | 从桌面游戏包导出 ECS 架构 |
+| [0022](implemented/0022-script-driven-acceptance-scenarios.md) | 由独立脚本驱动无窗验收场景 |
 
-两个目录共用连续编号，下一个编号为 0022。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+两个目录共用连续编号，下一个编号为 0023。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

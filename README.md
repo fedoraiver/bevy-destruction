@@ -73,13 +73,13 @@ $acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```
 
-macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。默认运行原生输入 `controls`、交互 `gameplay` 以及 17 个固定帧用例。各用例生成 JSON 报告，固定帧用例另存阶段截图。汇总、日志和截图位于 `output/acceptance/run-*/`，任一用例失败时命令返回非零退出码。
+macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。验收程序统一无参数启动，由 Python 脚本选择并准备测试场景。`run.py` 默认运行原生输入 `controls`、交互 `gameplay` 以及 17 个固定帧用例。各用例生成 JSON 报告，固定帧用例另存阶段截图。汇总、日志和截图位于 `output/acceptance/run-*/`，任一用例失败时命令返回非零退出码。
 
 ```powershell
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py gameplay --exe $acceptanceExe
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py landing --scene highrise_slab --exe $acceptanceExe
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py smoke --scene rectangle --capture-replay --exe $acceptanceExe
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py profile --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/gameplay.py --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/landing.py --scene highrise_slab --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/smoke.py --scene rectangle --capture-replay --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/profile.py --exe $acceptanceExe
 ```
 
-`baseline` 单独运行固定帧矩阵。单个探针和 `profile` 支持 `--scene`、`--asset` 和上述 `--no-*` 开关。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。完整参数可通过 `scripts/acceptance/run.py --help` 查看。
+`run.py baseline` 单独运行固定帧矩阵。独立探针脚本和 `profile.py` 支持 `--scene`、`--asset` 和上述 `--no-*` 开关。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。

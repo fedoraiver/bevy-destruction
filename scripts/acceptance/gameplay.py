@@ -307,3 +307,9 @@ def exercise_gameplay(game):
         cube = evidence["cube"] = launch_projectile(game, "cube", UPPER_RIGHT_WALL)
         cube["impact"] = observe_impact(game, cube)
         evidence["damaged_png"] = capture(game, "03-projectile-damage.png")
+
+
+if __name__ == "__main__":
+    from run import main
+
+    raise SystemExit(main("gameplay"))

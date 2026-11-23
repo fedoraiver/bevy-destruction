@@ -40,6 +40,7 @@ SCREENSHOT_COUNTS = {
 SCREENSHOT_SIZES = {"material": (512, 256), "contact": (512, 512)}
 VIEWPORT = (1920, 1080)
 FLAGS = ("no_stress", "no_vfx", "no_detail", "no_soft_particles")
+SCENARIO_ENV = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO"
 METRICS = "bevy_destruction::diagnostics::RunMetrics"
 MIN_PROFILE_SAMPLES = 30
 NATIVE_CAMERA = "bevy_destruction::scene::DemoCamera"
@@ -72,19 +73,20 @@ class Scenario:
     def name(self):
         return self.scene if self.scene is not None else "custom-asset"
 
-    def command_args(self, options, output):
-        args = ["--scene", self.scene] if self.scene is not None else ["--asset", self.asset]
-        if self.suite in PROBE_SCENES or self.suite == "profile":
-            probe = "smoke" if self.suite == "profile" else self.suite
-            args.extend(["--probe", probe, "--probe-output", str(output)])
-        for flag in FLAGS:
-            if getattr(options, flag):
-                args.append("--" + flag.replace("_", "-"))
-        if options.capture_replay:
-            args.append("--capture-replay")
-        if self.suite == "profile":
-            args.append("--profile")
-        return args
+    def launch_environment(self, options, output):
+        if self.suite in ("controls", "gameplay"):
+            return None
+
+        profile = self.suite == "profile"
+        config = {
+            "asset": self.asset if self.asset is not None else f"buildings/{self.scene}.destruction.json",
+            "probe": "smoke" if profile else self.suite,
+            "output": str(output.resolve()),
+            "capture_replay": options.capture_replay,
+            "profile": profile,
+            **{flag: getattr(options, flag) for flag in FLAGS},
+        }
+        return {SCENARIO_ENV: json.dumps(config)}
 
 
 def scenarios(options):
@@ -215,7 +217,7 @@ def run_scenario(scenario, options, output):
     }}
     args = argparse.Namespace(exe=options.exe, output=output, timeout=options.timeout or NATIVE_TIMEOUT)
     game = AcceptanceGame(suite, args, report, cwd=ROOT, port=options.port,
-                          command_args=scenario.command_args(options, output), camera_component=NATIVE_CAMERA)
+                          env=scenario.launch_environment(options, output), camera_component=NATIVE_CAMERA)
     run_suite(game, exercise)
     if not native_input and report["checks"][suite]["status"] == "not_run" and not report["passed"]:
         evidence = report["checks"][suite]["evidence"]
@@ -229,13 +231,16 @@ def run_scenario(scenario, options, output):
     return report
 
 
-def parse_args():
+def parse_args(suite=None, argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "suite", nargs="?", default="all",
-        choices=("all", "baseline", *PROBE_SCENES, "controls", "gameplay", "profile"),
-        help="all runs the baseline matrix plus controls and gameplay. Run profile separately.",
-    )
+    if suite is None:
+        parser.add_argument(
+            "suite", nargs="?", default="all",
+            choices=("all", "baseline", *PROBE_SCENES, "controls", "gameplay", "profile"),
+            help="all runs the baseline matrix plus controls and gameplay. Run profile separately.",
+        )
+    else:
+        parser.set_defaults(suite=suite)
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--scene", choices=SCENES)
     source.add_argument("--asset", help="Asset path relative to the Bevy assets directory")
@@ -249,7 +254,7 @@ def parse_args():
     parser.add_argument("--capture-replay", action="store_true")
     for flag in FLAGS:
         parser.add_argument("--" + flag.replace("_", "-"), action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
     if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
@@ -264,8 +269,8 @@ def parse_args():
     return args
 
 
-def main():
-    options = parse_args()
+def main(suite=None):
+    options = parse_args(suite)
     options.output.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=options.output))
     results = []

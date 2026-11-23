@@ -1,20 +1,24 @@
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use std::{env, path::PathBuf, time::Duration};
 
 use avian3d::prelude::Collider;
 use bevy::prelude::*;
+use serde::Deserialize;
 
 pub use crate::scene::DemoCamera;
 
 use crate::{
-    DemoOptions,
+    DemoOptions, DestructionPlugin,
     camera::FreeCamera,
     diagnostics,
     projectiles::{ImpactStats, RigidProjectile},
     scene::BuildingInstance,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Probe {
+const SCENARIO_ENV: &str = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO";
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Probe {
     Smoke,
     Physics,
     Stress,
@@ -25,38 +29,65 @@ pub enum Probe {
     Collapse,
 }
 
-impl FromStr for Probe {
-    type Err = String;
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeRun {
+    asset: String,
+    probe: Probe,
+    output: PathBuf,
+    #[serde(default)]
+    capture_replay: bool,
+    #[serde(default)]
+    profile: bool,
+    #[serde(default)]
+    no_stress: bool,
+    #[serde(default)]
+    no_vfx: bool,
+    #[serde(default)]
+    no_detail: bool,
+    #[serde(default)]
+    no_soft_particles: bool,
+}
 
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        match name {
-            "smoke" => Ok(Self::Smoke),
-            "physics" => Ok(Self::Physics),
-            "stress" => Ok(Self::Stress),
-            "material" => Ok(Self::Material),
-            "contact" => Ok(Self::Contact),
-            "force" => Ok(Self::Force),
-            "landing" => Ok(Self::Landing),
-            "collapse" => Ok(Self::Collapse),
-            _ => Err(format!("Unknown acceptance probe: {name}")),
+pub struct AcceptanceScenario {
+    options: DemoOptions,
+    probe: Option<Probe>,
+}
+
+impl AcceptanceScenario {
+    pub fn from_env(smoke_target: Handle<Image>) -> Result<Self, String> {
+        let value = match env::var(SCENARIO_ENV) {
+            Ok(value) => value,
+            Err(env::VarError::NotPresent) => {
+                return Ok(Self {
+                    options: DemoOptions::default(),
+                    probe: None,
+                });
+            }
+            Err(error) => return Err(format!("{SCENARIO_ENV}: {error}")),
+        };
+        let run: ProbeRun =
+            serde_json::from_str(&value).map_err(|error| format!("{SCENARIO_ENV}: {error}"))?;
+        if (run.capture_replay || run.profile) && run.probe != Probe::Smoke {
+            return Err("Replay capture and profiling require the smoke probe".into());
         }
-    }
-}
+        if run.capture_replay && run.profile {
+            return Err("Replay capture and profiling are mutually exclusive".into());
+        }
 
-pub struct ProbeRun {
-    pub probe: Probe,
-    pub output: PathBuf,
-    pub capture_replay: bool,
-    pub profile: bool,
-}
-
-impl ProbeRun {
-    pub fn configure(self, options: &mut DemoOptions, smoke_target: Handle<Image>) -> Probe {
-        options.smoke_target = Some(smoke_target);
-        options.capture_replay = self.capture_replay;
-        options.profile = self.profile;
-        let output = Some(self.output);
-        match self.probe {
+        let mut options = DemoOptions {
+            asset: run.asset,
+            no_stress: run.no_stress,
+            no_vfx: run.no_vfx,
+            no_detail: run.no_detail,
+            no_soft_particles: run.no_soft_particles,
+            capture_replay: run.capture_replay,
+            smoke_target: Some(smoke_target),
+            profile: run.profile,
+            ..default()
+        };
+        let output = Some(run.output);
+        match run.probe {
             Probe::Smoke => options.smoke_output = output,
             Probe::Physics => options.physics_smoke_output = output,
             Probe::Stress => options.stress_smoke_output = output,
@@ -66,23 +97,30 @@ impl ProbeRun {
             Probe::Landing => options.landing_smoke_output = output,
             Probe::Collapse => options.collapse_smoke_output = output,
         }
-        self.probe
+        Ok(Self {
+            options,
+            probe: Some(run.probe),
+        })
     }
-}
 
-pub struct AcceptanceScenarioPlugin {
-    pub probe: Option<Probe>,
-}
+    pub fn profile(&self) -> bool {
+        self.options.profile
+    }
 
-impl Plugin for AcceptanceScenarioPlugin {
-    fn build(&self, app: &mut App) {
+    pub fn synchronous_pipelines(&self) -> bool {
+        self.probe.is_some() && !self.profile()
+    }
+
+    pub fn install(self, app: &mut App) {
+        let profile = self.profile();
+        app.insert_resource(self.options)
+            .add_plugins(DestructionPlugin);
         let Some(probe) = self.probe else {
             app.init_resource::<GameplayState>()
                 .add_systems(Last, observe_gameplay);
             return;
         };
 
-        let profile = app.world().resource::<DemoOptions>().profile;
         app.add_plugins(diagnostics::MetricsPlugin).insert_resource(
             bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)),
         );
