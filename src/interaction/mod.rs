@@ -40,35 +40,6 @@ pub struct ScriptedClick {
     pub cursor: Option<Vec2>,
 }
 
-pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[String]) {
-    let instance = world.get::<BuildingInstance>(building).unwrap();
-    let asset = world
-        .resource::<Assets<DestructibleAsset>>()
-        .get(&instance.asset)
-        .unwrap();
-    let burst = build_bond_feedback(
-        instance,
-        &asset.manifest,
-        broken,
-        |entity| world.get::<ChunkInstance>(entity).unwrap(),
-        instance
-            .patches
-            .iter()
-            .map(|&entity| world.get::<PatchInstance>(entity).unwrap().patch()),
-        |body| {
-            if let Some(body) = body {
-                Transform::from_translation(world.get::<Position>(body).unwrap().0)
-                    .with_rotation(world.get::<Rotation>(body).unwrap().0)
-            } else {
-                crate::physics::global_transform(world, building).compute_transform()
-            }
-        },
-    );
-    if let Some(burst) = burst {
-        world.write_message(burst);
-    }
-}
-
 pub(crate) fn build_bond_feedback<'a>(
     instance: &BuildingInstance,
     manifest: &Manifest,

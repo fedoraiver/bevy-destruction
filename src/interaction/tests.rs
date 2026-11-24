@@ -22,8 +22,6 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
     use crate::fracture_detail::ContactPatch;
     use crate::scene::{spawn_bonds, spawn_patches};
     let mut world = World::new();
-    world.init_resource::<Assets<DestructibleAsset>>();
-    world.init_resource::<Messages<BreakBurst>>();
     let mut manifest = crate::stress_smoke::beam_manifest();
     let template = manifest.bonds[0].clone();
     manifest.bonds = [("ab", "a", "b"), ("cd", "c", "d")]
@@ -46,15 +44,8 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
             ..template.clone()
         })
         .into();
-    let bonds = manifest.bonds.clone();
-    let asset = world
-        .resource_mut::<Assets<DestructibleAsset>>()
-        .add(DestructibleAsset {
-            manifest,
-            gltf: Handle::default(),
-        });
     let root = world.spawn(Transform::IDENTITY).id();
-    let mut instance = BuildingInstance::pending(asset);
+    let mut instance = BuildingInstance::pending(Handle::default());
     let poses = [
         Transform::from_xyz(4.0, 2.0, 1.0).with_rotation(Quat::from_rotation_z(0.3)),
         Transform::from_xyz(-8.0, 3.0, -2.0).with_rotation(Quat::from_rotation_y(0.7)),
@@ -94,7 +85,7 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
         });
     }
     let mut commands = world.commands();
-    spawn_bonds(&mut commands, root, &mut instance, &bonds);
+    spawn_bonds(&mut commands, root, &mut instance, &manifest.bonds);
     spawn_patches(
         &mut commands,
         root,
@@ -102,13 +93,22 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
         std::sync::Arc::new(patches),
     );
     world.flush();
-    world.entity_mut(root).insert(instance);
-    bond_feedback(&mut world, root, &["ab".into(), "cd".into()]);
-    let burst = world
-        .resource_mut::<Messages<BreakBurst>>()
-        .drain()
-        .next()
-        .unwrap();
+    let burst = build_bond_feedback(
+        &instance,
+        &manifest,
+        &["ab".into(), "cd".into()],
+        |entity| world.get::<ChunkInstance>(entity).unwrap(),
+        instance
+            .patches
+            .iter()
+            .map(|&entity| world.get::<PatchInstance>(entity).unwrap().patch()),
+        |body| {
+            let body = body.unwrap();
+            Transform::from_translation(world.get::<Position>(body).unwrap().0)
+                .with_rotation(world.get::<Rotation>(body).unwrap().0)
+        },
+    )
+    .unwrap();
     assert_eq!(burst.surfaces.len(), 2);
     for (surface, pose) in burst.surfaces.iter().zip(poses) {
         for (actual, local) in surface.triangle.iter().zip(triangle) {

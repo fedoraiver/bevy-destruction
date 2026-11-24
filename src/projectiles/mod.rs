@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{
-    ecs::relationship::RelationshipTarget,
+    ecs::{relationship::RelationshipTarget, system::SystemParam},
     math::{DMat3, DVec3},
     prelude::*,
+    transform::helper::TransformHelper,
 };
 
 use crate::{
@@ -15,12 +16,14 @@ use crate::{
         DynamicForceSample, ForceCapture, ForceSamples, ImpulseSample, MAX_IMPULSE_SAMPLES,
         bond_signature,
     },
+    interaction::build_bond_feedback,
     physics::Cluster,
     scene::{
         BondInstance, BondPatches, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
-        StructuralPatch,
+        PatchInstance, StructuralPatch,
     },
     stress::{self, NodeLoad, SolverSettings},
+    vfx::BreakBurst,
 };
 
 #[cfg(test)]
@@ -33,7 +36,7 @@ impl Plugin for ProjectilePlugin {
         app.init_resource::<LaunchRequests>()
             .init_resource::<ImpactStats>()
             .init_resource::<ImpactState>()
-            .add_message::<crate::vfx::BreakBurst>()
+            .add_message::<BreakBurst>()
             .add_systems(Update, fire.after(crate::camera::move_camera))
             .add_systems(FixedUpdate, (spawn_projectiles, retire_projectiles))
             .add_systems(FixedPostUpdate, impact_damage.after(PhysicsSystems::Last));
@@ -221,12 +224,35 @@ fn retire_projectiles(
     }
 }
 
-fn impact_damage(world: &mut World) {
-    let mut state = world.remove_resource::<ImpactState>().unwrap();
-    let capture = world
-        .get_resource::<ForceCapture>()
-        .is_some_and(|capture| capture.enabled);
-    let captured_at = world.resource::<Time<Fixed>>().elapsed_secs_f64();
+#[derive(SystemParam)]
+struct ImpactStructure<'w, 's> {
+    buildings: Query<'w, 's, &'static mut BuildingInstance>,
+    chunks: Query<'w, 's, &'static ChunkInstance>,
+    bonds: Query<'w, 's, &'static mut BondInstance>,
+    bond_patches: Query<'w, 's, &'static BondPatches>,
+    structural_patches: Query<'w, 's, &'static StructuralPatch>,
+    clusters: Query<'w, 's, (&'static Cluster, &'static RigidBody, &'static ChildOf)>,
+    poses: Query<'w, 's, (&'static Position, &'static Rotation)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn impact_damage(
+    graph: Res<ContactGraph>,
+    assets: Res<Assets<DestructibleAsset>>,
+    time: Res<Time<Fixed>>,
+    mut state: ResMut<ImpactState>,
+    mut stats: ResMut<ImpactStats>,
+    capture: Option<Res<ForceCapture>>,
+    mut samples: Option<ResMut<ForceSamples>>,
+    mut structure: ImpactStructure,
+    identities: Query<&ChunkIdentity>,
+    patches: Query<&PatchInstance>,
+    transforms: TransformHelper,
+    mut bursts: MessageWriter<BreakBurst>,
+    #[cfg(feature = "acceptance-test")] projectiles: Query<&Collider, With<RigidProjectile>>,
+) {
+    let capture = capture.is_some_and(|capture| capture.enabled);
+    let captured_at = time.elapsed_secs_f64();
     let mut impulse_samples = Vec::new();
     let mut touching = BTreeSet::new();
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
@@ -235,7 +261,7 @@ fn impact_damage(world: &mut World) {
     #[cfg(feature = "acceptance-test")]
     let (mut sphere_contacts, mut cube_contacts) = (0, 0);
     let mut max_impulse = 0.0_f32;
-    for pair in world.resource::<ContactGraph>().iter_active_touching() {
+    for pair in graph.iter_active_touching() {
         let key = if pair.collider1 < pair.collider2 {
             (pair.collider1, pair.collider2)
         } else {
@@ -264,11 +290,11 @@ fn impact_damage(world: &mut World) {
             (pair.collider1, -impulse, -1.0),
             (pair.collider2, impulse, 1.0),
         ] {
-            if let Some(identity) = world.get::<ChunkIdentity>(collider) {
-                if world.get::<BuildingInstance>(identity.building).is_none() {
+            if let Ok(identity) = identities.get(collider) {
+                if !structure.buildings.contains(identity.building) {
                     continue;
                 }
-                let Some(chunk) = world.get::<ChunkInstance>(collider) else {
+                let Ok(chunk) = structure.chunks.get(collider) else {
                     continue;
                 };
                 if !chunk.alive {
@@ -277,7 +303,7 @@ fn impact_damage(world: &mut World) {
                 let Some(body) = chunk.cluster else {
                     continue;
                 };
-                let cluster = world.get::<Cluster>(body).unwrap();
+                let (cluster, kind, _) = structure.clusters.get(body).unwrap();
                 if capture {
                     for manifold in &pair.manifolds {
                         for point in &manifold.points {
@@ -294,12 +320,11 @@ fn impact_damage(world: &mut World) {
                         }
                     }
                 }
-                if world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
-                    && cluster.chunks.len() > 1
-                {
+                if *kind == RigidBody::Dynamic && cluster.chunks.len() > 1 {
                     let center = chunk.center_in_building().as_dvec3();
-                    let origin = world.get::<Position>(body).unwrap().0;
-                    let inverse_rotation = world.get::<Rotation>(body).unwrap().0.conjugate();
+                    let (position, rotation) = structure.poses.get(body).unwrap();
+                    let origin = position.0;
+                    let inverse_rotation = rotation.0.conjugate();
                     // 同一接触对的逐点冲量共享一次工况。其他接触有独立的受载来源。
                     let shock = shocks.entry((body, key)).or_insert_with(|| ClusterImpact {
                         building: identity.building,
@@ -332,9 +357,7 @@ fn impact_damage(world: &mut World) {
             contact_count += 1;
             #[cfg(feature = "acceptance-test")]
             for entity in [pair.collider1, pair.collider2] {
-                if world.get::<RigidProjectile>(entity).is_some()
-                    && let Some(collider) = world.get::<Collider>(entity)
-                {
+                if let Ok(collider) = projectiles.get(entity) {
                     let shape = collider.shape();
                     sphere_contacts += u64::from(shape.as_ball().is_some());
                     cube_contacts += u64::from(shape.as_cuboid().is_some());
@@ -345,49 +368,47 @@ fn impact_damage(world: &mut World) {
     }
     state.touching = touching;
     state.shocks.extend(shocks.into_values());
-    if let Some(mut samples) = world.get_resource_mut::<ForceSamples>() {
+    if let Some(samples) = &mut samples {
         for sample in impulse_samples {
             samples.record_impulse(sample);
         }
     }
     for ((building, id), impulse) in hits {
-        let Some(instance) = world.get::<BuildingInstance>(building) else {
+        let Ok(instance) = structure.buildings.get(building) else {
             continue;
         };
-        let Some(asset) = world
-            .resource::<Assets<DestructibleAsset>>()
-            .get(&instance.asset)
-        else {
+        let Some(asset) = assets.get(&instance.asset) else {
             continue;
         };
         let hit = instance.chunks[&id];
-        let chunk = world.get::<ChunkInstance>(hit).unwrap();
+        let chunk = structure.chunks.get(hit).unwrap();
         if !chunk.alive {
             continue;
         }
         let Some(body) = chunk.cluster else {
             continue;
         };
-        let impulse = world.get::<Rotation>(body).unwrap().0.conjugate() * impulse;
+        let (_, rotation) = structure.poses.get(body).unwrap();
+        let impulse = rotation.0.conjugate() * impulse;
         queue_local_damage(
-            local_impact_bonds(world, &asset.manifest, instance, &id, hit),
+            local_impact_bonds(&structure, &asset.manifest, instance, &id, hit),
             building,
             impulse,
             &mut state.pending,
         );
     }
-    let mut structural = process_dynamic_impact(world, &mut state);
+    let mut structural =
+        process_dynamic_impact(&structure, &assets, &mut state, capture, captured_at);
     let mut broken = BTreeMap::<Entity, Vec<String>>::new();
     let mut budget = IMPACT_BREAK_LIMIT;
     let mut structural_broken = 0;
     if let Some(report) = &mut structural
         && let Some((building, bonds)) = report.fracture.take()
+        && let Ok(mut instance) = structure.buildings.get_mut(building)
     {
         for id in bonds {
-            let bond = world
-                .get::<BuildingInstance>(building)
-                .and_then(|instance| instance.bonds.get(&id).copied());
-            if let Some(mut bond) = bond.and_then(|entity| world.get_mut::<BondInstance>(entity))
+            if let Some(&entity) = instance.bonds.get(&id)
+                && let Ok(mut bond) = structure.bonds.get_mut(entity)
                 && bond.active
             {
                 bond.active = false;
@@ -397,10 +418,7 @@ fn impact_damage(world: &mut World) {
             }
         }
         if structural_broken > 0 {
-            world
-                .get_mut::<BuildingInstance>(building)
-                .unwrap()
-                .topology_dirty = true;
+            instance.topology_dirty = true;
             if let Some(shock) = report.continuation.take() {
                 state.shocks.push_back(shock);
             }
@@ -413,11 +431,14 @@ fn impact_damage(world: &mut World) {
         .collect::<Vec<_>>();
     pending.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     for ((building, id), _) in pending {
-        let bond = world
-            .get::<BuildingInstance>(building)
-            .and_then(|instance| instance.bonds.get(&id).copied());
-        let Some(mut bond) = bond
-            .and_then(|entity| world.get_mut::<BondInstance>(entity))
+        let Ok(mut instance) = structure.buildings.get_mut(building) else {
+            state.pending.remove(&(building, id));
+            continue;
+        };
+        let Some(mut bond) = instance
+            .bonds
+            .get(&id)
+            .and_then(|&entity| structure.bonds.get_mut(entity).ok())
             .filter(|bond| bond.active)
         else {
             state.pending.remove(&(building, id));
@@ -427,25 +448,44 @@ fn impact_damage(world: &mut World) {
             break;
         }
         bond.active = false;
-        world
-            .get_mut::<BuildingInstance>(building)
-            .unwrap()
-            .topology_dirty = true;
+        instance.topology_dirty = true;
         broken.entry(building).or_default().push(id.clone());
         state.pending.remove(&(building, id));
         budget -= 1;
     }
-    for (building, ids) in &broken {
-        crate::interaction::bond_feedback(world, *building, ids);
+    for (&building, ids) in &broken {
+        let instance = structure.buildings.get(building).unwrap();
+        let asset = assets.get(&instance.asset).unwrap();
+        if let Some(burst) = build_bond_feedback(
+            instance,
+            &asset.manifest,
+            ids,
+            |entity| structure.chunks.get(entity).unwrap(),
+            instance
+                .patches
+                .iter()
+                .map(|&entity| patches.get(entity).unwrap().patch()),
+            |body| match body {
+                Some(body) => {
+                    let (position, rotation) = structure.poses.get(body).unwrap();
+                    Transform::from_translation(position.0).with_rotation(rotation.0)
+                }
+                None => transforms
+                    .compute_global_transform(building)
+                    .expect("A building has a valid transform hierarchy")
+                    .compute_transform(),
+            },
+        ) {
+            bursts.write(burst);
+        }
     }
     if let Some(sample) = structural
         .as_mut()
         .and_then(|report| report.force_sample.take())
-        && let Some(mut samples) = world.get_resource_mut::<ForceSamples>()
+        && let Some(samples) = &mut samples
     {
         samples.record_force(sample);
     }
-    let mut stats = world.resource_mut::<ImpactStats>();
     stats.contacts += contact_count;
     #[cfg(feature = "acceptance-test")]
     {
@@ -476,7 +516,6 @@ fn impact_damage(world: &mut World) {
     stats.rebound_fresh_structural_events = state.rebound_fresh;
     stats.invalidated_structural_events = state.invalidated;
     stats.broken_bonds += broken.values().map(|ids| ids.len() as u64).sum::<u64>();
-    world.insert_resource(state);
 }
 
 struct LocalImpactBond<'a> {
@@ -487,7 +526,7 @@ struct LocalImpactBond<'a> {
 }
 
 fn local_impact_bonds<'a>(
-    world: &'a World,
+    structure: &'a ImpactStructure,
     manifest: &'a Manifest,
     instance: &'a BuildingInstance,
     hit_id: &'a str,
@@ -498,15 +537,16 @@ fn local_impact_bonds<'a>(
             return None;
         }
         let entity = *instance.bonds.get(&record.id)?;
-        let bond = world.get::<BondInstance>(entity)?;
+        let bond = structure.bonds.get(entity).ok()?;
         if !bond.active || !bond.endpoints.contains(&hit) {
             return None;
         }
-        let mut patch_indices = world
-            .get::<BondPatches>(entity)
+        let mut patch_indices = structure
+            .bond_patches
+            .get(entity)
             .into_iter()
             .flat_map(BondPatches::iter)
-            .filter_map(|entity| world.get::<StructuralPatch>(entity))
+            .filter_map(|entity| structure.structural_patches.get(entity).ok())
             .map(|patch| patch.index)
             .collect::<Vec<_>>();
         // Preserve the asset's facet order when summing contact areas.
@@ -515,7 +555,7 @@ fn local_impact_bonds<'a>(
             id: &bond.id,
             hit_first: bond.endpoints[0] == hit,
             materials: bond.endpoints.map(|endpoint| {
-                let chunk = world.get::<ChunkInstance>(endpoint).unwrap();
+                let chunk = structure.chunks.get(endpoint).unwrap();
                 &manifest.materials[&chunk.material]
             }),
             patches: patch_indices
@@ -707,22 +747,25 @@ fn simultaneous_fractures(manifest: &Manifest, solution: &stress::StressSolution
     fractures
 }
 
-fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<DynamicImpactReport> {
+fn process_dynamic_impact(
+    structure: &ImpactStructure,
+    assets: &Assets<DestructibleAsset>,
+    state: &mut ImpactState,
+    capture: bool,
+    captured_at: f64,
+) -> Option<DynamicImpactReport> {
     while let Some(mut shock) = state.shocks.pop_front() {
-        let Some(instance) = world.get::<BuildingInstance>(shock.building) else {
+        let Ok(instance) = structure.buildings.get(shock.building) else {
             continue;
         };
-        let Some(asset) = world
-            .resource::<Assets<DestructibleAsset>>()
-            .get(&instance.asset)
-        else {
+        let Some(asset) = assets.get(&instance.asset) else {
             continue;
         };
         let get_chunk = |id: &str| {
             instance
                 .chunks
                 .get(id)
-                .and_then(|&entity| world.get::<ChunkInstance>(entity))
+                .and_then(|&entity| structure.chunks.get(entity).ok())
         };
         if shock.prepared.is_none() {
             let source_bodies = shock
@@ -743,13 +786,17 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                 state.released += 1;
                 continue;
             }
-            let Some(cluster) = world.get::<Cluster>(body).filter(|cluster| {
-                !cluster.anchored
-                    && world
-                        .get::<ChildOf>(body)
-                        .is_some_and(|parent| parent.parent() == shock.building)
-                    && world.get::<RigidBody>(body) == Some(&RigidBody::Dynamic)
-            }) else {
+            let Some((cluster, _, _)) =
+                structure
+                    .clusters
+                    .get(body)
+                    .ok()
+                    .filter(|(cluster, kind, parent)| {
+                        !cluster.anchored
+                            && parent.parent() == shock.building
+                            && **kind == RigidBody::Dynamic
+                    })
+            else {
                 state.released += 1;
                 continue;
             };
@@ -813,7 +860,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             force_sample: None,
         };
         let bond_states =
-            instance.bond_states(|entity| world.get::<BondInstance>(entity).unwrap().active);
+            instance.bond_states(|entity| structure.bonds.get(entity).unwrap().active);
         let result = if case.force_balance_ratio <= 1e-6 && case.moment_balance_ratio <= 1e-6 {
             stress::solve_with_gauge(
                 &asset.manifest,
@@ -845,10 +892,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                     if !fractures.is_empty() {
                         report.fracture = Some((shock.building, fractures));
                     }
-                    if world
-                        .get_resource::<ForceCapture>()
-                        .is_some_and(|capture| capture.enabled)
-                    {
+                    if capture {
                         report.force_sample = Some(DynamicForceSample {
                             building: shock.building,
                             body: *groups.keys().next().unwrap(),
@@ -859,7 +903,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                                     .iter()
                                     .map(|(id, &active)| (id.as_str(), active)),
                             ),
-                            captured_at: world.resource::<Time<Fixed>>().elapsed_secs_f64(),
+                            captured_at,
                         });
                     }
                 }
@@ -872,7 +916,13 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         if !report.valid {
             for (id, load) in &shock.loads {
                 queue_local_damage(
-                    local_impact_bonds(world, &asset.manifest, instance, id, instance.chunks[id]),
+                    local_impact_bonds(
+                        structure,
+                        &asset.manifest,
+                        instance,
+                        id,
+                        instance.chunks[id],
+                    ),
                     shock.building,
                     load.linear.as_vec3(),
                     &mut state.pending,

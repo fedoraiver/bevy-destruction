@@ -5,7 +5,10 @@ use crate::{
     scene::spawn_bonds,
     stress_smoke::{BEAM, LEFT_BOND, RIGHT_BOND, spawn_beam},
 };
-use bevy::time::TimeUpdateStrategy;
+use bevy::{
+    ecs::system::{InMut, InRef, RunSystemOnce},
+    time::TimeUpdateStrategy,
+};
 
 fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance {
     let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
@@ -24,6 +27,30 @@ fn break_bond(world: &mut World, building: Entity, id: &str) {
     instance.topology_dirty = true;
     let entity = instance.bonds[id];
     world.get_mut::<BondInstance>(entity).unwrap().active = false;
+}
+
+fn evaluate_dynamic_impact(
+    world: &mut World,
+    state: &mut ImpactState,
+) -> Option<DynamicImpactReport> {
+    world
+        .run_system_once_with(
+            |InMut(state): InMut<ImpactState>,
+             structure: ImpactStructure,
+             assets: Res<Assets<DestructibleAsset>>,
+             capture: Option<Res<ForceCapture>>,
+             time: Res<Time<Fixed>>| {
+                process_dynamic_impact(
+                    &structure,
+                    &assets,
+                    state,
+                    capture.is_some_and(|capture| capture.enabled),
+                    time.elapsed_secs_f64(),
+                )
+            },
+            state,
+        )
+        .unwrap()
 }
 
 fn app() -> App {
@@ -809,7 +836,7 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
         )]),
         prepared: None,
     });
-    let initial = process_dynamic_impact(app.world(), &mut state).unwrap();
+    let initial = evaluate_dynamic_impact(app.world_mut(), &mut state).unwrap();
     assert!(initial.valid);
     assert!(initial.fracture.is_some());
     state.shocks.push_back(initial.continuation.unwrap());
@@ -840,7 +867,7 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
             .len()
             > 1
     );
-    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
     assert_eq!(state.released, 1);
     assert_eq!(state.invalidated, 0);
     assert!(state.shocks.is_empty());
@@ -869,11 +896,11 @@ fn force_capture_preserves_the_solved_impact_and_fracture_choice() {
         });
         state
     };
-    let baseline = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    let baseline = evaluate_dynamic_impact(app.world_mut(), &mut state_for()).unwrap();
     assert!(baseline.valid);
     assert!(baseline.force_sample.is_none());
     app.insert_resource(ForceCapture { enabled: true });
-    let captured = process_dynamic_impact(app.world(), &mut state_for()).unwrap();
+    let captured = evaluate_dynamic_impact(app.world_mut(), &mut state_for()).unwrap();
     assert_eq!(captured.fracture, baseline.fracture);
     assert_eq!(captured.max_utilization, baseline.max_utilization);
     assert_eq!(captured.gauge_reaction_ratio, baseline.gauge_reaction_ratio);
@@ -949,8 +976,8 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
     let body = chunk(app.world(), building, BEAM).cluster.unwrap();
     let velocity = app.world().get::<LinearVelocity>(body).unwrap().0;
     let mut state = state_for(original);
-    let mut rebound = process_dynamic_impact(app.world(), &mut state).unwrap();
-    let direct = process_dynamic_impact(app.world(), &mut state_for(current.clone())).unwrap();
+    let mut rebound = evaluate_dynamic_impact(app.world_mut(), &mut state).unwrap();
+    let direct = evaluate_dynamic_impact(app.world_mut(), &mut state_for(current.clone())).unwrap();
     assert!(rebound.valid && direct.valid);
     assert_eq!(rebound.fracture, direct.fracture);
     assert_eq!(rebound.max_utilization, direct.max_utilization);
@@ -965,7 +992,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
     state.shocks.push_back(continuation);
     break_bond(app.world_mut(), building, LEFT_BOND);
     crate::physics::rebuild_clusters(app.world_mut());
-    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
     assert_eq!(state.released, 1);
     assert_eq!(state.rebound_fresh, 1);
     assert!(state.shocks.is_empty() && state.pending.is_empty());
@@ -973,7 +1000,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
 
 #[test]
 fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
-    let (app, building, original, _) = split_free_beam_for_queued_hit();
+    let (mut app, building, original, _) = split_free_beam_for_queued_hit();
     let before = bond_states(app.world(), building);
     let mut state = ImpactState {
         shocks: VecDeque::from([ClusterImpact {
@@ -994,7 +1021,7 @@ fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
         }]),
         ..default()
     };
-    assert!(process_dynamic_impact(app.world(), &mut state).is_none());
+    assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
     assert_eq!(state.released, 1);
     assert_eq!(state.rebound_fresh, 0);
     assert!(state.shocks.is_empty() && state.pending.is_empty());
@@ -1203,17 +1230,32 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
             &manifest.bonds,
         );
         world.flush();
-        let mut pending = BTreeMap::new();
-        queue_local_damage(
-            local_impact_bonds(&world, manifest, &instance, BEAM, instance.chunks[BEAM]),
-            building,
-            impulse,
-            &mut pending,
-        );
-        pending
-            .into_iter()
-            .map(|((_, id), utilization)| (id, utilization))
-            .collect::<BTreeMap<_, _>>()
+        world.entity_mut(building).insert(instance);
+        world
+            .run_system_once_with(
+                move |InRef(manifest): InRef<Manifest>, structure: ImpactStructure| {
+                    let instance = structure.buildings.get(building).unwrap();
+                    let mut pending = BTreeMap::new();
+                    queue_local_damage(
+                        local_impact_bonds(
+                            &structure,
+                            manifest,
+                            instance,
+                            BEAM,
+                            instance.chunks[BEAM],
+                        ),
+                        building,
+                        impulse,
+                        &mut pending,
+                    );
+                    pending
+                        .into_iter()
+                        .map(|((_, id), utilization)| (id, utilization))
+                        .collect::<BTreeMap<_, _>>()
+                },
+                manifest,
+            )
+            .unwrap()
     };
     assert!(
         evaluate(&planar).is_empty(),
