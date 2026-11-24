@@ -617,13 +617,18 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
 
 #[test]
 fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surfaces() {
-    use crate::{fracture_detail::ContactPatch, interaction::DamageRequests, vfx::BreakBurst};
+    use crate::{
+        fracture_detail::ContactPatch,
+        interaction::{DamageRequest, apply_damage},
+        vfx::BreakBurst,
+    };
+    use bevy::ecs::schedule::common_conditions::run_once;
 
     let mut app = app();
     app.insert_resource(Gravity(Vec3::ZERO))
         .add_message::<BreakBurst>()
-        .init_resource::<DamageRequests>()
-        .add_systems(Update, crate::interaction::apply_damage);
+        .add_message::<DamageRequest>()
+        .add_systems(Update, apply_damage);
     let asset = asset(&mut app);
     let building = spawn_building(&mut app, asset, Transform::IDENTITY);
     rebuild_clusters(app.world_mut());
@@ -681,14 +686,25 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
     let local_hit = Vec3::new(0.0, 1.95, 0.5);
     let world_hit = pose.transform_point(local_hit);
     let normal = rotation * Vec3::Z;
-    app.world_mut()
-        .resource_mut::<DamageRequests>()
-        .rays
-        .push_back(Ray3d::new(
-            world_hit + normal * 3.0,
-            Dir3::new(-normal).unwrap(),
-        ));
+    app.add_systems(
+        Update,
+        (move |mut requests: MessageWriter<DamageRequest>| {
+            requests.write(DamageRequest {
+                ray: Ray3d::new(world_hit + normal * 3.0, Dir3::new(-normal).unwrap()),
+            });
+        })
+        .after(apply_damage)
+        .run_if(run_once),
+    );
     let mut cursor = bevy::ecs::message::MessageCursor::<BreakBurst>::default();
+    app.update();
+    assert!(chunk(app.world(), building, "b").alive);
+    assert_eq!(
+        cursor
+            .read(app.world().resource::<Messages<BreakBurst>>())
+            .count(),
+        0,
+    );
     app.update();
     assert!(
         !chunk(app.world(), building, "b").alive,

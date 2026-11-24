@@ -6,6 +6,8 @@
 
 2026-11-24 修正发射瞄准使用上一帧相机位姿的问题。
 
+2026-11-24 将点击破坏射线迁移到 Bevy 消息。
+
 ## 背景
 
 演示需要沿外墙、室内及近景观察建筑，并通过实际碰撞位置触发局部破坏。高楼和离散桥墩用于观察不同尺度、平面和支撑路径下的表现。
@@ -17,6 +19,7 @@
 - 主键盘及数字小键盘的 `0` 切换橙色预破碎边线。线条取自焊接重复顶点后的真实折角与边界，跳过共面三角化对角线，保留深度遮挡。`9` 切换受力热力，按住 `Alt` 详查准星目标，见 [ADR 0009](0009-structural-diagnostics.md)。`Esc` 退出。
 - 左键通过中央准星查询最近的存活建筑 Collider；命中块必删，扩展范围仅限该块的直接连接邻块。半径 0.4 m、深度带 0.08 m、法线点积至少 0.7，每次最多删除 6 块。立即更新显示、存活状态和相邻连接，Collider 换属由 [ADR 0001](0001-rigid-cluster-runtime.md) 的固定步统一处理。表面和碎屑分别见 [ADR 0007](0007-fracture-surface-rendering.md)、[ADR 0008](0008-destruction-effects-and-rims.md)。
 - 右键发射刚性球，`R` 发射刚性方块。发射输入在相机移动后用 Bevy 的 `TransformHelper` 计算当前层级位姿，以该位姿确定发射起点和方向。撞击物的刚体参数及真实接触破坏见 [ADR 0003](0003-collision-driven-fracture.md)。
+- `DamageRequest` 携带一条点击破坏射线。玩家输入先发送消息，`apply_damage` 在同一次 `Update` 依序读取。冒烟探针在消费系统运行后发送的批量射线由下一次 `Update` 读取。
 
 | 按键 | `--scene` | 内容 |
 | --- | --- | --- |
@@ -35,10 +38,13 @@
 
 相机输入和发射运行在 `Update`，读取缓存的 `GlobalTransform` 要等到 `PostUpdate` 传播后才反映本帧运动。即时读取层级位姿使发射沿用现有输入顺序及固定步队列。
 
+点击射线曾经写入手工队列。消费者每次 `Update` 都运行，Bevy 消息的跨帧缓冲覆盖玩家输入和冒烟探针两种时序。撞击物发射请求由固定步消费，需跨越任意次数未运行固定步的 `Update`，继续使用耐久队列。
+
 ## 验证与未决问题
 
 - 回归覆盖资产加载后再次实例化、自由相机和鼠标捕获、调试边线、中央射线、受击表层选取及背墙保护，以及显示与 Collider 的生命周期。
 - 发射回归在同一 `Update` 先平移和转动带父实体的相机再触发发射，检查起点和方向采用本帧位姿。测试和矩形场景 `controls` 无窗验收通过。
+- 点击请求回归通过，验证在消费系统之后发送的射线下一次 `Update` 才生效，并且只产生一次破坏反馈。矩形场景 `controls` 无窗验收通过。冒烟测试覆盖批量射线。
 - 最终正式矩形在引擎中通过点击、重复实例化及偏侧支撑倾倒。细长代理修复提交 `dfd8205` 的六场景 Collider 构造回归通过，正式 L 形通过关闭 VFX 的交互回放。该次默认 VFX 的 L 形回放通过加载及首击，粒子回收检查失败。
 - 当前相机为固定默认速度与灵敏度的无碰撞自由飞行。行走或相机碰撞需单独设计与验证。
 
@@ -47,3 +53,5 @@
 [运行方式](../../../README.md)、[场景目录](../../../src/catalog/mod.rs)、[场景组合](../../../src/scene/mod.rs)、[相机](../../../src/camera/mod.rs)和[局部交互](../../../src/interaction/mod.rs)。
 
 [发射系统](../../../src/projectiles/mod.rs) · [Bevy 变换传播](https://docs.rs/bevy/0.20.1/bevy/transform/components/struct.Transform.html#transform-and-globaltransform)
+
+[点击请求](../../../src/interaction/mod.rs) · [Bevy 消息缓冲](https://docs.rs/bevy/latest/bevy/ecs/message/struct.Messages.html)

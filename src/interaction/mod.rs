@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -24,15 +22,15 @@ pub struct InteractionPlugin;
 
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DamageRequests>()
+        app.add_message::<DamageRequest>()
             .init_resource::<ScriptedClick>()
             .add_systems(Update, (cursor_damage, apply_damage).chain());
     }
 }
 
-#[derive(Resource, Default)]
-pub struct DamageRequests {
-    pub rays: VecDeque<Ray3d>,
+#[derive(Message)]
+pub(crate) struct DamageRequest {
+    pub ray: Ray3d,
 }
 
 #[derive(Resource, Default)]
@@ -88,7 +86,7 @@ pub(crate) fn cursor_damage(
     windows: Query<&Window>,
     cameras: Query<(Entity, &Camera), With<DemoCamera>>,
     transforms: TransformHelper,
-    mut requests: ResMut<DamageRequests>,
+    mut requests: MessageWriter<DamageRequest>,
     options: Res<DemoOptions>,
     mut scripted: ResMut<ScriptedClick>,
     control: Res<CameraControl>,
@@ -113,7 +111,7 @@ pub(crate) fn cursor_damage(
     if let Some(cursor) = cursor
         && let Ok(ray) = camera.viewport_to_world(&transform, cursor)
     {
-        requests.rays.push_back(ray);
+        requests.write(DamageRequest { ray });
     }
 }
 
@@ -158,9 +156,9 @@ fn closest_on_triangle([a, b, c]: [Vec3; 3], point: Vec3, normal: Vec3) -> Vec3 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn apply_damage(
+pub(crate) fn apply_damage(
     mut commands: Commands,
-    mut requests: ResMut<DamageRequests>,
+    mut requests: MessageReader<DamageRequest>,
     spatial: SpatialQuery,
     identities: Query<&ChunkIdentity>,
     poses: Query<(&Position, &Rotation)>,
@@ -171,7 +169,8 @@ pub fn apply_damage(
     assets: Res<Assets<DestructibleAsset>>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
-    while let Some(ray) = requests.rays.pop_front() {
+    for request in requests.read() {
+        let ray = &request.ray;
         let hit = spatial.cast_ray_predicate(
             ray.origin,
             ray.direction,

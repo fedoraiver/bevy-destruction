@@ -7,7 +7,7 @@ use crate::{
     debug::{DebugOverlay, FractureEdges},
     diagnostics::RunMetrics,
     dust_material::DustMaterial,
-    interaction::{BREAK_LIMIT, DamageRequests, ScriptedClick},
+    interaction::{BREAK_LIMIT, DamageRequest, ScriptedClick},
     scene::{
         BondInstance, BuildingInstance, ChunkInstance, DamageDetail, DemoCamera, DetailStats,
         PatchInstance, RemovedChunk,
@@ -99,7 +99,7 @@ fn drive(
     probes: Query<(Entity, &BuildingInstance), With<LoadedAssetProbe>>,
     removed: Query<(Has<Collider>, Has<FractureEdges>), With<RemovedChunk>>,
     particles: Query<&Particle>,
-    mut requests: ResMut<DamageRequests>,
+    mut requests: MessageWriter<DamageRequest>,
     mut debug: ResMut<DebugOverlay>,
     mut exit: MessageWriter<AppExit>,
     mut windows: Query<(Entity, &mut Window)>,
@@ -546,9 +546,9 @@ fn drive(
                 .filter(|p| p.z > bounds.max.z - 0.05)
                 .take(48)
             {
-                requests
-                    .rays
-                    .push_back(Ray3d::new(point + Vec3::Z * 20.0, Dir3::NEG_Z));
+                requests.write(DamageRequest {
+                    ray: Ray3d::new(point + Vec3::Z * 20.0, Dir3::NEG_Z),
+                });
             }
         }
         490 => capture(
