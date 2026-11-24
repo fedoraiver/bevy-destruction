@@ -10,6 +10,8 @@
 
 2026-11-24 将场景切换的撞击状态重置迁移到 Bevy Observer。
 
+2026-11-24 点击破坏的有限边最近点计算改用 Bevy `Segment3d`。
+
 ## 背景
 
 演示需要沿外墙、室内及近景观察建筑，并通过实际碰撞位置触发局部破坏。高楼和离散桥墩用于观察不同尺度、平面和支撑路径下的表现。
@@ -46,12 +48,15 @@
 
 撞击状态重置曾以独占 `World` 命令执行。Observer 通过 `ResMut` 声明并更新所属资源，仍在场景切换的同一延迟命令队列执行。
 
+点击候选面先按投影点和半空间容差判断面内命中。投影超出三角形时，以 Bevy `Segment3d::closest_point` 查询三条有限边并取最近点。候选深度沿 Avian 命中法线测量。
+
 ## 验证与未决问题
 
 - 回归覆盖资产加载后再次实例化、自由相机和鼠标捕获、调试边线、中央射线、受击表层选取及背墙保护，以及显示与 Collider 的生命周期。
 - 发射回归在同一 `Update` 先平移和转动带父实体的相机再触发发射，检查起点和方向采用本帧位姿。测试和矩形场景 `controls` 无窗验收通过。
 - 点击请求回归通过，验证在消费系统之后发送的射线下一次 `Update` 才生效，并且只产生一次破坏反馈。矩形场景 `controls` 无窗验收通过。冒烟测试覆盖批量射线。
 - 场景重置回归通过，验证旧发射、接触和统计清零，并保留同一 `Update` 的新发射输入。矩形场景 `controls` 无窗验收覆盖真实 F 键切换场景，已通过。
+- 邻面距离回归通过，覆盖边中部、有限边端点、面内容差以及倾斜面的命中轴深度。矩形场景 `smoke` 无窗验收通过。
 - 最终正式矩形在引擎中通过点击、重复实例化及偏侧支撑倾倒。细长代理修复提交 `dfd8205` 的六场景 Collider 构造回归通过，正式 L 形通过关闭 VFX 的交互回放。该次默认 VFX 的 L 形回放通过加载及首击，粒子回收检查失败。
 - 当前相机为固定默认速度与灵敏度的无碰撞自由飞行。行走或相机碰撞需单独设计与验证。
 
@@ -64,3 +69,5 @@
 [点击请求](../../../src/interaction/mod.rs) · [Bevy 消息缓冲](https://docs.rs/bevy/latest/bevy/ecs/message/struct.Messages.html)
 
 [场景切换](../../../src/catalog/mod.rs) · [Bevy Observer](https://docs.rs/bevy/latest/bevy/ecs/prelude/struct.Observer.html)
+
+[Bevy 有限边最近点](https://docs.rs/bevy/latest/bevy/shape/struct.Segment3d.html#method.closest_point)

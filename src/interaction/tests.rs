@@ -18,6 +18,30 @@ fn selection_uses_surface_distance_and_rejects_back_wall() {
 }
 
 #[test]
+fn triangle_projection_respects_finite_edges_and_the_face_tolerance() {
+    let triangle = [Vec3::ZERO, Vec3::X, Vec3::Y];
+    for (point, closest) in [
+        (Vec3::new(0.25, -0.2, 0.03), Vec3::new(0.25, 0.0, 0.0)),
+        (Vec3::new(1.4, -0.2, 0.03), Vec3::X),
+        (Vec3::new(0.25, -5e-8, 0.03), Vec3::new(0.25, -5e-8, 0.0)),
+    ] {
+        assert_eq!(closest_on_triangle(triangle, point, Vec3::Z), closest);
+    }
+}
+
+#[test]
+fn tilted_surface_depth_is_measured_along_the_hit_normal() {
+    let triangles = [[Vec3::ZERO, Vec3::X, Vec3::new(0.0, 0.8, 0.6)]];
+    let center = Vec3::new(0.25, 0.2, 0.15);
+    let geometric_normal = Vec3::new(0.0, -0.6, 0.8);
+    let within = center + geometric_normal * 0.099;
+    let beyond = center + geometric_normal * 0.101;
+    let distance = surface_distance(&triangles, within, Vec3::Z).unwrap();
+    assert!((distance - 0.099).abs() < 1e-6);
+    assert!(surface_distance(&triangles, beyond, Vec3::Z).is_none());
+}
+
+#[test]
 fn fracture_feedback_uses_each_moving_cluster_pose() {
     use crate::fracture_detail::ContactPatch;
     use crate::scene::{spawn_bonds, spawn_patches};

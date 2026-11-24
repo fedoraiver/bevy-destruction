@@ -143,10 +143,7 @@ fn closest_on_triangle([a, b, c]: [Vec3; 3], point: Vec3, normal: Vec3) -> Vec3 
         return projected;
     }
     [(a, b), (b, c), (c, a)]
-        .map(|(start, end)| {
-            let edge = end - start;
-            start + edge * ((point - start).dot(edge) / edge.length_squared()).clamp(0.0, 1.0)
-        })
+        .map(|(start, end)| Segment3d::new(start, end).closest_point(point))
         .into_iter()
         .min_by(|a, b| {
             a.distance_squared(point)
