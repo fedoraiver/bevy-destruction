@@ -28,7 +28,7 @@ pub struct SurfaceHit {
     pub point: Vec3,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct ForceVisibilityCache {
     geometry: BTreeMap<(AssetId<DestructibleAsset>, String), Option<SourceGeometry>>,
 }

@@ -179,7 +179,7 @@ fn inspector_prioritizes_utilization_over_force_and_shows_at_most_three_bonds() 
 }
 
 #[test]
-fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
+fn inspector_tracks_input_target_lifetime_and_asset_changes() {
     use bevy::camera::{CameraProjection, RenderTargetInfo};
 
     let mut app = App::new();
@@ -187,8 +187,8 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
         .init_resource::<CameraControl>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ScriptedForceInspection>()
-        .init_resource::<ForceVisibilityCache>()
         .init_resource::<Aim>()
+        .add_message::<AssetEvent<DestructibleAsset>>()
         .insert_resource(ForceCapture { enabled: true })
         .add_systems(Update, (toggle, pick_target).chain());
     let world = app.world_mut();
@@ -282,6 +282,31 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
     app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
     app.update();
     assert!(app.world().resource::<Aim>().hit.is_some());
+
+    app.world_mut().resource_mut::<ForceCapture>().enabled = false;
+    for point in app
+        .world_mut()
+        .get_mut::<ChunkInstance>(front)
+        .unwrap()
+        .triangles
+        .iter_mut()
+        .flatten()
+    {
+        point.z = -1.0;
+    }
+    app.world_mut()
+        .write_message(AssetEvent::<DestructibleAsset>::Modified {
+            id: AssetId::default(),
+        });
+    // Stay disabled beyond the message's lifetime before inspecting the changed geometry.
+    for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut().resource_mut::<ForceCapture>().enabled = true;
+    app.update();
+    let hit = app.world().resource::<Aim>().hit.as_ref().unwrap();
+    assert!((hit.point.z + 1.0).abs() < 1e-5);
+
     app.world_mut().despawn(building);
     app.update();
     assert!(app.world().resource::<Aim>().hit.is_none());

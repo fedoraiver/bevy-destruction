@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, fmt::Write};
 
 use avian3d::prelude::*;
 use bevy::{
-    camera::visibility::VisibilitySystems, gizmos::config::GizmoConfigGroup, mesh::MeshTag,
-    prelude::*, window::PrimaryWindow,
+    asset::AssetEventSystems, camera::visibility::VisibilitySystems,
+    gizmos::config::GizmoConfigGroup, mesh::MeshTag, prelude::*, window::PrimaryWindow,
 };
 
 use crate::{
@@ -82,32 +82,22 @@ impl Plugin for ForceDebugPlugin {
         app.init_resource::<ForceCapture>()
             .init_resource::<ForceSamples>()
             .init_resource::<ForceViewStats>()
-            .init_resource::<ForceVisibilityCache>()
             .init_resource::<ScriptedForceInspection>()
             .init_resource::<Aim>()
             .init_gizmo_group::<ForceGizmos>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (toggle, invalidate_visibility_cache))
+            .add_systems(Update, toggle)
             .add_systems(
                 PostUpdate,
                 (
-                    pick_target.after(VisibilitySystems::CheckVisibility),
+                    pick_target
+                        .after(AssetEventSystems)
+                        .after(VisibilitySystems::CheckVisibility),
                     draw,
                     update_hud,
                 )
                     .chain(),
             );
-    }
-}
-
-fn invalidate_visibility_cache(
-    mut events: MessageReader<AssetEvent<DestructibleAsset>>,
-    mut cache: ResMut<ForceVisibilityCache>,
-) {
-    for event in events.read() {
-        if let AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
-            cache.invalidate(*id);
-        }
     }
 }
 
@@ -180,9 +170,15 @@ fn pick_target(
         (&Collider, &GlobalTransform, &InheritedVisibility),
         (Without<ChunkIdentity>, With<Mesh3d>),
     >,
-    mut cache: ResMut<ForceVisibilityCache>,
+    mut events: MessageReader<AssetEvent<DestructibleAsset>>,
+    mut cache: Local<ForceVisibilityCache>,
     mut aim: ResMut<Aim>,
 ) {
+    for event in events.read() {
+        if let AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
+            cache.invalidate(*id);
+        }
+    }
     *aim = Aim::default();
     if !capture.enabled {
         return;
