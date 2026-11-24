@@ -204,7 +204,7 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
     let bond = world
         .spawn((
             Name::new("Force test bond"),
-            ChildOf(building),
+            crate::scene::BondOfBuilding { building },
             BondInstance {
                 id: "a-b".into(),
                 endpoints: [a, b],

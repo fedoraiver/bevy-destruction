@@ -138,6 +138,30 @@ pub struct BondInstance {
 }
 
 #[derive(Component)]
+#[relationship(relationship_target = BuildingBonds)]
+pub(crate) struct BondOfBuilding {
+    pub building: Entity,
+}
+
+#[derive(Component)]
+#[relationship_target(relationship = BondOfBuilding, linked_spawn)]
+pub(crate) struct BuildingBonds {
+    bonds: Vec<Entity>,
+}
+
+#[derive(Component)]
+#[relationship(relationship_target = BondPatches)]
+pub(crate) struct PatchOfBond {
+    pub bond: Entity,
+}
+
+#[derive(Component)]
+#[relationship_target(relationship = PatchOfBond, linked_spawn)]
+pub(crate) struct BondPatches {
+    patches: Vec<Entity>,
+}
+
+#[derive(Component)]
 pub struct StructuralPatch {
     pub index: usize,
 }
@@ -164,7 +188,7 @@ pub(crate) fn spawn_bonds(
         let entity = commands
             .spawn((
                 Name::new(format!("Bond {}", record.id)),
-                ChildOf(building),
+                BondOfBuilding { building },
                 BondInstance {
                     id: record.id.clone(),
                     endpoints: [instance.chunks[&record.a], instance.chunks[&record.b]],
@@ -176,7 +200,7 @@ pub(crate) fn spawn_bonds(
         for index in 0..record.patches.len() {
             commands.spawn((
                 Name::new(format!("Structural patch {}:{index}", record.id)),
-                ChildOf(entity),
+                PatchOfBond { bond: entity },
                 StructuralPatch { index },
             ));
         }
@@ -196,7 +220,7 @@ pub(crate) fn spawn_patches(
         let entity = commands
             .spawn((
                 Name::new(format!("Surface patch {}", patch.id)),
-                ChildOf(bond),
+                PatchOfBond { bond },
                 PatchInstance {
                     index,
                     geometry: patches.clone(),
@@ -796,7 +820,7 @@ fn update_details(
     mut instances: Query<(Entity, &mut BuildingInstance)>,
     mut chunks: Query<&mut ChunkInstance>,
     bonds: Query<&BondInstance>,
-    patches: Query<(&PatchInstance, &ChildOf)>,
+    patches: Query<(&PatchInstance, &PatchOfBond)>,
     details: Query<&DamageDetail>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
@@ -825,17 +849,14 @@ fn update_details(
         let mut exposed = BTreeMap::<String, Vec<&PatchInstance>>::new();
         let alive = |id: &str| chunks.get(instance.chunks[id]).unwrap().alive;
         for &entity in &instance.patches {
-            let (runtime_patch, parent) = patches.get(entity).unwrap();
+            let (runtime_patch, owner) = patches.get(entity).unwrap();
             let patch = runtime_patch.patch();
             if let Some(survivor) = patch.exposed_survivor(alive) {
                 exposed
                     .entry(survivor.to_owned())
                     .or_default()
                     .push(runtime_patch);
-            } else if alive(&patch.a)
-                && alive(&patch.b)
-                && !bonds.get(parent.parent()).unwrap().active
-            {
+            } else if alive(&patch.a) && alive(&patch.b) && !bonds.get(owner.bond).unwrap().active {
                 for id in [&patch.a, &patch.b] {
                     exposed.entry(id.clone()).or_default().push(runtime_patch);
                 }

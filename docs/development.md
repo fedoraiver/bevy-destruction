@@ -7,7 +7,7 @@
 - 用 `Entity` 标识运行时实体，以组件组合表达状态和能力。无数据的角色可以用标记组件表示，例如 `RemovedChunk`。项目代码创建的运行时实体及子实体在创建时提供可辨认的 `Name`，系统通过组件、关系和查询过滤条件选择实体。[场景与碎块组件](../src/scene/mod.rs)
 - 按数据职责、访问方式和生命周期组织组件。组件可提供构造、校验和本地计算方法。由系统读取其他实体、执行交互和写回结果。同一业务状态保留明确的数据来源，区分建筑初始位姿、Avian 当前物理位姿和用于显示的变换。[建筑实例](../src/scene/mod.rs) · [刚体簇重建](../src/physics/mod.rs)
 - 单个 `World` 中由多个系统共享的唯一状态用 `Resource`，单个系统的跨次运行状态用 `Local<T>`，每个实例独立的状态放在该实体的组件中。普通系统用 `Query`、`Res` 等参数声明依赖，只对需要更新的数据请求可变访问。可用互斥过滤条件、拆分系统或 `ParamSet` 表达查询冲突，复杂计算可提取为普通函数。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力显示缓存](../src/force_debug/mod.rs)
-- 通过 `ChildOf` 表达 ECS 层级，通过 `ColliderOf` 表达 Avian 碰撞体的刚体归属。保存业务索引时区分清单中的稳定字符串 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[碎块标识](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
+- 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。建筑与连接、连接与面片的所有权用 `BondOfBuilding` 和 `PatchOfBond` 表达。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
 
 ## 调度、通信与命令
 

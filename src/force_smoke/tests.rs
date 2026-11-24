@@ -1,4 +1,5 @@
 use super::*;
+use crate::scene::BondOfBuilding;
 
 #[test]
 fn same_asset_visibility_fixtures_own_independent_bonds() {
@@ -20,7 +21,10 @@ fn same_asset_visibility_fixtures_own_independent_bonds() {
         assert_ne!(original_bond, twin_bond);
         for (building, entity) in [(fixture.building, original_bond), (fixture.twin, twin_bond)] {
             let bond = world.get::<BondInstance>(entity).unwrap();
-            assert_eq!(world.get::<ChildOf>(entity).unwrap().parent(), building);
+            assert_eq!(
+                world.get::<BondOfBuilding>(entity).unwrap().building,
+                building
+            );
             assert!(bond.active);
             for endpoint in bond.endpoints {
                 assert_eq!(

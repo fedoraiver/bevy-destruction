@@ -11,7 +11,7 @@ use crate::{
     fracture_detail::ContactPatch,
     scene::{
         BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, PatchInstance,
-        RemovedChunk,
+        PatchOfBond, RemovedChunk,
     },
     vfx::{BreakBurst, EmissionSurface},
 };
@@ -196,7 +196,7 @@ pub fn apply_damage(
     mut instances: Query<&mut BuildingInstance>,
     mut chunks: Query<&mut ChunkInstance>,
     mut bonds: Query<&mut BondInstance>,
-    patches: Query<(&PatchInstance, &ChildOf)>,
+    patches: Query<(&PatchInstance, &PatchOfBond)>,
     assets: Res<Assets<DestructibleAsset>>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
@@ -283,8 +283,8 @@ pub fn apply_damage(
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
         for &entity in &instance.patches {
-            let (runtime_patch, parent) = patches.get(entity).unwrap();
-            if !bonds.get(parent.parent()).unwrap().active {
+            let (runtime_patch, owner) = patches.get(entity).unwrap();
+            if !bonds.get(owner.bond).unwrap().active {
                 continue;
             }
             let patch = runtime_patch.patch();

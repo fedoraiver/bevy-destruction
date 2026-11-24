@@ -18,7 +18,7 @@ Blender 离线把建筑划分为碎块，为相邻碎块生成承载连接，并
 
 ## 实例与刚体簇
 
-同一清单可以实例化多栋建筑。每个碎块的存活状态在其 `ChunkInstance` 组件中，每条连接的端点实体和完好状态在建筑子实体的 `BondInstance` 组件中。承载面片与显示面片都是连接实体的子实体，分别引用清单凸面片和可共享的显示几何。建筑使用稳定 ID 索引碎块和连接，固定步按需读取 ECS 状态生成求解快照。[场景实例](../src/scene/mod.rs) · [结构实体设计](notes/implemented/0023-ecs-structure-entities.md)
+同一清单可以实例化多栋建筑。每个碎块的存活状态在其 `ChunkInstance` 组件中，每条连接的端点实体和完好状态在 `BondInstance` 组件中。连接通过 `BondOfBuilding` 归属建筑，承载面片与显示面片通过 `PatchOfBond` 归属连接，分别引用清单凸面片和可共享的显示几何。建筑销毁时，其连接和面片自动销毁。建筑使用稳定 ID 索引碎块和连接，并记录显示面片的遍历顺序。固定步按需读取 ECS 状态生成求解快照。[场景实例](../src/scene/mod.rs) · [结构实体设计](notes/implemented/0023-ecs-structure-entities.md)
 
 刚体簇通过 `ChildOf` 关联所属建筑，碎块碰撞体通过 `ColliderOf` 关联对应簇刚体。显示网格跟随碎块。[刚体簇](../src/physics/mod.rs)
 

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{
+    ecs::relationship::RelationshipTarget,
     math::{DMat3, DVec3},
     prelude::*,
 };
@@ -16,7 +17,8 @@ use crate::{
     },
     physics::Cluster,
     scene::{
-        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, StructuralPatch,
+        BondInstance, BondPatches, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
+        StructuralPatch,
     },
     stress::{self, NodeLoad, SolverSettings},
 };
@@ -501,10 +503,10 @@ fn local_impact_bonds<'a>(
             return None;
         }
         let mut patch_indices = world
-            .get::<Children>(entity)
+            .get::<BondPatches>(entity)
             .into_iter()
-            .flatten()
-            .filter_map(|&entity| world.get::<StructuralPatch>(entity))
+            .flat_map(BondPatches::iter)
+            .filter_map(|entity| world.get::<StructuralPatch>(entity))
             .map(|patch| patch.index)
             .collect::<Vec<_>>();
         // Preserve the asset's facet order when summing contact areas.

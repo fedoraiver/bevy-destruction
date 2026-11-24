@@ -1,6 +1,6 @@
 use super::*;
 use crate::{asset::ChunkRecord, fracture_detail::RimEdge};
-use bevy::mesh::VertexAttributeValues;
+use bevy::{ecs::relationship::RelationshipTarget, mesh::VertexAttributeValues};
 
 #[test]
 fn catalog_convex_proxies_build_runtime_colliders() {
@@ -384,14 +384,25 @@ fn despawning_one_building_releases_its_graph_entities_and_keeps_shared_geometry
     let [chunk, bond, patch] = removed_entities;
     let bond_state = world.get::<BondInstance>(bond).unwrap();
     assert_eq!(bond_state.endpoints, [chunk, first.chunks["b"]]);
-    assert_eq!(world.get::<ChildOf>(patch).unwrap().parent(), bond);
-    let facet = world
-        .get::<Children>(bond)
-        .unwrap()
+    assert_eq!(world.get::<BondOfBuilding>(bond).unwrap().building, removed);
+    assert!(
+        world
+            .get::<BuildingBonds>(removed)
+            .unwrap()
+            .iter()
+            .any(|entity| entity == bond)
+    );
+    assert!(world.get::<ChildOf>(bond).is_none());
+    assert_eq!(world.get::<PatchOfBond>(patch).unwrap().bond, bond);
+    assert!(world.get::<ChildOf>(patch).is_none());
+    let related_patches = world.get::<BondPatches>(bond).unwrap();
+    assert!(related_patches.iter().any(|entity| entity == patch));
+    let facet = related_patches
         .iter()
         .find(|&entity| world.get::<StructuralPatch>(entity).is_some())
         .unwrap();
     assert_eq!(world.get::<StructuralPatch>(facet).unwrap().index, 0);
+    assert_eq!(world.get::<PatchOfBond>(facet).unwrap().bond, bond);
     assert!(std::ptr::eq(
         world.get::<PatchInstance>(patch).unwrap().patch(),
         world
