@@ -281,7 +281,6 @@ fn spawn_dropped_tower_at_height(
             transform: local,
             mass_properties,
             material: record.material.clone(),
-            detail: None,
             cluster: None,
         });
         instance.chunks.insert(record.id.clone(), entity);
@@ -1030,7 +1029,6 @@ fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
                 transform: record.transform(),
                 mass_properties,
                 material: record.material.clone(),
-                detail: None,
                 cluster: None,
             },
         );
@@ -1192,7 +1190,6 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
                         transform: record.transform(),
                         mass_properties: MassProperties3d::ZERO,
                         material: record.material.clone(),
-                        detail: None,
                         cluster: None,
                     },
                 ))

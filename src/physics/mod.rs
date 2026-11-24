@@ -5,7 +5,7 @@ use bevy::{ecs::system::InRef, prelude::*};
 
 use crate::{
     asset::DestructibleAsset,
-    scene::{BondInstance, BuildingInstance, ChunkInstance},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, RefreshDamageDetails},
     structure,
 };
 
@@ -257,7 +257,7 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         }
         let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
         instance.clusters = next;
-        instance.detail_dirty.extend(alive);
         instance.topology_dirty = false;
+        world.entity_mut(building).insert(RefreshDamageDetails);
     }
 }

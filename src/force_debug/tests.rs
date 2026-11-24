@@ -125,7 +125,6 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
                 transform: Transform::IDENTITY,
                 mass_properties: avian3d::prelude::MassProperties3d::ZERO,
                 material: "concrete".into(),
-                detail: None,
                 cluster: Some(body),
             },
         ))
@@ -192,7 +191,6 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
                     transform: Transform::IDENTITY,
                     mass_properties: MassProperties3d::ZERO,
                     material: "concrete".into(),
-                    detail: None,
                     cluster: Some(body),
                 },
             ))

@@ -432,7 +432,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             transform: record.transform(),
             mass_properties,
             material: "concrete".into(),
-            detail: None,
             cluster: Some(body),
         });
         instance.chunks.insert(shape.id, entity);
@@ -524,7 +523,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             transform: chunk.transform,
             mass_properties: chunk.mass_properties,
             material: chunk.material.clone(),
-            detail: None,
             cluster: Some(twin_body),
         };
         let entity = world

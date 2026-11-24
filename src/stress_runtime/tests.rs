@@ -383,7 +383,6 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
                 transform,
                 mass_properties,
                 material: "concrete".into(),
-                detail: None,
                 cluster: None,
             },
         ))
@@ -617,7 +616,6 @@ mod collapse {
                         transform: local,
                         mass_properties,
                         material: record.material.clone(),
-                        detail: None,
                         cluster: None,
                     },
                 ))

@@ -151,7 +151,6 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                     transform: local,
                     mass_properties,
                     material: record.material,
-                    detail: None,
                     cluster: None,
                 },
             ))

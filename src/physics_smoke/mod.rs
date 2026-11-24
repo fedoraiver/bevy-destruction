@@ -7,7 +7,7 @@ use crate::{
     DemoOptions,
     asset::{DestructibleAsset, Manifest},
     physics::Cluster,
-    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RefreshDamageDetails},
 };
 
 pub struct PhysicsSmokePlugin;
@@ -19,7 +19,8 @@ impl Plugin for PhysicsSmokePlugin {
                 Update,
                 drive
                     .after(crate::camera::move_camera)
-                    .after(crate::scene::instantiate_pending),
+                    .after(crate::scene::instantiate_pending)
+                    .before(crate::scene::UpdateDamageDetails),
             )
             .add_systems(
                 FixedPostUpdate,
@@ -362,9 +363,7 @@ fn drive(
                     state.pair_bonds.push(bond.id.clone());
                 }
             }
-            instance
-                .detail_dirty
-                .extend(state.cleared_chunks.iter().cloned());
+            commands.entity(building).insert(RefreshDamageDetails);
             instance.topology_dirty = true;
             state.selected = selected;
         }

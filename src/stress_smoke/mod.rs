@@ -292,7 +292,6 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
             transform: local,
             mass_properties,
             material: "concrete".into(),
-            detail: None,
             cluster: None,
         });
         instance.chunks.insert(record.id, chunk);

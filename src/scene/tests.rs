@@ -214,7 +214,6 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
                     transform: Transform::IDENTITY,
                     mass_properties: MassProperties3d::ZERO,
                     material: "concrete".into(),
-                    detail: None,
                     cluster: None,
                 },
             ))
@@ -235,19 +234,23 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
     spawn_bonds(&mut commands, root, &mut instance, &bonds);
     spawn_patches(&mut commands, root, &mut instance, patches);
     world.flush();
-    instance.detail_dirty.insert("a".into());
-    world.entity_mut(root).insert(instance);
+    world
+        .entity_mut(root)
+        .insert((instance, RefreshDamageDetails));
     root
 }
 
 fn remove_chunk(world: &mut World, root: Entity, id: &str) {
     let entity = world.get::<BuildingInstance>(root).unwrap().chunks[id];
     world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
+    world.entity_mut(root).insert(RefreshDamageDetails);
+}
+
+fn detail_entity(world: &World, chunk: Entity) -> Option<Entity> {
     world
-        .get_mut::<BuildingInstance>(root)
-        .unwrap()
-        .detail_dirty
-        .insert(id.into());
+        .get::<Children>(chunk)?
+        .iter()
+        .find(|&entity| world.get::<DamageDetail>(entity).is_some())
 }
 
 fn detail_snapshot(world: &World, root: Entity) -> Vec<(String, Vec<String>, Vec<[f32; 3]>)> {
@@ -256,8 +259,7 @@ fn detail_snapshot(world: &World, root: Entity) -> Vec<(String, Vec<String>, Vec
         .chunks
         .iter()
         .filter_map(|(id, &chunk_entity)| {
-            let chunk = world.get::<ChunkInstance>(chunk_entity).unwrap();
-            let entity = chunk.detail?;
+            let entity = detail_entity(world, chunk_entity)?;
             assert_eq!(world.get::<ChildOf>(entity).unwrap().parent(), chunk_entity);
             let detail = world.get::<DamageDetail>(entity).unwrap();
             let mesh = world
@@ -284,8 +286,30 @@ fn shared_contact_cache_keeps_damage_local_and_reuses_unchanged_mesh() {
     assert!(detail_snapshot(app.world(), intact).is_empty());
     assert!(detail_snapshot(app.world(), damaged).is_empty());
 
+    let building_tick = |world: &World, entity: Entity| {
+        world
+            .entity(entity)
+            .get_ref::<BuildingInstance>()
+            .unwrap()
+            .last_changed()
+    };
+    let chunk = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
+    let chunk_tick = |world: &World| {
+        world
+            .entity(chunk)
+            .get_ref::<ChunkInstance>()
+            .unwrap()
+            .last_changed()
+    };
+    let root_ticks = [intact, damaged].map(|entity| building_tick(app.world(), entity));
+    let surviving_chunk_tick = chunk_tick(app.world());
     remove_chunk(app.world_mut(), damaged, "b");
     app.update();
+    assert_eq!(
+        [intact, damaged].map(|entity| building_tick(app.world(), entity)),
+        root_ticks
+    );
+    assert_eq!(chunk_tick(app.world()), surviving_chunk_tick);
     assert!(detail_snapshot(app.world(), intact).is_empty());
     let snapshot = detail_snapshot(app.world(), damaged);
     assert_eq!(snapshot.len(), 1);
@@ -293,20 +317,12 @@ fn shared_contact_cache_keeps_damage_local_and_reuses_unchanged_mesh() {
     assert_eq!(snapshot[0].1, ["ab"]);
     assert!(!snapshot[0].2.is_empty());
     assert!(snapshot[0].2.iter().flatten().all(|p| p.is_finite()));
-    let chunk = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
-    let detail = app
-        .world()
-        .get::<ChunkInstance>(chunk)
-        .unwrap()
-        .detail
-        .unwrap();
+    let detail = detail_entity(app.world(), chunk).unwrap();
     let mesh = app.world().get::<Mesh3d>(detail).unwrap().0.clone();
     let mesh_count = app.world().resource::<Assets<Mesh>>().len();
     app.world_mut()
-        .get_mut::<BuildingInstance>(damaged)
-        .unwrap()
-        .detail_dirty
-        .insert("b".into());
+        .entity_mut(damaged)
+        .insert(RefreshDamageDetails);
     app.update();
     assert_eq!(app.world().get::<Mesh3d>(detail).unwrap().0, mesh);
     assert_eq!(app.world().resource::<Assets<Mesh>>().len(), mesh_count);
@@ -357,12 +373,7 @@ fn removal_order_preserves_geometry_and_removing_survivor_cleans_detail() {
     assert_eq!(app.world().resource::<DetailStats>().cached_meshes, 2);
 
     let chunk = app.world().get::<BuildingInstance>(first).unwrap().chunks["a"];
-    let old_detail = app
-        .world()
-        .get::<ChunkInstance>(chunk)
-        .unwrap()
-        .detail
-        .unwrap();
+    let old_detail = detail_entity(app.world(), chunk).unwrap();
     remove_chunk(app.world_mut(), first, "a");
     app.update();
     assert!(detail_snapshot(app.world(), first).is_empty());

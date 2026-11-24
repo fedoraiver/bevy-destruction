@@ -76,7 +76,6 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
                         transform: Transform::IDENTITY,
                         mass_properties: MassProperties3d::ZERO,
                         material: "concrete".into(),
-                        detail: None,
                         cluster: Some(body),
                     },
                 ))

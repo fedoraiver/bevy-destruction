@@ -11,7 +11,7 @@ use crate::{
     fracture_detail::ContactPatch,
     scene::{
         BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, PatchInstance,
-        PatchOfBond, RemovedChunk,
+        PatchOfBond, RefreshDamageDetails, RemovedChunk,
     },
     vfx::{BreakBurst, EmissionSurface},
 };
@@ -278,10 +278,6 @@ pub fn apply_damage(
             .sum();
         let mut surfaces = Vec::new();
         let mut exposed_area = 0.0;
-        let mut dirty = selected
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
         for &entity in &instance.patches {
             let (runtime_patch, owner) = patches.get(entity).unwrap();
             if !bonds.get(owner.bond).unwrap().active {
@@ -299,7 +295,6 @@ pub fn apply_damage(
             if !chunk.alive {
                 continue;
             }
-            dirty.insert(survivor.clone());
             exposed_area += patch.area;
             let normal = if removed_a {
                 -patch.normal
@@ -320,7 +315,6 @@ pub fn apply_damage(
                 .total_cmp(&center(b).distance_squared(point))
         });
         surfaces.truncate(256);
-        instance.detail_dirty.extend(dirty);
         for id in &selected {
             let entity = instance.chunks[id];
             let mut chunk = chunks.get_mut(entity).unwrap();
@@ -344,6 +338,9 @@ pub fn apply_damage(
             }
         }
         instance.topology_dirty = true;
+        commands
+            .entity(identity.building)
+            .insert(RefreshDamageDetails);
         bursts.write(BreakBurst {
             point,
             normal,

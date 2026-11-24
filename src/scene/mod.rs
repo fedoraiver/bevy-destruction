@@ -46,7 +46,9 @@ impl Plugin for DemoScenePlugin {
             )
             .add_systems(
                 Update,
-                update_details.after(crate::interaction::apply_damage),
+                update_details
+                    .in_set(UpdateDamageDetails)
+                    .after(crate::interaction::apply_damage),
             )
             .add_systems(PostUpdate, detail_lod.after(TransformSystems::Propagate));
     }
@@ -80,7 +82,6 @@ pub struct ChunkInstance {
     pub transform: Transform,
     pub mass_properties: MassProperties3d,
     pub material: String,
-    pub detail: Option<Entity>,
     pub cluster: Option<Entity>,
 }
 
@@ -99,7 +100,6 @@ pub struct BuildingInstance {
     pub bounds: Option<BuildingBounds>,
     pub error: Option<String>,
     pub patches: Vec<Entity>,
-    pub detail_dirty: std::collections::BTreeSet<String>,
     pub clusters: Vec<Entity>,
     pub topology_dirty: bool,
 }
@@ -113,7 +113,6 @@ impl BuildingInstance {
             bounds: None,
             error: None,
             patches: Vec::new(),
-            detail_dirty: default(),
             clusters: Vec::new(),
             topology_dirty: false,
         }
@@ -328,6 +327,12 @@ pub struct DamageDetail {
     #[cfg(feature = "acceptance-test")]
     pub triangles: usize,
 }
+
+#[derive(Component)]
+pub(crate) struct RefreshDamageDetails;
+
+#[derive(SystemSet, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct UpdateDamageDetails;
 
 #[derive(Resource, Default)]
 pub struct DetailStats {
@@ -738,7 +743,6 @@ pub(crate) fn instantiate_pending(
                 transform,
                 mass_properties,
                 material: record.material.clone(),
-                detail: None,
                 cluster: None,
             });
             ready.chunks.insert(record.id.clone(), entity);
@@ -817,8 +821,9 @@ pub const DETAIL_TRIANGLE_LIMIT: usize = 180_000;
 fn update_details(
     mut commands: Commands,
     options: Res<DemoOptions>,
-    mut instances: Query<(Entity, &mut BuildingInstance)>,
-    mut chunks: Query<&mut ChunkInstance>,
+    instances: Query<(Entity, &BuildingInstance)>,
+    dirty: Query<Entity, (With<BuildingInstance>, With<RefreshDamageDetails>)>,
+    chunks: Query<(&ChunkInstance, Option<&Children>)>,
     bonds: Query<&BondInstance>,
     patches: Query<(&PatchInstance, &PatchOfBond)>,
     details: Query<&DamageDetail>,
@@ -828,12 +833,11 @@ fn update_details(
     mut detail_cache: ResMut<DetailMeshCache>,
     mut stats: ResMut<DetailStats>,
 ) {
-    if options.no_detail
-        || !instances
-            .iter()
-            .any(|(_, instance)| !instance.detail_dirty.is_empty())
-    {
+    if options.no_detail || dirty.is_empty() {
         return;
+    }
+    for building in &dirty {
+        commands.entity(building).remove::<RefreshDamageDetails>();
     }
     let start = bevy::platform::time::Instant::now();
     let mut triangle_count = 0;
@@ -844,10 +848,9 @@ fn update_details(
         .collect::<Vec<_>>();
     instance_ids.sort_by_key(|entity| entity.to_bits());
     for instance_id in instance_ids {
-        let (_, mut instance) = instances.get_mut(instance_id).unwrap();
-        instance.detail_dirty.clear();
+        let (_, instance) = instances.get(instance_id).unwrap();
         let mut exposed = BTreeMap::<String, Vec<&PatchInstance>>::new();
-        let alive = |id: &str| chunks.get(instance.chunks[id]).unwrap().alive;
+        let alive = |id: &str| chunks.get(instance.chunks[id]).unwrap().0.alive;
         for &entity in &instance.patches {
             let (runtime_patch, owner) = patches.get(entity).unwrap();
             let patch = runtime_patch.patch();
@@ -863,7 +866,7 @@ fn update_details(
             }
         }
         for (id, &chunk_entity) in &instance.chunks {
-            let mut chunk = chunks.get_mut(chunk_entity).unwrap();
+            let (chunk, children) = chunks.get(chunk_entity).unwrap();
             let mut selected = Vec::new();
             let mut patch_ids = Vec::new();
             for &runtime_patch in exposed.get(id).into_iter().flatten() {
@@ -889,10 +892,12 @@ fn update_details(
                     patch_ids.push(patch.id.clone());
                 }
             }
-            if let Some(entity) = chunk.detail {
-                if let Ok(old) = details.get(entity)
-                    && old.patch_ids == patch_ids
-                {
+            if let Some((entity, old)) = children
+                .into_iter()
+                .flatten()
+                .find_map(|&entity| details.get(entity).ok().map(|detail| (entity, detail)))
+            {
+                if old.patch_ids == patch_ids {
                     mesh_count += 1;
                     continue;
                 }
@@ -906,7 +911,7 @@ fn update_details(
                 }
                 mesh
             });
-            let entity = if let Some(mesh) = combined {
+            if let Some(mesh) = combined {
                 #[cfg(feature = "acceptance-test")]
                 let triangles = mesh
                     .indices()
@@ -915,31 +920,23 @@ fn update_details(
                 let material = rim_materials.get_or_create(&chunk.material, &mut materials);
                 let local = Transform::from_matrix(chunk.transform.to_matrix().inverse());
                 mesh_count += 1;
-                Some(
-                    commands
-                        .spawn((
-                            Name::new("Exposed jagged fracture rim"),
-                            ChildOf(chunk_entity),
-                            Mesh3d(
-                                meshes.add(
-                                    surface_coordinates(mesh, Transform::IDENTITY)
-                                        .transformed_by(local),
-                                ),
-                            ),
-                            MeshMaterial3d(material),
-                            Transform::IDENTITY,
-                            DamageDetail {
-                                patch_ids,
-                                #[cfg(feature = "acceptance-test")]
-                                triangles,
-                            },
-                        ))
-                        .id(),
-                )
-            } else {
-                None
-            };
-            chunk.detail = entity;
+                commands.spawn((
+                    Name::new("Exposed jagged fracture rim"),
+                    ChildOf(chunk_entity),
+                    Mesh3d(
+                        meshes.add(
+                            surface_coordinates(mesh, Transform::IDENTITY).transformed_by(local),
+                        ),
+                    ),
+                    MeshMaterial3d(material),
+                    Transform::IDENTITY,
+                    DamageDetail {
+                        patch_ids,
+                        #[cfg(feature = "acceptance-test")]
+                        triangles,
+                    },
+                ));
+            }
         }
     }
     stats.active_meshes = mesh_count;
