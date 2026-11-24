@@ -978,7 +978,7 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
     for id in ids {
         break_bond(app.world_mut(), building, &id);
     }
-    crate::physics::rebuild_clusters(app.world_mut());
+    crate::physics::rebuild_clusters_for_test(app.world_mut());
     let before = bond_states(app.world(), building);
     assert!(building_clusters(app.world(), building).count() > 1);
     assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
@@ -1061,7 +1061,7 @@ fn split_free_beam_for_queued_hit() -> (App, Entity, Vec<String>, Vec<String>) {
         .cloned()
         .collect();
     break_bond(app.world_mut(), building, RIGHT_BOND);
-    crate::physics::rebuild_clusters(app.world_mut());
+    crate::physics::rebuild_clusters_for_test(app.world_mut());
     let body = body(app.world(), building, BEAM);
     let current = app.world().get::<Cluster>(body).unwrap().chunks.clone();
     assert_eq!(current.len(), 2);
@@ -1105,7 +1105,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
     assert!(continuation.prepared.is_some());
     state.shocks.push_back(continuation);
     break_bond(app.world_mut(), building, LEFT_BOND);
-    crate::physics::rebuild_clusters(app.world_mut());
+    crate::physics::rebuild_clusters_for_test(app.world_mut());
     assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
     assert_eq!(state.released, 1);
     assert_eq!(state.rebound_fresh, 1);

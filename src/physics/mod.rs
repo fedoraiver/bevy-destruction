@@ -1,10 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::prelude::*;
-use bevy::{
-    ecs::system::{InRef, SystemState},
-    prelude::*,
-};
+use bevy::{ecs::system::SystemState, prelude::*};
 
 use crate::{
     asset::DestructibleAsset,
@@ -80,26 +77,17 @@ impl Motion {
     }
 }
 
-fn update_new_cluster_mass(
-    InRef(bodies): InRef<[(Entity, Motion)]>,
-    mut mass_properties: MassPropertyHelper,
+pub(crate) fn rebuild_clusters(
+    world: &mut World,
+    buildings: &mut QueryState<(Entity, &'static BuildingInstance)>,
+    transforms: &mut SystemState<TransformHelper<'static, 'static>>,
+    mass_properties: &mut SystemState<MassPropertyHelper<'static, 'static>>,
 ) {
-    for &(body, _) in bodies {
-        mass_properties.update_mass_properties(body);
-    }
-}
-
-pub(crate) fn rebuild_clusters(world: &mut World) {
-    let buildings = world
-        .query::<(Entity, &BuildingInstance)>()
+    let buildings = buildings
         .iter(world)
         .filter(|(_, instance)| instance.topology_dirty && instance.bounds.is_some())
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
-    if buildings.is_empty() {
-        return;
-    }
-    let mut transforms = SystemState::<TransformHelper>::new(world);
     for building in buildings {
         let instance = world.get::<BuildingInstance>(building).unwrap();
         let Some(asset) = world
@@ -254,9 +242,14 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         }
         if !created.is_empty() {
             world.flush();
-            world
-                .run_system_cached_with(update_new_cluster_mass, created.as_slice())
-                .expect("Update mass properties before inheriting cluster motion");
+            {
+                let mut mass_properties = mass_properties
+                    .get_mut(world)
+                    .expect("MassPropertyHelper's queries are available");
+                for &(body, _) in &created {
+                    mass_properties.update_mass_properties(body);
+                }
+            }
             for (body, motion) in created {
                 let local_center = world.get::<ComputedCenterOfMass>(body).unwrap().0;
                 let center = motion.transform().transform_point(local_center);
@@ -275,4 +268,13 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             .topology_dirty = false;
         world.entity_mut(building).insert(RefreshDamageDetails);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn rebuild_clusters_for_test(world: &mut World) {
+    use bevy::ecs::system::RunSystemOnce;
+
+    world
+        .run_system_once(rebuild_clusters)
+        .expect("Rebuild clusters without advancing physics");
 }

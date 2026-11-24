@@ -252,7 +252,7 @@ fn first_cluster_uses_building_pose_before_transform_propagation() {
         .translation();
     assert!(stale.distance(expected.translation) > 1.0);
 
-    rebuild_clusters(world);
+    rebuild_clusters_for_test(world);
     let cluster = body(world, building, "a");
     assert_vec(
         world.get::<Position>(cluster).unwrap().0,
@@ -277,7 +277,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let support = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
     assert!(app.world().get::<ColliderOf>(support).is_none());
     assert!(building_clusters(app.world(), damaged).next().is_none());
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let old = body(app.world(), damaged, "a");
     let untouched = body(app.world(), intact, "a");
     assert!(building_clusters(app.world(), damaged).eq([old]));
@@ -293,7 +293,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     assert_eq!(app.world().get::<ColliderOf>(removed).unwrap().body, old);
     let surviving_ids =
         ["b", "c", "d"].map(|id| app.world().get::<BuildingInstance>(damaged).unwrap().chunks[id]);
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let detached = body(app.world(), damaged, "b");
     assert_ne!(old, detached);
     assert!(app.world().get_entity(old).is_err());
@@ -340,7 +340,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         .get_mut::<BuildingInstance>(damaged)
         .unwrap()
         .topology_dirty = true;
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     assert_eq!(body(app.world(), damaged, "b"), detached);
     assert!(building_clusters(app.world(), damaged).eq([detached]));
     app.update();
@@ -359,9 +359,9 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
     let mut app = app();
     let asset = asset(&mut app);
     let building = spawn_building(&mut app, asset, Transform::from_xyz(8.0, 0.0, -2.0));
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     remove(app.world_mut(), building, "a");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let parent = body(app.world(), building, "b");
     let position = Vec3::new(4.0, 8.0, 6.0);
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.7, -0.3, 0.5);
@@ -376,7 +376,7 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
         Transform::from_xyz(-100.0, -100.0, -100.0),
     ));
     let removed = remove(app.world_mut(), building, "c");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     assert!(app.world().get_entity(parent).is_err());
     assert!(app.world().get_entity(removed).is_ok());
     assert!(app.world().get::<Collider>(removed).is_none());
@@ -495,7 +495,7 @@ fn rotated_density_compounds_preserve_momentum_on_first_step_after_split() {
 
     let asset = add_asset(&mut app, manifest);
     let building = spawn_building(&mut app, asset, Transform::IDENTITY);
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let parent = body(app.world(), building, "b");
     assert_eq!(body(app.world(), building, "c"), parent);
     assert_mass(app.world(), parent, expected_mass);
@@ -518,7 +518,7 @@ fn rotated_density_compounds_preserve_momentum_on_first_step_after_split() {
         AngularVelocity(angular),
     ));
     break_bond(app.world_mut(), building, "bc");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
 
     let world = app.world();
     assert!(world.get_entity(parent).is_err());
@@ -563,9 +563,9 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
     ));
     let asset = asset(&mut app);
     let building = spawn_building(&mut app, asset, Transform::IDENTITY);
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     remove(app.world_mut(), building, "a");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let detached = body(app.world(), building, "b");
     for _ in 0..12 {
         app.update();
@@ -591,12 +591,12 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
         .get_mut::<BuildingInstance>(building)
         .unwrap()
         .topology_dirty = true;
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     assert_eq!(body(app.world(), building, "b"), detached);
     assert!(!app.world().get::<Cluster>(detached).unwrap().anchored);
 
     break_bond(app.world_mut(), building, "bc");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let lower = body(app.world(), building, "b");
     let upper = body(app.world(), building, "c");
     assert_ne!(lower, upper);
@@ -630,9 +630,9 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         .add_systems(Update, apply_damage);
     let asset = asset(&mut app);
     let building = spawn_building(&mut app, asset, Transform::IDENTITY);
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     remove(app.world_mut(), building, "a");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let body = body(app.world(), building, "b");
     let position = Vec3::new(8.0, 5.0, -4.0);
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.8, -0.3, 0.2);
@@ -754,9 +754,9 @@ fn splitting_awake_compound_rebinds_cached_contacts_with_adjacent_static_buildin
     let asset = asset(&mut app);
     let building = spawn_building(&mut app, asset.clone(), Transform::IDENTITY);
     let wall = spawn_building(&mut app, asset, Transform::from_xyz(1.0, 0.0, 0.0));
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     remove(app.world_mut(), building, "a");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let old = body(app.world(), building, "b");
     let wall_body = body(app.world(), wall, "a");
     app.world_mut().entity_mut(old).insert(SleepingDisabled);
@@ -774,7 +774,7 @@ fn splitting_awake_compound_rebinds_cached_contacts_with_adjacent_static_buildin
         "Fixture must cache live dynamic-static face contacts before the split"
     );
     break_bond(app.world_mut(), building, "bc");
-    rebuild_clusters(app.world_mut());
+    rebuild_clusters_for_test(app.world_mut());
     let lower = body(app.world(), building, "b");
     let upper = body(app.world(), building, "c");
     assert_ne!(lower, upper);
