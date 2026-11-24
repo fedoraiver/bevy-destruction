@@ -6,7 +6,7 @@ use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 use crate::{
     DemoOptions,
     asset::{DestructibleAsset, Manifest},
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RefreshDamageDetails},
 };
 
@@ -195,7 +195,7 @@ fn drive(
     options: Res<DemoOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<PhysicsSmokeState>,
-    mut instances: Query<(Entity, &mut BuildingInstance)>,
+    instances: Query<(Entity, &BuildingInstance)>,
     mut chunks: Query<&mut ChunkInstance>,
     mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
@@ -218,7 +218,7 @@ fn drive(
         return;
     };
     state.waiting += 1;
-    let Some((building, mut instance)) = instances.iter_mut().next() else {
+    let Some((building, instance)) = instances.iter().next() else {
         if state.waiting == 1800 {
             state.errors.push("Building did not appear".into());
             finish(&state, &options, directory, &mut exit);
@@ -363,8 +363,9 @@ fn drive(
                     state.pair_bonds.push(bond.id.clone());
                 }
             }
-            commands.entity(building).insert(RefreshDamageDetails);
-            instance.topology_dirty = true;
+            commands
+                .entity(building)
+                .insert((RefreshDamageDetails, NeedsClusterRebuild));
             state.selected = selected;
         }
         23 => {
@@ -439,7 +440,7 @@ fn drive(
             for bond in &state.pair_bonds {
                 bonds.get_mut(instance.bonds[bond]).unwrap().active = false;
             }
-            instance.topology_dirty = true;
+            commands.entity(building).insert(NeedsClusterRebuild);
             state.verify_split_pending = true;
         }
         42 => {

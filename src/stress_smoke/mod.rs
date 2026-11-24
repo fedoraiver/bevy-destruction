@@ -8,7 +8,7 @@ use crate::{
         DestructibleAsset, Manifest, PhysicalMaterial,
     },
     fracture_detail::ContactPatch,
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     projectiles::{
         ImpactStats, LaunchRequest, LaunchRequests, PROJECTILE_MASS, PROJECTILE_SPEED,
         ProjectileShape, RigidProjectile,
@@ -224,7 +224,6 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
         min: Vec3::new(-1.5, 0.0, -0.1),
         max: Vec3::new(1.5, 1.2, 0.1),
     });
-    instance.topology_dirty = true;
     let patches = std::sync::Arc::new(
         manifest
             .bonds
@@ -297,18 +296,20 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
     spawn_bonds(&mut commands, root, &mut instance, &manifest.bonds);
     spawn_patches(&mut commands, root, &mut instance, patches);
     world.flush();
-    world.entity_mut(root).insert(instance);
+    world
+        .entity_mut(root)
+        .insert((instance, NeedsClusterRebuild));
     root
 }
 
 pub(crate) fn remove_left_support(world: &mut World, root: Entity) {
     let (entity, bond) = {
-        let mut instance = world.get_mut::<BuildingInstance>(root).unwrap();
-        instance.topology_dirty = true;
+        let instance = world.get::<BuildingInstance>(root).unwrap();
         (instance.chunks[LEFT_SUPPORT], instance.bonds[LEFT_BOND])
     };
     world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
     world.get_mut::<BondInstance>(bond).unwrap().active = false;
+    world.entity_mut(root).insert(NeedsClusterRebuild);
     world
         .entity_mut(entity)
         .insert((RemovedChunk, Visibility::Hidden));

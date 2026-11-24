@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::prelude::*;
-use bevy::{ecs::system::SystemState, prelude::*};
+use bevy::{
+    ecs::{lifecycle::HookContext, system::SystemState, world::DeferredWorld},
+    prelude::*,
+};
 
 use crate::{
     asset::DestructibleAsset,
@@ -27,6 +30,17 @@ impl Plugin for DestructionPhysicsPlugin {
 pub struct Cluster {
     pub chunks: Vec<String>,
     pub anchored: bool,
+}
+
+#[derive(Component)]
+#[component(storage = "SparseSet", on_insert = mark_topology_changed)]
+pub(crate) struct NeedsClusterRebuild;
+
+fn mark_topology_changed(mut world: DeferredWorld, context: HookContext) {
+    // Stress and force diagnostics share the building's version of the structure inputs.
+    if let Some(mut instance) = world.get_mut::<BuildingInstance>(context.entity) {
+        instance.set_changed();
+    }
 }
 
 pub(crate) fn building_clusters(
@@ -79,13 +93,13 @@ impl Motion {
 
 pub(crate) fn rebuild_clusters(
     world: &mut World,
-    buildings: &mut QueryState<(Entity, &'static BuildingInstance)>,
+    buildings: &mut QueryState<(Entity, &'static BuildingInstance), With<NeedsClusterRebuild>>,
     transforms: &mut SystemState<TransformHelper<'static, 'static>>,
     mass_properties: &mut SystemState<MassPropertyHelper<'static, 'static>>,
 ) {
     let buildings = buildings
         .iter(world)
-        .filter(|(_, instance)| instance.topology_dirty && instance.bounds.is_some())
+        .filter(|(_, instance)| instance.bounds.is_some())
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
     for building in buildings {
@@ -262,11 +276,15 @@ pub(crate) fn rebuild_clusters(
                 world.entity_mut(body).insert(LinearVelocity(linear));
             }
         }
-        world
-            .get_mut::<BuildingInstance>(building)
+        let mut building = world.entity_mut(building);
+        // Keep the rebuild step's change visible to consumers of the pre-rebuild solution.
+        building
+            .get_mut::<BuildingInstance>()
             .unwrap()
-            .topology_dirty = false;
-        world.entity_mut(building).insert(RefreshDamageDetails);
+            .set_changed();
+        building
+            .remove::<NeedsClusterRebuild>()
+            .insert(RefreshDamageDetails);
     }
 }
 

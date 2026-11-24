@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    physics::{Cluster, DestructionPhysicsPlugin},
+    physics::{Cluster, DestructionPhysicsPlugin, NeedsClusterRebuild},
     stress_smoke::{BEAM, RIGHT_BOND, beam_manifest, remove_left_support, spawn_beam},
 };
 use bevy::time::TimeUpdateStrategy;
@@ -301,6 +301,24 @@ fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
     assert!(state.max_utilization > 0.0 && state.max_utilization < 1.0);
     let threshold = state.max_utilization * 0.5;
     let numerical_solves = state.numerical_solves;
+    assert!(warm.world().get::<NeedsClusterRebuild>(root).is_none());
+    warm.add_systems(
+        FixedPostUpdate,
+        (move |states: Query<&StressState>,
+               buildings: Query<Ref<BuildingInstance>>,
+               pending: Query<(), With<NeedsClusterRebuild>>| {
+            let state = states.get(root).unwrap();
+            if !state.last_broken.is_empty() {
+                assert!(pending.contains(root));
+                assert_ne!(
+                    state.cache.unwrap().source_tick,
+                    buildings.get(root).unwrap().last_changed().get()
+                );
+            }
+        })
+        .after(update_stress)
+        .before(physics::rebuild_clusters),
+    );
     warm.world_mut()
         .resource_mut::<StressSettings>()
         .immediate_utilization = threshold;
@@ -308,6 +326,8 @@ fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
     let state = warm.world().get::<StressState>(root).unwrap();
     assert!(state.broken_total > 0);
     assert_eq!(state.numerical_solves, numerical_solves);
+    assert!(warm.world().get::<NeedsClusterRebuild>(root).is_none());
+    let solves = state.solves;
     assert!(
         warm.world()
             .get::<BuildingInstance>(root)
@@ -315,6 +335,11 @@ fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
             .bonds
             .values()
             .any(|&entity| !warm.world().get::<BondInstance>(entity).unwrap().active)
+    );
+    tick(&mut warm, 1);
+    assert_eq!(
+        warm.world().get::<StressState>(root).unwrap().solves,
+        solves + 1
     );
 
     let mut cold = app(60.0);
@@ -407,10 +432,7 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
         .get_mut::<ChunkInstance>(entity)
         .unwrap()
         .alive = false;
-    app.world_mut()
-        .get_mut::<BuildingInstance>(root)
-        .unwrap()
-        .topology_dirty = true;
+    app.world_mut().entity_mut(root).insert(NeedsClusterRebuild);
     tick(&mut app, 3);
     let state = app.world().get::<StressState>(root).unwrap();
     assert_eq!(state.numerical_solves, solves);
@@ -483,9 +505,12 @@ fn free_fall_has_no_static_selfweight_fracture_or_damage() {
     let mut app = app(60.0);
     let root = spawn_beam(app.world_mut(), Vec3::new(0.0, 8.0, 0.0));
     {
-        let mut instance = app.world_mut().get_mut::<BuildingInstance>(root).unwrap();
-        let asset = instance.asset.clone();
-        instance.topology_dirty = true;
+        let asset = app
+            .world()
+            .get::<BuildingInstance>(root)
+            .unwrap()
+            .asset
+            .clone();
         app.world_mut()
             .resource_mut::<Assets<DestructibleAsset>>()
             .get_mut(&asset)
@@ -493,6 +518,7 @@ fn free_fall_has_no_static_selfweight_fracture_or_damage() {
             .manifest
             .anchors
             .clear();
+        app.world_mut().entity_mut(root).insert(NeedsClusterRebuild);
     }
     tick(&mut app, 30);
     let state = app.world().get::<StressState>(root).unwrap();
@@ -587,7 +613,6 @@ mod collapse {
             min: Vec3::new(0.0, 0.0, -6.0),
             max: Vec3::new(8.0, 6.24, 0.0),
         });
-        instance.topology_dirty = true;
         for record in &manifest.chunks {
             let alive = !record.part_id.contains("-l00") || keep_support(record);
             let local = record.transform();
@@ -638,7 +663,9 @@ mod collapse {
                     .active = false;
             }
         }
-        world.entity_mut(root).insert(instance);
+        world
+            .entity_mut(root)
+            .insert((instance, NeedsClusterRebuild));
         (app, root)
     }
 

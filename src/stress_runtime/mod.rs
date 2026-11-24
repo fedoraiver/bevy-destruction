@@ -143,7 +143,7 @@ pub(crate) fn update_stress(
     mut commands: Commands,
     mut buildings: Query<(
         Entity,
-        &mut BuildingInstance,
+        Ref<BuildingInstance>,
         Option<&mut StressState>,
         Option<Ref<StructuralLoads>>,
     )>,
@@ -165,7 +165,7 @@ pub(crate) fn update_stress(
     let now = time.elapsed_secs_f64();
     let settings_tick = settings.last_changed().get();
     let empty_loads = BTreeMap::new();
-    for (building, mut instance, mut state, loads) in &mut buildings {
+    for (building, instance, mut state, loads) in &mut buildings {
         if instance.bounds.is_none() || instance.error.is_some() {
             continue;
         }
@@ -459,7 +459,9 @@ pub(crate) fn update_stress(
                     state.broken_total += 1;
                     state.last_broken.push(id);
                 }
-                instance.topology_dirty = true;
+                commands
+                    .entity(building)
+                    .insert(physics::NeedsClusterRebuild);
 
                 // 在刚体簇重建前，从断裂瞬间的位姿生成反馈。
                 if let Some(burst) = build_bond_feedback(

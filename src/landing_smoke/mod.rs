@@ -6,7 +6,7 @@ use crate::{
     asset::DestructibleAsset,
     debug::FractureEdges,
     diagnostics::RunMetrics,
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     projectiles::ImpactStats,
     scene::{
         BondInstance, BuildingInstance, ChunkInstance, ChunkPrimitive, DemoCamera, RemovedChunk,
@@ -67,7 +67,7 @@ fn drive(
     options: Res<DemoOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<LandingState>,
-    mut instances: Query<(Entity, &mut BuildingInstance)>,
+    instances: Query<(Entity, &BuildingInstance)>,
     mut chunks: Query<&mut ChunkInstance>,
     children: Query<&Children>,
     primitive_meshes: Query<(), With<ChunkPrimitive>>,
@@ -90,7 +90,7 @@ fn drive(
         return;
     };
     state.waiting += 1;
-    let Some((building, mut instance)) = instances.iter_mut().next() else {
+    let Some((building, instance)) = instances.iter().next() else {
         return;
     };
     if let Some(error) = &instance.error {
@@ -216,7 +216,7 @@ fn drive(
                     bonds.get_mut(instance.bonds[&bond.id]).unwrap().active = false;
                 }
             }
-            instance.topology_dirty = true;
+            commands.entity(building).insert(NeedsClusterRebuild);
             state.before_impact_broken = impacts.broken_bonds;
         }
         80 => {

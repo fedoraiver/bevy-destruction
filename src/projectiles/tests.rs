@@ -28,10 +28,9 @@ fn bond_states(world: &World, building: Entity) -> BTreeMap<String, bool> {
 }
 
 fn break_bond(world: &mut World, building: Entity, id: &str) {
-    let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
-    instance.topology_dirty = true;
-    let entity = instance.bonds[id];
+    let entity = world.get::<BuildingInstance>(building).unwrap().bonds[id];
     world.get_mut::<BondInstance>(entity).unwrap().active = false;
+    world.entity_mut(building).insert(NeedsClusterRebuild);
 }
 
 fn evaluate_dynamic_impact(
@@ -249,8 +248,10 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
         let building = spawn_beam(app.world_mut(), Vec3::ZERO);
         app.update();
         let projectile = launch(&mut app, shape);
+        let mut rebuild_requested = false;
         for _ in 0..30 {
             app.update();
+            rebuild_requested |= app.world().get::<NeedsClusterRebuild>(building).is_some();
         }
         let stats = app.world().resource::<ImpactStats>();
         assert_eq!(stats.launched, 1);
@@ -261,6 +262,8 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
         assert!(stats.max_impulse > 1000.0);
         assert_eq!(stats.broken_bonds, 2);
         let world = app.world();
+        assert!(rebuild_requested, "Contact should request a later rebuild");
+        assert!(world.get::<NeedsClusterRebuild>(building).is_none());
         let instance = world.get::<BuildingInstance>(building).unwrap();
         let bonds = bond_states(world, building);
         assert!(!bonds[LEFT_BOND]);
@@ -415,7 +418,6 @@ fn spawn_dropped_tower_at_height(
         min: Vec3::new(0.0, 0.0, -8.0),
         max: Vec3::new(14.0, 32.24, 0.0),
     });
-    instance.topology_dirty = true;
     let mut upper = Vec::new();
     for record in &manifest.chunks {
         let local = record.transform();
@@ -467,7 +469,9 @@ fn spawn_dropped_tower_at_height(
             world.get_mut::<BondInstance>(entity).unwrap().active = false;
         }
     }
-    world.entity_mut(root).insert(instance);
+    world
+        .entity_mut(root)
+        .insert((instance, NeedsClusterRebuild));
     (root, upper)
 }
 

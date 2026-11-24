@@ -125,7 +125,6 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
         min: Vec3::new(-0.5, 0.0, -0.5),
         max: Vec3::new(0.5, 4.0, 0.5),
     });
-    instance.topology_dirty = true;
     for record in manifest.chunks {
         let local = record.transform();
         let collider = chunk_collider(&record).unwrap();
@@ -158,7 +157,9 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
     let world = app.world_mut();
     spawn_bonds(&mut world.commands(), root, &mut instance, &manifest.bonds);
     world.flush();
-    world.entity_mut(root).insert(instance);
+    world
+        .entity_mut(root)
+        .insert((instance, NeedsClusterRebuild));
     root
 }
 
@@ -176,9 +177,8 @@ fn add_asset(app: &mut App, manifest: Manifest) -> Handle<DestructibleAsset> {
 }
 
 fn remove(world: &mut World, building: Entity, id: &str) -> Entity {
-    let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
+    let instance = world.get::<BuildingInstance>(building).unwrap();
     let entity = instance.chunks[id];
-    instance.topology_dirty = true;
     let bonds = instance.bonds.values().copied().collect::<Vec<_>>();
     world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
     for bond in bonds {
@@ -187,6 +187,7 @@ fn remove(world: &mut World, building: Entity, id: &str) -> Entity {
             bond.active = false;
         }
     }
+    world.entity_mut(building).insert(NeedsClusterRebuild);
     entity
 }
 
@@ -201,10 +202,9 @@ fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance 
 }
 
 fn break_bond(world: &mut World, building: Entity, id: &str) {
-    let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
-    instance.topology_dirty = true;
-    let entity = instance.bonds[id];
+    let entity = world.get::<BuildingInstance>(building).unwrap().bonds[id];
     world.get_mut::<BondInstance>(entity).unwrap().active = false;
+    world.entity_mut(building).insert(NeedsClusterRebuild);
 }
 
 fn mass(world: &World, body: Entity) -> f32 {
@@ -229,6 +229,55 @@ fn assert_vec(actual: Vec3, expected: Vec3) {
         actual.distance(expected) < 1e-4,
         "{actual:?} != {expected:?}"
     );
+}
+
+#[test]
+fn rebuild_request_retries_until_building_bounds_and_asset_are_available() {
+    let mut app = app();
+    let asset = asset(&mut app);
+    let building = spawn_building(&mut app, asset.clone(), Transform::IDENTITY);
+    let world = app.world_mut();
+    let original_tick = world
+        .entity(building)
+        .get_ref::<BuildingInstance>()
+        .unwrap()
+        .last_changed();
+    world.increment_change_tick();
+    world.entity_mut(building).insert(NeedsClusterRebuild);
+    assert_ne!(
+        world
+            .entity(building)
+            .get_ref::<BuildingInstance>()
+            .unwrap()
+            .last_changed(),
+        original_tick,
+    );
+
+    let bounds = world
+        .get_mut::<BuildingInstance>(building)
+        .unwrap()
+        .bounds
+        .take();
+    rebuild_clusters_for_test(world);
+    assert!(world.get::<NeedsClusterRebuild>(building).is_some());
+    assert!(building_clusters(world, building).next().is_none());
+
+    world.get_mut::<BuildingInstance>(building).unwrap().bounds = bounds;
+    let contents = world
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .remove(asset.id())
+        .unwrap();
+    rebuild_clusters_for_test(world);
+    assert!(world.get::<NeedsClusterRebuild>(building).is_some());
+    assert!(building_clusters(world, building).next().is_none());
+
+    world
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .insert(asset.id(), contents)
+        .unwrap();
+    rebuild_clusters_for_test(world);
+    assert!(world.get::<NeedsClusterRebuild>(building).is_none());
+    assert!(building_clusters(world, building).eq([body(world, building, "a")]));
 }
 
 #[test]
@@ -337,9 +386,8 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     assert!(building_clusters(app.world(), damaged).eq([detached]));
     assert_mass(app.world(), untouched, 14.0);
     app.world_mut()
-        .get_mut::<BuildingInstance>(damaged)
-        .unwrap()
-        .topology_dirty = true;
+        .entity_mut(damaged)
+        .insert(NeedsClusterRebuild);
     rebuild_clusters_for_test(app.world_mut());
     assert_eq!(body(app.world(), damaged, "b"), detached);
     assert!(building_clusters(app.world(), damaged).eq([detached]));
@@ -588,9 +636,8 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
     assert!(!app.world().get::<Cluster>(detached).unwrap().anchored);
     assert_mass(app.world(), detached, 12.0);
     app.world_mut()
-        .get_mut::<BuildingInstance>(building)
-        .unwrap()
-        .topology_dirty = true;
+        .entity_mut(building)
+        .insert(NeedsClusterRebuild);
     rebuild_clusters_for_test(app.world_mut());
     assert_eq!(body(app.world(), building, "b"), detached);
     assert!(!app.world().get::<Cluster>(detached).unwrap().anchored);

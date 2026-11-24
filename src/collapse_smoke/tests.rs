@@ -152,7 +152,6 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         &manifest.bonds,
     );
     app.world_mut().flush();
-    instance.topology_dirty = true;
     let chunk_at = |id: &str| {
         app.world()
             .get::<ChunkInstance>(instance.chunks[id])
@@ -185,7 +184,9 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         .filter(|(id, _)| !selected.removed.contains(*id))
         .map(|(id, _)| f64::from(chunk_at(id).mass_properties.mass))
         .sum::<f64>();
-    app.world_mut().entity_mut(building).insert(instance);
+    app.world_mut()
+        .entity_mut(building)
+        .insert((instance, NeedsClusterRebuild));
     for _ in 0..5 {
         app.update();
     }
@@ -209,10 +210,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                 world.get_mut::<BondInstance>(entity).unwrap().active = false;
             }
         }
-        world
-            .get_mut::<BuildingInstance>(building)
-            .unwrap()
-            .topology_dirty = true;
+        world.entity_mut(building).insert(NeedsClusterRebuild);
     }
     let (mut released_mass, mut drop, mut tilt, mut support_contact) =
         (0.0_f32, 0.0_f32, 0.0_f32, false);

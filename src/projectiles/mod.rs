@@ -17,7 +17,7 @@ use crate::{
         bond_signature,
     },
     interaction::build_bond_feedback,
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     scene::{
         BondInstance, BondPatches, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
         PatchInstance, StructuralPatch,
@@ -238,7 +238,7 @@ fn retire_projectiles(
 
 #[derive(SystemParam)]
 struct ImpactStructure<'w, 's> {
-    buildings: Query<'w, 's, &'static mut BuildingInstance>,
+    buildings: Query<'w, 's, &'static BuildingInstance>,
     chunks: Query<'w, 's, &'static ChunkInstance>,
     bonds: Query<'w, 's, &'static mut BondInstance>,
     bond_patches: Query<'w, 's, &'static BondPatches>,
@@ -262,6 +262,7 @@ impl ImpactStructure<'_, '_> {
 
 #[allow(clippy::too_many_arguments)]
 fn impact_damage(
+    mut commands: Commands,
     graph: Res<ContactGraph>,
     assets: Res<Assets<DestructibleAsset>>,
     time: Res<Time<Fixed>>,
@@ -430,7 +431,7 @@ fn impact_damage(
     let mut structural_broken = 0;
     if let Some(report) = &mut structural
         && let Some((building, bonds)) = report.fracture.take()
-        && let Ok(mut instance) = structure.buildings.get_mut(building)
+        && let Ok(instance) = structure.buildings.get(building)
     {
         for id in bonds {
             if let Some(&entity) = instance.bonds.get(&id)
@@ -443,11 +444,10 @@ fn impact_damage(
                 budget -= 1;
             }
         }
-        if structural_broken > 0 {
-            instance.topology_dirty = true;
-            if let Some(shock) = report.continuation.take() {
-                state.shocks.push_back(shock);
-            }
+        if structural_broken > 0
+            && let Some(shock) = report.continuation.take()
+        {
+            state.shocks.push_back(shock);
         }
     }
     let mut pending = state
@@ -457,7 +457,7 @@ fn impact_damage(
         .collect::<Vec<_>>();
     pending.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     for ((building, id), _) in pending {
-        let Ok(mut instance) = structure.buildings.get_mut(building) else {
+        let Ok(instance) = structure.buildings.get(building) else {
             state.pending.remove(&(building, id));
             continue;
         };
@@ -474,12 +474,12 @@ fn impact_damage(
             break;
         }
         bond.active = false;
-        instance.topology_dirty = true;
         broken.entry(building).or_default().push(id.clone());
         state.pending.remove(&(building, id));
         budget -= 1;
     }
     for (&building, ids) in &broken {
+        commands.entity(building).insert(NeedsClusterRebuild);
         let instance = structure.buildings.get(building).unwrap();
         let asset = assets.get(&instance.asset).unwrap();
         if let Some(burst) = build_bond_feedback(

@@ -26,6 +26,7 @@ use crate::{
     material::{
         BuildingMaterial, SurfaceMeshCache, building_material, rim_material, surface_coordinates,
     },
+    physics::NeedsClusterRebuild,
 };
 
 pub struct DemoScenePlugin;
@@ -98,7 +99,6 @@ pub struct BuildingInstance {
     pub bounds: Option<BuildingBounds>,
     pub error: Option<String>,
     pub patches: Vec<Entity>,
-    pub topology_dirty: bool,
 }
 
 impl BuildingInstance {
@@ -110,7 +110,6 @@ impl BuildingInstance {
             bounds: None,
             error: None,
             patches: Vec::new(),
-            topology_dirty: false,
         }
     }
 
@@ -756,7 +755,6 @@ pub(crate) fn instantiate_pending(
         spawn_bonds(&mut commands, root, &mut ready, &asset.manifest.bonds);
         spawn_patches(&mut commands, root, &mut ready, patches);
         ready.bounds = Some(bounds);
-        ready.topology_dirty = true;
         stats.patches = ready.patches.len();
         info!(
             "Instantiated {}: {} chunks, {} primitives, {} bonds",
@@ -766,7 +764,7 @@ pub(crate) fn instantiate_pending(
             ready.bonds.len()
         );
         // Publish the indexes only after the entities they name have been spawned.
-        commands.entity(root).insert(ready);
+        commands.entity(root).insert((ready, NeedsClusterRebuild));
     }
 }
 

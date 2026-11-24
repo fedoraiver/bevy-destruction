@@ -7,6 +7,7 @@ use crate::{
     camera::CameraControl,
     debug::FractureEdges,
     fracture_detail::ContactPatch,
+    physics::NeedsClusterRebuild,
     scene::{
         BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, ChunkPrimitive, DemoCamera,
         PatchInstance, PatchOfBond, RefreshDamageDetails, RemovedChunk, chunk_primitives,
@@ -159,7 +160,7 @@ pub(crate) fn apply_damage(
     spatial: SpatialQuery,
     identities: Query<&ChunkIdentity>,
     poses: Query<(&Position, &Rotation)>,
-    mut instances: Query<&mut BuildingInstance>,
+    instances: Query<&BuildingInstance>,
     mut chunks: Query<&mut ChunkInstance>,
     children: Query<&Children>,
     primitive_meshes: Query<(), With<ChunkPrimitive>>,
@@ -184,7 +185,7 @@ pub(crate) fn apply_damage(
         let Ok(identity) = identities.get(hit.entity) else {
             continue;
         };
-        let Ok(mut instance) = instances.get_mut(identity.building) else {
+        let Ok(instance) = instances.get(identity.building) else {
             continue;
         };
         let Some(asset) = assets.get(&instance.asset) else {
@@ -307,10 +308,9 @@ pub(crate) fn apply_damage(
                 bond.active = false;
             }
         }
-        instance.topology_dirty = true;
         commands
             .entity(identity.building)
-            .insert(RefreshDamageDetails);
+            .insert((NeedsClusterRebuild, RefreshDamageDetails));
         bursts.write(BreakBurst {
             point,
             normal,

@@ -8,7 +8,7 @@ use crate::{
     asset::{DestructibleAsset, Manifest},
     debug::FractureEdges,
     diagnostics::RunMetrics,
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     scene::{
         BondInstance, BuildingInstance, ChunkInstance, ChunkPrimitive, DemoCamera, RemovedChunk,
         chunk_primitives,
@@ -369,11 +369,12 @@ fn drive(
     options: Res<DemoOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<CollapseState>,
-    mut instances: Query<(
+    instances: Query<(
         Entity,
-        &mut BuildingInstance,
+        &BuildingInstance,
         &GlobalTransform,
         Option<&StressState>,
+        Has<NeedsClusterRebuild>,
     )>,
     mut chunks: Query<&mut ChunkInstance>,
     children: Query<&Children>,
@@ -422,7 +423,8 @@ fn drive(
         finish(&mut state, &options, &metrics, &mut exit);
         return;
     }
-    let Some((building, mut instance, root_global, stress)) = instances.iter_mut().next() else {
+    let Some((building, instance, root_global, stress, rebuild_pending)) = instances.iter().next()
+    else {
         return;
     };
     if let Some(error) = &instance.error {
@@ -474,7 +476,7 @@ fn drive(
             })
         })
         .collect();
-    if state.frame > 20 && !instance.topology_dirty {
+    if state.frame > 20 && !rebuild_pending {
         state.strength_breaks = stress.broken_total.saturating_sub(state.before_broken);
         let mut total_mass = 0.0_f64;
         for (cluster, kind, position, rotation, linear, angular, mass, _, body) in owned_bodies {
@@ -640,7 +642,7 @@ fn drive(
                     bonds.get_mut(instance.bonds[&bond.id]).unwrap().active = false;
                 }
             }
-            instance.topology_dirty = true;
+            commands.entity(building).insert(NeedsClusterRebuild);
             let damage = serde_json::json!({
                 "asset":options.asset,"frame_after_warmup":state.frame,
                 "predicate":"foundation-adjacent interior start, minimum-mass multi-piece support path to the next floor",

@@ -22,7 +22,7 @@ use crate::{
     material::{
         BuildingMaterial, HEAT_AMBER_TAG, HEAT_RED_TAG, building_material, surface_coordinates,
     },
-    physics::Cluster,
+    physics::{Cluster, NeedsClusterRebuild},
     projectiles::{ImpactStats, LaunchRequest, LaunchRequests, ProjectileShape},
     scene::{
         BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance,
@@ -896,10 +896,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
             if let Some((building, id)) = &state.broken {
                 let bond = world.get::<BuildingInstance>(*building).unwrap().bonds[id];
                 world.get_mut::<BondInstance>(bond).unwrap().active = false;
-                world
-                    .get_mut::<BuildingInstance>(*building)
-                    .unwrap()
-                    .topology_dirty = true;
+                world.entity_mut(*building).insert(NeedsClusterRebuild);
             } else {
                 state
                     .errors
