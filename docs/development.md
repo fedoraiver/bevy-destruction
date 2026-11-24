@@ -7,6 +7,7 @@
 - 用 `Entity` 标识运行时实体，以组件组合表达状态和能力。无数据的角色可以用标记组件表示，例如 `RemovedChunk`。项目代码创建的运行时实体及子实体在创建时提供可辨认的 `Name`，系统通过组件、关系和查询过滤条件选择实体。[场景与碎块组件](../src/scene/mod.rs)
 - 按数据职责、访问方式和生命周期组织组件。组件可提供构造、校验和本地计算方法。由系统读取其他实体、执行交互和写回结果。同一业务状态保留明确的数据来源，区分建筑初始位姿、Avian 当前物理位姿和用于显示的变换。[建筑实例](../src/scene/mod.rs) · [刚体簇重建](../src/physics/mod.rs)
 - 运行时状态优先使用 Bevy 原生类型，按归属和生命周期选择。每个实体独立的状态用 `Component`，同一 `World` 中供多个系统共享的唯一状态用 `Resource`，单个系统私有的跨次运行状态用 `Local<T>`。由资产系统管理并按句柄共享的资产用 `Asset`。资产记录、求解快照、数值中间量等可以使用普通 Rust 类型。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力样本资源](../src/force_samples/mod.rs) · [受力显示缓存](../src/force_debug/mod.rs) · [破坏资产](../src/asset/mod.rs)
+- 优先复用工作区锁定版本中 Bevy 和 Avian 提供的组件、关系、查询、系统参数和几何类型。核对 API 的输入语义、执行阶段和结果可见时点。例如，传播前用 `TransformHelper` 读取当前层级位姿，通过 `ChildOf` 换属后由 Avian 更新 `ColliderOf`。[撞击物发射](../src/projectiles/mod.rs) · [刚体簇重建](../src/physics/mod.rs) · [拾取包围盒](../src/force_visibility/mod.rs)
 - 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。结构所有权用专用 `Relationship` 表达，建筑与连接使用 `BondOfBuilding`，连接与面片使用 `PatchOfBond`。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
 
 ## 调度、通信与命令
