@@ -133,7 +133,7 @@ fn fire(
     options: Res<DemoOptions>,
     control: Res<CameraControl>,
     windows: Query<&Window>,
-    cameras: Query<&GlobalTransform, With<DemoCamera>>,
+    camera: (Query<Entity, With<DemoCamera>>, TransformHelper),
     mut requests: ResMut<LaunchRequests>,
 ) {
     if options.scripted()
@@ -150,7 +150,10 @@ fn fire(
     } else {
         return;
     };
-    if let Ok(camera) = cameras.single() {
+    let (cameras, transforms) = camera;
+    if let Ok(entity) = cameras.single()
+        && let Ok(camera) = transforms.compute_global_transform(entity)
+    {
         requests.queue.push_back(LaunchRequest {
             origin: camera.translation() + camera.forward() * 1.5,
             direction: camera.forward(),

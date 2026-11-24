@@ -104,6 +104,69 @@ fn computed_mass(world: &World, entity: Entity) -> f32 {
 }
 
 #[test]
+fn firing_uses_the_camera_pose_written_in_the_same_update() {
+    let parent = Transform::from_xyz(10.0, 2.0, -3.0)
+        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+    let camera = Transform::from_xyz(2.0, 3.0, 4.0)
+        .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_4));
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TransformPlugin))
+        .init_resource::<ButtonInput<MouseButton>>()
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<CameraControl>()
+        .init_resource::<DemoOptions>()
+        .init_resource::<LaunchRequests>()
+        .add_systems(
+            Update,
+            (
+                move |buttons: Res<ButtonInput<MouseButton>>,
+                      mut transform: Single<&mut Transform, With<DemoCamera>>| {
+                    if buttons.just_pressed(MouseButton::Right) {
+                        **transform = camera;
+                    }
+                },
+                fire,
+            )
+                .chain(),
+        );
+    let world = app.world_mut();
+    world.spawn((
+        Name::new("Projectile launch input window"),
+        Window {
+            focused: true,
+            ..default()
+        },
+    ));
+    let parent_entity = world.spawn((Name::new("Camera parent"), parent)).id();
+    let camera_entity = world
+        .spawn((
+            Name::new("Projectile launch camera"),
+            Transform::IDENTITY,
+            ChildOf(parent_entity),
+            DemoCamera,
+        ))
+        .id();
+    app.update();
+    let old_pose = *app.world().get::<GlobalTransform>(camera_entity).unwrap();
+
+    app.world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .press(MouseButton::Right);
+    app.world_mut().run_schedule(Update);
+
+    let world = app.world();
+    assert_eq!(world.get::<GlobalTransform>(camera_entity), Some(&old_pose));
+    let requests = &world.resource::<LaunchRequests>().queue;
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    let direction = parent.rotation * (camera.rotation * Vec3::NEG_Z);
+    let origin = parent.transform_point(camera.translation) + direction * 1.5;
+    assert!(request.origin.abs_diff_eq(origin, 1e-5));
+    assert!((*request.direction).abs_diff_eq(direction, 1e-5));
+    assert!(matches!(request.shape, ProjectileShape::Sphere));
+}
+
+#[test]
 fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
     for shape in [ProjectileShape::Sphere, ProjectileShape::Cube] {
         let mut app = app();
