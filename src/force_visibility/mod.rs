@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use avian3d::prelude::{Collider, ColliderAabb, SimpleCollider};
+use avian3d::prelude::{Collider, ColliderAabb, SimpleCollider, TrimeshFlags};
 use bevy::{math::Affine3A, prelude::*};
 
 use crate::asset::DestructibleAsset;
@@ -170,7 +170,6 @@ fn source_bounds(triangles: &[[Vec3; 3]]) -> Option<ColliderAabb> {
 fn source_collider(triangles: &[[Vec3; 3]]) -> Option<Collider> {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    let mut unique = BTreeMap::new();
     for triangle in triangles {
         if (triangle[1] - triangle[0])
             .cross(triangle[2] - triangle[0])
@@ -179,22 +178,15 @@ fn source_collider(triangles: &[[Vec3; 3]]) -> Option<Collider> {
         {
             continue;
         }
-        indices.push(triangle.map(|point| {
-            let key = point.to_array().map(|coordinate| {
-                if coordinate == 0.0 {
-                    0
-                } else {
-                    coordinate.to_bits()
-                }
-            });
-            *unique.entry(key).or_insert_with(|| {
-                let index = vertices.len() as u32;
-                vertices.push(point);
-                index
-            })
-        }));
+        let first = u32::try_from(vertices.len()).ok()?;
+        let last = first.checked_add(2)?;
+        indices.push([first, first + 1, last]);
+        // Avian's vertex weld hashes coordinate bits, so give signed zero one representation.
+        vertices
+            .extend(triangle.map(|point| Vec3::select(point.cmpeq(Vec3::ZERO), Vec3::ZERO, point)));
     }
-    Collider::try_trimesh(vertices, indices).ok()
+    Collider::try_trimesh_with_config(vertices, indices, TrimeshFlags::MERGE_DUPLICATE_VERTICES)
+        .ok()
 }
 
 fn hit_epsilon(distance: f32) -> f32 {

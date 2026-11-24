@@ -6,6 +6,8 @@
 
 2026-11-24 详查拾取改用 Avian 的 `ColliderAabb`。
 
+2026-11-24 将拾取网格的精确顶点合并交给 Avian。
+
 ## 背景
 
 视图需要呈现自重、撞击和断键之间的关系。全场线框即使限制在可见碎块内，连接、质心和箭头仍会在复杂结构中相互叠加。开关采样时应得到相同的物理求解和断裂结果。
@@ -38,11 +40,14 @@
 
 源网格和遮挡 Collider 共用 `ColliderAabb`。源网格从 `ColliderAabb::INVALID` 逐点收紧到实际边界，遮挡物直接使用 Avian 返回的包围盒。局部射线仍按原有近平行容差裁剪，以维持沿边界观察时的选取行为。
 
+拾取 BVH 按需构建，由 Avian 的 `MERGE_DUPLICATE_VERTICES` 合并坐标完全相同的顶点。构建时按面展开临时顶点和索引，缓存保留合并后的 Collider。构建前将带符号的零归一化，并保留面积为零的过滤。共线顶点可能各不相同，仍需通过面积判断排除。
+
 ## 验证
 
 - 固定回归覆盖阈值、排序、箭头符号、缓存和样本失效、实例隔离、选择遮挡，以及切换采样前后的断裂选择、承载率和数值约束反力一致性。`--force-smoke-test` 以真实几何像素为读回条件，并记录资产 ID、格式、块数及代理数。
 - `d462e4d` 的正式矩形通过 11 阶段实际图形检查，覆盖自重、真实碰撞冲量、双实例、遮挡、窗洞、单箭头、到期与恢复。材质运动和断面着色回归同时通过。高楼落地破坏偏轻仍由 ADR 0003 跟踪。
 - `ColliderAabb` 迁移通过受力拾取回归及矩形场景 `force` 无窗验收。
+- 顶点合并迁移通过共享顶点、退化三角形过滤及窗洞拾取回归，矩形场景 `force` 无窗验收通过。
 
 ### 窗洞拾取验收
 
@@ -58,4 +63,5 @@
 
 - [受力样本](../../../src/force_samples/mod.rs)、[视图与标记](../../../src/force_debug/mod.rs)、[图形验证](../../../src/force_smoke/mod.rs)和用户确认的交互。
 - [受力拾取](../../../src/force_visibility/mod.rs) · [Avian 包围盒](https://docs.rs/avian3d/latest/avian3d/collision/collider/struct.ColliderAabb.html)
+- [Avian 三角网格预处理标志](https://docs.rs/avian3d/latest/avian3d/collision/collider/struct.TrimeshFlags.html#associatedconstant.MERGE_DUPLICATE_VERTICES)
 - 初版数据采样、可见线框和现行热力详查分别对应提交 `8c45741`、`48e58f1`、`d462e4d`。

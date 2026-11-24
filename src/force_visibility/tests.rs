@@ -23,6 +23,23 @@ fn ray(origin: Vec3, target: Vec3) -> Ray3d {
 }
 
 #[test]
+fn source_bvh_welds_signed_zero_and_omits_collinear_triangles() {
+    let triangles = [
+        [Vec3::ZERO, Vec3::X, Vec3::Y],
+        [Vec3::new(-0.0, 0.0, 0.0), Vec3::Y, Vec3::NEG_X],
+        [Vec3::Y * 2.0, Vec3::Y * 3.0, Vec3::Y * 4.0],
+    ];
+    let collider = source_collider(&triangles).unwrap();
+    let mesh = collider.shape().as_trimesh().unwrap();
+    assert_eq!(
+        mesh.vertices(),
+        &[Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::NEG_X]
+    );
+    assert_eq!(mesh.indices(), &[[0, 1, 2], [0, 2, 3]]);
+    assert!(source_collider(&triangles[2..]).is_none());
+}
+
+#[test]
 fn nearest_source_surface_wins_independently_of_chunk_or_building_order() {
     let mut world = World::new();
     let a = world.spawn_empty().id();
