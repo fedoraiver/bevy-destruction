@@ -94,7 +94,6 @@ pub struct VfxStats {
     pub max_emit_cpu_ms: f32,
     pub estimated_coverage: f32,
     pub peak_estimated_coverage: f32,
-    collision_cursor: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -700,6 +699,7 @@ fn animate_particles(
     mut assets: ResMut<VfxAssets>,
     mut dust_buffers: ResMut<Assets<ShaderBuffer>>,
     mut stats: ResMut<VfxStats>,
+    mut collision_cursor: Local<usize>,
     spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
     chunks: Query<&ChunkInstance, Without<RemovedChunk>>,
@@ -732,9 +732,9 @@ fn animate_particles(
         .collect::<Vec<_>>();
     collision_candidates.sort_by_key(|entity| entity.to_bits());
     if !collision_candidates.is_empty() {
-        let start = stats.collision_cursor % collision_candidates.len();
+        let start = *collision_cursor % collision_candidates.len();
         collision_candidates.rotate_left(start);
-        stats.collision_cursor = start + MAX_COLLISION_QUERIES;
+        *collision_cursor = start + MAX_COLLISION_QUERIES;
         collision_candidates.truncate(MAX_COLLISION_QUERIES);
     }
     let live_collider = |entity| chunks.get(entity).is_ok_and(|chunk| chunk.alive);
