@@ -702,7 +702,7 @@ fn animate_particles(
     mut stats: ResMut<VfxStats>,
     spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
-    chunks: Query<(&ChunkInstance, Has<RemovedChunk>)>,
+    chunks: Query<&ChunkInstance, Without<RemovedChunk>>,
     colliders: Query<&ColliderOf>,
     bodies: Query<&RigidBody>,
     mut particles: Query<
@@ -737,11 +737,7 @@ fn animate_particles(
         stats.collision_cursor = start + MAX_COLLISION_QUERIES;
         collision_candidates.truncate(MAX_COLLISION_QUERIES);
     }
-    let live_collider = |entity| {
-        chunks
-            .get(entity)
-            .is_ok_and(|(chunk, removed)| chunk.alive && !removed)
-    };
+    let live_collider = |entity| chunks.get(entity).is_ok_and(|chunk| chunk.alive);
     let static_collider = |entity| {
         colliders
             .get(entity)
