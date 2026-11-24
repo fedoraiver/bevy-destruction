@@ -1,4 +1,5 @@
 use super::*;
+use crate::scene::{BuildingInstance, ChunkIdentity};
 use avian3d::collider_tree::ColliderTrees;
 
 fn app() -> App {
@@ -272,12 +273,16 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
     app.cleanup();
     let building = app
         .world_mut()
-        .spawn(BuildingInstance::pending(Handle::default()))
+        .spawn((
+            Name::new("Debris support building"),
+            BuildingInstance::pending(Handle::default()),
+        ))
         .id();
     let floor_transform = Transform::from_xyz(0.0, 0.5, 0.0);
     let floor = app
         .world_mut()
         .spawn((
+            Name::new("Debris support floor"),
             RigidBody::Static,
             Collider::cuboid(3.0, 0.2, 3.0),
             floor_transform,
@@ -285,16 +290,7 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
                 building,
                 id: "floor".into(),
             },
-        ))
-        .id();
-    app.world_mut()
-        .get_mut::<BuildingInstance>(building)
-        .unwrap()
-        .chunks
-        .insert(
-            "floor".into(),
-            crate::scene::ChunkInstance {
-                entity: floor,
+            ChunkInstance {
                 primitives: Vec::new(),
                 alive: true,
                 triangles: Vec::new(),
@@ -304,7 +300,13 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
                 detail: None,
                 cluster: None,
             },
-        );
+        ))
+        .id();
+    app.world_mut()
+        .get_mut::<BuildingInstance>(building)
+        .unwrap()
+        .chunks
+        .insert("floor".into(), floor);
     let mut seed = 71;
     let (mut particle, mut transform) = spawn_particle(&burst(1), Layer::Debris, &mut seed);
     particle.age = 0.0;
@@ -327,10 +329,7 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
     assert!(!app.world().get::<Particle>(entity).unwrap().settled);
     let collisions = app.world().resource::<VfxStats>().collisions;
     app.world_mut()
-        .get_mut::<BuildingInstance>(building)
-        .unwrap()
-        .chunks
-        .get_mut("floor")
+        .get_mut::<ChunkInstance>(floor)
         .unwrap()
         .alive = false;
     app.world_mut().entity_mut(floor).insert(RemovedChunk);

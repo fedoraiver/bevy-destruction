@@ -24,7 +24,10 @@ use crate::{
     },
     physics::Cluster,
     projectiles::{ImpactStats, LaunchRequest, LaunchRequests, ProjectileShape},
-    scene::{BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera},
+    scene::{
+        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
+        spawn_bonds,
+    },
     stress::BondStress,
     stress_runtime::StressState,
 };
@@ -422,20 +425,17 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             source_id: material,
             building: source_surface,
         });
-        instance.chunks.insert(
-            shape.id,
-            ChunkInstance {
-                entity,
-                primitives: vec![primitive],
-                alive: true,
-                triangles,
-                transform: record.transform(),
-                mass_properties,
-                material: "concrete".into(),
-                detail: None,
-                cluster: Some(body),
-            },
-        );
+        world.entity_mut(entity).insert(ChunkInstance {
+            primitives: vec![primitive],
+            alive: true,
+            triangles,
+            transform: record.transform(),
+            mass_properties,
+            material: "concrete".into(),
+            detail: None,
+            cluster: Some(body),
+        });
+        instance.chunks.insert(shape.id, entity);
         manifest.chunks.push(record);
     }
     let mut force_bonds = BTreeMap::new();
@@ -461,7 +461,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 [x, -0.05, 0.05],
             ],
         }];
-        instance.bonds.insert(bond.id.clone(), true);
         // These deterministic diagnostic forces test visibility only. The first
         // five phases still require the authored selfweight and a real contact J.
         let utilization = [0.499, 1.4, 0.5, 1.0, 1.2][index];
@@ -480,16 +479,8 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         );
         manifest.bonds.push(bond);
     }
-    let asset = world
-        .resource_mut::<Assets<DestructibleAsset>>()
-        .add(DestructibleAsset {
-            manifest,
-            gltf: Handle::default(),
-        });
-    instance.asset = asset;
     instance.clusters = vec![body];
     let chunks = instance.chunks.keys().cloned().collect::<Vec<_>>();
-    let signature = bond_signature(&instance.bonds);
     world.entity_mut(body).insert(Cluster {
         chunks: chunks.clone(),
         anchored: false,
@@ -520,11 +511,22 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             NoAutoCenterOfMass,
         ))
         .id();
-    let mut second = BuildingInstance::pending(instance.asset.clone());
+    let mut second = BuildingInstance::pending(Handle::default());
     second.bounds = instance.bounds;
-    second.bonds = instance.bonds.clone();
     second.clusters = vec![twin_body];
-    for (id, chunk) in &instance.chunks {
+    for (id, &original_entity) in &instance.chunks {
+        let chunk = world.get::<ChunkInstance>(original_entity).unwrap();
+        let original = chunk.primitives[0];
+        let chunk = ChunkInstance {
+            primitives: Vec::new(),
+            alive: true,
+            triangles: chunk.triangles.clone(),
+            transform: chunk.transform,
+            mass_properties: chunk.mass_properties,
+            material: chunk.material.clone(),
+            detail: None,
+            cluster: Some(twin_body),
+        };
         let entity = world
             .spawn((
                 Name::new(format!("Neutral twin {id}")),
@@ -535,9 +537,9 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                     building: twin,
                     id: id.clone(),
                 },
+                chunk,
             ))
             .id();
-        let original = chunk.primitives[0];
         let mesh = world.get::<Mesh3d>(original).unwrap().0.clone();
         let original_material = primitives
             .iter()
@@ -561,25 +563,35 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             source_id: source,
             building: source_surface,
         });
-        second.chunks.insert(
-            id.clone(),
-            ChunkInstance {
-                entity,
-                primitives: vec![primitive],
-                alive: true,
-                triangles: chunk.triangles.clone(),
-                transform: chunk.transform,
-                mass_properties: chunk.mass_properties,
-                material: chunk.material.clone(),
-                detail: None,
-                cluster: Some(twin_body),
-            },
-        );
+        world
+            .get_mut::<ChunkInstance>(entity)
+            .unwrap()
+            .primitives
+            .push(primitive);
+        second.chunks.insert(id.clone(), entity);
     }
     world.entity_mut(twin_body).insert(Cluster {
         chunks: chunks.clone(),
         anchored: false,
     });
+    let mut commands = world.commands();
+    spawn_bonds(&mut commands, building, &mut instance, &manifest.bonds);
+    spawn_bonds(&mut commands, twin, &mut second, &manifest.bonds);
+    world.flush();
+    let signature = bond_signature(instance.bonds.iter().map(|(id, &entity)| {
+        (
+            id.as_str(),
+            world.get::<BondInstance>(entity).unwrap().active,
+        )
+    }));
+    let asset = world
+        .resource_mut::<Assets<DestructibleAsset>>()
+        .add(DestructibleAsset {
+            manifest,
+            gltf: Handle::default(),
+        });
+    instance.asset = asset.clone();
+    second.asset = asset;
     world.entity_mut(twin).insert(second);
     world.entity_mut(building).insert(instance);
     VisibilityFixture {
@@ -666,7 +678,9 @@ fn aim_at_real_impulse_chunk(world: &mut World) {
         .find(|(building, id)| {
             world
                 .get::<BuildingInstance>(*building)
-                .is_some_and(|instance| instance.chunks.get(id).is_some_and(|chunk| chunk.alive))
+                .and_then(|instance| instance.chunks.get(id))
+                .and_then(|&entity| world.get::<ChunkInstance>(entity))
+                .is_some_and(|chunk| chunk.alive)
         })
     else {
         return;
@@ -677,7 +691,7 @@ fn aim_at_real_impulse_chunk(world: &mut World) {
         .unwrap();
     let eye = world.get::<GlobalTransform>(camera).unwrap().translation();
     let instance = world.get::<BuildingInstance>(building).unwrap();
-    let chunk = &instance.chunks[&id];
+    let chunk = world.get::<ChunkInstance>(instance.chunks[&id]).unwrap();
     let Some(pose) = chunk
         .cluster
         .and_then(|body| world.get::<GlobalTransform>(body))
@@ -809,12 +823,15 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                 .manifest
                 .chunks
                 .iter()
-                .filter(|record| instance.chunks[&record.id].alive)
                 .filter(|record| {
-                    instance.chunks[&record.id]
-                        .cluster
-                        .and_then(|body| world.get::<RigidBody>(body))
-                        .is_some_and(|body| *body == RigidBody::Static)
+                    let chunk = world
+                        .get::<ChunkInstance>(instance.chunks[&record.id])
+                        .unwrap();
+                    chunk.alive
+                        && chunk
+                            .cluster
+                            .and_then(|body| world.get::<RigidBody>(body))
+                            .is_some_and(|body| *body == RigidBody::Static)
                 })
                 .filter(|record| {
                     let y = record
@@ -833,7 +850,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                             .sum::<Vec3>()
                             / proxy.vertices.len() as f32;
                         world
-                            .get::<GlobalTransform>(instance.chunks[&record.id].entity)
+                            .get::<GlobalTransform>(instance.chunks[&record.id])
                             .map(|global| global.transform_point(center))
                     })
                 })
@@ -872,9 +889,12 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                 .first()
                 .cloned();
             if let Some((building, id)) = &state.broken {
-                let mut instance = world.get_mut::<BuildingInstance>(*building).unwrap();
-                instance.bonds.insert(id.clone(), false);
-                instance.topology_dirty = true;
+                let bond = world.get::<BuildingInstance>(*building).unwrap().bonds[id];
+                world.get_mut::<BondInstance>(bond).unwrap().active = false;
+                world
+                    .get_mut::<BuildingInstance>(*building)
+                    .unwrap()
+                    .topology_dirty = true;
             } else {
                 state
                     .errors

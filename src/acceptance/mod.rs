@@ -11,7 +11,7 @@ use crate::{
     camera::FreeCamera,
     diagnostics,
     projectiles::{ImpactStats, RigidProjectile},
-    scene::BuildingInstance,
+    scene::{BondInstance, BuildingInstance, ChunkInstance},
 };
 
 const SCENARIO_ENV: &str = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO";
@@ -167,11 +167,13 @@ struct GameplayState {
 fn observe_gameplay(
     options: Res<DemoOptions>,
     buildings: Query<(Entity, &BuildingInstance)>,
+    graph: (Query<&ChunkInstance>, Query<&BondInstance>),
     cameras: Query<(Entity, &GlobalTransform, &FreeCamera), With<DemoCamera>>,
     projectiles: Query<&Collider, With<RigidProjectile>>,
     impacts: Res<ImpactStats>,
     mut state: ResMut<GameplayState>,
 ) {
+    let (chunks, bonds) = graph;
     state.frame += 1;
     state.asset.clone_from(&options.asset);
     let building = buildings.single().ok();
@@ -184,11 +186,16 @@ fn observe_gameplay(
         instance
             .chunks
             .values()
+            .filter_map(|&entity| chunks.get(entity).ok())
             .filter(|chunk| !chunk.alive)
             .count()
     });
     state.live_bonds = building.map_or(0, |(_, instance)| {
-        instance.bonds.values().filter(|&&alive| alive).count()
+        instance
+            .bonds
+            .values()
+            .filter(|&&entity| bonds.get(entity).is_ok_and(|bond| bond.active))
+            .count()
     });
 
     if let Ok((entity, transform, camera)) = cameras.single() {

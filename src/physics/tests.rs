@@ -1,7 +1,10 @@
 use super::*;
 use crate::{
     asset::{AnchorRecord, BondRecord, ColliderRecord, Manifest},
-    scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider, chunk_mass_properties},
+    scene::{
+        BuildingBounds, ChunkIdentity, chunk_collider, chunk_mass_properties, spawn_bonds,
+        spawn_patches,
+    },
 };
 use bevy::time::TimeUpdateStrategy;
 
@@ -123,11 +126,6 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
         max: Vec3::new(0.5, 4.0, 0.5),
     });
     instance.topology_dirty = true;
-    instance.bonds = manifest
-        .bonds
-        .iter()
-        .map(|bond| (bond.id.clone(), true))
-        .collect();
     for record in manifest.chunks {
         let local = record.transform();
         let collider = chunk_collider(&record).unwrap();
@@ -146,24 +144,24 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                     building: root,
                     id: record.id.clone(),
                 },
+                ChunkInstance {
+                    primitives: Vec::new(),
+                    alive: true,
+                    triangles: Vec::new(),
+                    transform: local,
+                    mass_properties,
+                    material: record.material,
+                    detail: None,
+                    cluster: None,
+                },
             ))
             .id();
-        instance.chunks.insert(
-            record.id,
-            ChunkInstance {
-                entity,
-                primitives: Vec::new(),
-                alive: true,
-                triangles: Vec::new(),
-                transform: local,
-                mass_properties,
-                material: record.material,
-                detail: None,
-                cluster: None,
-            },
-        );
+        instance.chunks.insert(record.id, entity);
     }
-    app.world_mut().entity_mut(root).insert(instance);
+    let world = app.world_mut();
+    spawn_bonds(&mut world.commands(), root, &mut instance, &manifest.bonds);
+    world.flush();
+    world.entity_mut(root).insert(instance);
     root
 }
 
@@ -182,21 +180,33 @@ fn add_asset(app: &mut App, manifest: Manifest) -> Handle<DestructibleAsset> {
 
 fn remove(world: &mut World, building: Entity, id: &str) -> Entity {
     let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
-    let entity = instance.chunks[id].entity;
-    instance.chunks.get_mut(id).unwrap().alive = false;
+    let entity = instance.chunks[id];
     instance.topology_dirty = true;
-    for (bond_id, active) in &mut instance.bonds {
-        if bond_id.contains(id) {
-            *active = false;
+    let bonds = instance.bonds.values().copied().collect::<Vec<_>>();
+    world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
+    for bond in bonds {
+        let mut bond = world.get_mut::<BondInstance>(bond).unwrap();
+        if bond.endpoints.contains(&entity) {
+            bond.active = false;
         }
     }
     entity
 }
 
 fn body(world: &World, building: Entity, id: &str) -> Entity {
-    world.get::<BuildingInstance>(building).unwrap().chunks[id]
-        .cluster
-        .unwrap()
+    chunk(world, building, id).cluster.unwrap()
+}
+
+fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance {
+    let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
+    world.get::<ChunkInstance>(entity).unwrap()
+}
+
+fn break_bond(world: &mut World, building: Entity, id: &str) {
+    let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
+    instance.topology_dirty = true;
+    let entity = instance.bonds[id];
+    world.get_mut::<BondInstance>(entity).unwrap().active = false;
 }
 
 fn mass(world: &World, body: Entity) -> f32 {
@@ -241,8 +251,8 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     assert_mass(app.world(), old, 14.0);
     assert_eq!(app.world().get::<RigidBodyColliders>(old).unwrap().len(), 4);
     let removed = remove(app.world_mut(), damaged, "a");
-    let surviving_ids = ["b", "c", "d"]
-        .map(|id| app.world().get::<BuildingInstance>(damaged).unwrap().chunks[id].entity);
+    let surviving_ids =
+        ["b", "c", "d"].map(|id| app.world().get::<BuildingInstance>(damaged).unwrap().chunks[id]);
     rebuild_clusters(app.world_mut());
     let detached = body(app.world(), damaged, "b");
     assert_ne!(old, detached);
@@ -365,8 +375,7 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
             .world()
             .get::<BuildingInstance>(building)
             .unwrap()
-            .chunks[id]
-            .entity;
+            .chunks[id];
         assert_vec(
             app.world()
                 .get::<GlobalTransform>(entity)
@@ -464,14 +473,7 @@ fn rotated_density_compounds_preserve_momentum_on_first_step_after_split() {
         LinearVelocity(linear),
         AngularVelocity(angular),
     ));
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        instance.bonds.insert("bc".into(), false);
-        instance.topology_dirty = true;
-    }
+    break_bond(app.world_mut(), building, "bc");
     rebuild_clusters(app.world_mut());
 
     let world = app.world();
@@ -481,7 +483,7 @@ fn rotated_density_compounds_preserve_momentum_on_first_step_after_split() {
     let mut angular_momentum = Vec3::ZERO;
     for id in ["b", "c"] {
         let child = body(world, building, id);
-        let member = &world.get::<BuildingInstance>(building).unwrap().chunks[id];
+        let member = chunk(world, building, id);
         let child_center = world.get::<ComputedCenterOfMass>(child).unwrap().0;
         let child_mass = mass(world, child);
         let center = position + rotation * child_center;
@@ -549,14 +551,7 @@ fn detached_cluster_falls_contacts_ground_and_sleeps_without_becoming_anchored()
     assert_eq!(body(app.world(), building, "b"), detached);
     assert!(!app.world().get::<Cluster>(detached).unwrap().anchored);
 
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        instance.bonds.insert("bc".into(), false);
-        instance.topology_dirty = true;
-    }
+    break_bond(app.world_mut(), building, "bc");
     rebuild_clusters(app.world_mut());
     let lower = body(app.world(), building, "b");
     let upper = body(app.world(), building, "c");
@@ -605,9 +600,10 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         Vec3::new(0.5, 3.0, 0.5),
     ];
     {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
+        let world = app.world_mut();
+        let mut instance = world
+            .entity_mut(building)
+            .take::<BuildingInstance>()
             .unwrap();
         for (index, id) in ["b", "c", "d"].into_iter().enumerate() {
             let bottom = index as f32 + 1.0;
@@ -617,9 +613,12 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
                 Vec3::new(0.5, bottom + 1.0, 0.5),
                 Vec3::new(-0.5, bottom + 1.0, 0.5),
             ];
-            instance.chunks.get_mut(id).unwrap().triangles = vec![[a, b, c], [a, c, d]];
+            world
+                .get_mut::<ChunkInstance>(instance.chunks[id])
+                .unwrap()
+                .triangles = vec![[a, b, c], [a, c, d]];
         }
-        instance.patches = std::sync::Arc::new(vec![ContactPatch {
+        let patches = std::sync::Arc::new(vec![ContactPatch {
             id: "cd patch".into(),
             bond_id: "cd".into(),
             a: "c".into(),
@@ -629,6 +628,9 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
             area: 0.5,
             rims: Vec::new(),
         }]);
+        spawn_patches(&mut world.commands(), building, &mut instance, patches);
+        world.flush();
+        world.entity_mut(building).insert(instance);
     }
     app.update();
     let local_hit = Vec3::new(0.0, 1.95, 0.5);
@@ -643,13 +645,15 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         ));
     let mut cursor = bevy::ecs::message::MessageCursor::<BreakBurst>::default();
     app.update();
-    let instance = app.world().get::<BuildingInstance>(building).unwrap();
-    assert!(!instance.chunks["b"].alive, "Moved collider was not picked");
     assert!(
-        !instance.chunks["c"].alive,
+        !chunk(app.world(), building, "b").alive,
+        "Moved collider was not picked"
+    );
+    assert!(
+        !chunk(app.world(), building, "c").alive,
         "Neighbor face was tested in stale rest coordinates"
     );
-    assert!(instance.chunks["d"].alive);
+    assert!(chunk(app.world(), building, "d").alive);
     let messages = app.world().resource::<Messages<BreakBurst>>();
     let bursts = cursor.read(messages).collect::<Vec<_>>();
     assert_eq!(bursts.len(), 1);
@@ -695,14 +699,7 @@ fn splitting_awake_compound_rebinds_cached_contacts_with_adjacent_static_buildin
             }),
         "Fixture must cache live dynamic-static face contacts before the split"
     );
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        instance.bonds.insert("bc".into(), false);
-        instance.topology_dirty = true;
-    }
+    break_bond(app.world_mut(), building, "bc");
     rebuild_clusters(app.world_mut());
     let lower = body(app.world(), building, "b");
     let upper = body(app.world(), building, "c");

@@ -20,6 +20,7 @@ fn selection_uses_surface_distance_and_rejects_back_wall() {
 #[test]
 fn fracture_feedback_uses_each_moving_cluster_pose() {
     use crate::fracture_detail::ContactPatch;
+    use crate::scene::{spawn_bonds, spawn_patches};
     let mut world = World::new();
     world.init_resource::<Assets<DestructibleAsset>>();
     world.init_resource::<Messages<BreakBurst>>();
@@ -45,15 +46,15 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
             ..template.clone()
         })
         .into();
+    let bonds = manifest.bonds.clone();
     let asset = world
         .resource_mut::<Assets<DestructibleAsset>>()
         .add(DestructibleAsset {
             manifest,
             gltf: Handle::default(),
         });
-    let root = world
-        .spawn((Transform::IDENTITY, BuildingInstance::pending(asset)))
-        .id();
+    let root = world.spawn(Transform::IDENTITY).id();
+    let mut instance = BuildingInstance::pending(asset);
     let poses = [
         Transform::from_xyz(4.0, 2.0, 1.0).with_rotation(Quat::from_rotation_z(0.3)),
         Transform::from_xyz(-8.0, 3.0, -2.0).with_rotation(Quat::from_rotation_y(0.7)),
@@ -64,25 +65,24 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
         let body = world
             .spawn((Position(pose.translation), Rotation(pose.rotation)))
             .id();
-        let entity = world.spawn_empty().id();
-        world
-            .get_mut::<BuildingInstance>(root)
-            .unwrap()
-            .chunks
-            .insert(
-                a.into(),
-                ChunkInstance {
-                    entity,
-                    primitives: Vec::new(),
-                    alive: true,
-                    triangles: Vec::new(),
-                    transform: Transform::IDENTITY,
-                    mass_properties: MassProperties3d::ZERO,
-                    material: "concrete".into(),
-                    detail: None,
-                    cluster: Some(body),
-                },
-            );
+        for chunk_id in [a, b] {
+            let entity = world
+                .spawn((
+                    ChildOf(root),
+                    ChunkInstance {
+                        primitives: Vec::new(),
+                        alive: true,
+                        triangles: Vec::new(),
+                        transform: Transform::IDENTITY,
+                        mass_properties: MassProperties3d::ZERO,
+                        material: "concrete".into(),
+                        detail: None,
+                        cluster: Some(body),
+                    },
+                ))
+                .id();
+            instance.chunks.insert(chunk_id.into(), entity);
+        }
         patches.push(ContactPatch {
             id: id.into(),
             bond_id: id.into(),
@@ -94,7 +94,16 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
             rims: Vec::new(),
         });
     }
-    world.get_mut::<BuildingInstance>(root).unwrap().patches = std::sync::Arc::new(patches);
+    let mut commands = world.commands();
+    spawn_bonds(&mut commands, root, &mut instance, &bonds);
+    spawn_patches(
+        &mut commands,
+        root,
+        &mut instance,
+        std::sync::Arc::new(patches),
+    );
+    world.flush();
+    world.entity_mut(root).insert(instance);
     bond_feedback(&mut world, root, &["ab".into(), "cd".into()]);
     let burst = world
         .resource_mut::<Messages<BreakBurst>>()

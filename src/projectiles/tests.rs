@@ -2,9 +2,29 @@ use super::*;
 use crate::{
     camera::CameraControl,
     physics::{Cluster, DestructionPhysicsPlugin},
+    scene::spawn_bonds,
     stress_smoke::{BEAM, LEFT_BOND, RIGHT_BOND, spawn_beam},
 };
 use bevy::time::TimeUpdateStrategy;
+
+fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance {
+    let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
+    world.get::<ChunkInstance>(entity).unwrap()
+}
+
+fn bond_states(world: &World, building: Entity) -> BTreeMap<String, bool> {
+    world
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .bond_states(|entity| world.get::<BondInstance>(entity).unwrap().active)
+}
+
+fn break_bond(world: &mut World, building: Entity, id: &str) {
+    let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
+    instance.topology_dirty = true;
+    let entity = instance.bonds[id];
+    world.get_mut::<BondInstance>(entity).unwrap().active = false;
+}
 
 fn app() -> App {
     let mut app = App::new();
@@ -69,11 +89,18 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
         );
         assert!(stats.max_impulse > 1000.0);
         assert_eq!(stats.broken_bonds, 2);
-        let instance = app.world().get::<BuildingInstance>(building).unwrap();
-        assert!(!instance.bonds[LEFT_BOND]);
-        assert!(!instance.bonds[RIGHT_BOND]);
-        assert!(instance.chunks.values().all(|chunk| chunk.alive));
-        let beam_body = instance.chunks[BEAM].cluster.unwrap();
+        let world = app.world();
+        let instance = world.get::<BuildingInstance>(building).unwrap();
+        let bonds = bond_states(world, building);
+        assert!(!bonds[LEFT_BOND]);
+        assert!(!bonds[RIGHT_BOND]);
+        assert!(
+            instance
+                .chunks
+                .values()
+                .all(|&entity| world.get::<ChunkInstance>(entity).unwrap().alive)
+        );
+        let beam_body = chunk(world, building, BEAM).cluster.unwrap();
         assert!(!app.world().get::<Cluster>(beam_body).unwrap().anchored);
         assert_eq!(
             app.world().get::<RigidBody>(beam_body),
@@ -149,12 +176,12 @@ fn subthreshold_speed_contacts_do_not_break_bonds_or_accumulate_resting_damage()
     let stats = app.world().resource::<ImpactStats>();
     assert_eq!(stats.contacts, 0);
     assert_eq!(stats.broken_bonds, 0);
-    let instance = app.world().get::<BuildingInstance>(building).unwrap();
-    assert!(instance.bonds[LEFT_BOND]);
-    assert!(instance.bonds[RIGHT_BOND]);
+    let bonds = bond_states(app.world(), building);
+    assert!(bonds[LEFT_BOND]);
+    assert!(bonds[RIGHT_BOND]);
     assert!(
         app.world()
-            .get::<Cluster>(instance.chunks[BEAM].cluster.unwrap())
+            .get::<Cluster>(chunk(app.world(), building, BEAM).cluster.unwrap())
             .unwrap()
             .anchored
     );
@@ -171,7 +198,7 @@ fn spawn_dropped_tower_at_height(
 ) -> (Entity, Vec<String>) {
     use crate::{
         asset::Manifest,
-        scene::{BuildingBounds, ChunkInstance, chunk_collider},
+        scene::{BuildingBounds, chunk_collider},
     };
     let contents = std::env::var_os("DESTRUCTION_LANDING_ASSET")
         .map(|path| std::fs::read_to_string(path).unwrap())
@@ -218,11 +245,6 @@ fn spawn_dropped_tower_at_height(
         max: Vec3::new(14.0, 32.24, 0.0),
     });
     instance.topology_dirty = true;
-    instance.bonds = manifest
-        .bonds
-        .iter()
-        .map(|bond| (bond.id.clone(), true))
-        .collect();
     let mut upper = Vec::new();
     for record in &manifest.chunks {
         let local = record.transform();
@@ -252,27 +274,32 @@ fn spawn_dropped_tower_at_height(
         } else {
             MassProperties3d::ZERO
         };
-        instance.chunks.insert(
-            record.id.clone(),
-            ChunkInstance {
-                entity,
-                primitives: Vec::new(),
-                alive,
-                triangles: Vec::new(),
-                transform: local,
-                mass_properties,
-                material: record.material.clone(),
-                detail: None,
-                cluster: None,
-            },
-        );
+        app.world_mut().entity_mut(entity).insert(ChunkInstance {
+            primitives: Vec::new(),
+            alive,
+            triangles: Vec::new(),
+            transform: local,
+            mass_properties,
+            material: record.material.clone(),
+            detail: None,
+            cluster: None,
+        });
+        instance.chunks.insert(record.id.clone(), entity);
     }
+    let world = app.world_mut();
+    spawn_bonds(&mut world.commands(), root, &mut instance, &manifest.bonds);
+    world.flush();
     for bond in &manifest.bonds {
-        if !instance.chunks[&bond.a].alive || !instance.chunks[&bond.b].alive {
-            instance.bonds.insert(bond.id.clone(), false);
+        let entity = instance.bonds[&bond.id];
+        let endpoints = world.get::<BondInstance>(entity).unwrap().endpoints;
+        if !endpoints
+            .into_iter()
+            .all(|endpoint| world.get::<ChunkInstance>(endpoint).unwrap().alive)
+        {
+            world.get_mut::<BondInstance>(entity).unwrap().active = false;
         }
     }
-    app.world_mut().entity_mut(root).insert(instance);
+    world.entity_mut(root).insert(instance);
     (root, upper)
 }
 
@@ -293,13 +320,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
             );
     }
     app.update();
-    let first_body = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .chunks[&upper[0]]
-        .cluster
-        .unwrap();
+    let first_body = chunk(app.world(), building, &upper[0]).cluster.unwrap();
     assert_eq!(
         app.world().get::<Cluster>(first_body).unwrap().chunks.len(),
         upper.len()
@@ -309,12 +330,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     let mut max_speed = 0.0_f32;
     let mut trace_at = -1.0;
     let mut trace_released = 0;
-    let mut previous_bonds = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .bonds
-        .clone();
+    let mut previous_bonds = bond_states(app.world(), building);
     for tick in 0..300 {
         app.update();
         if trace {
@@ -436,6 +452,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         "Broken landing bonds did not split the compound"
     );
     let instance = app.world().get::<BuildingInstance>(building).unwrap();
+    let bonds = bond_states(app.world(), building);
     let manifest = &app
         .world()
         .resource::<Assets<DestructibleAsset>>()
@@ -496,9 +513,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     let broken_y = manifest
         .bonds
         .iter()
-        .filter(|bond| {
-            upper.contains(&bond.a) && upper.contains(&bond.b) && !instance.bonds[&bond.id]
-        })
+        .filter(|bond| upper.contains(&bond.a) && upper.contains(&bond.b) && !bonds[&bond.id])
         .map(|bond| bond.center[1])
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), y| {
             (min.min(y), max.max(y))
@@ -506,7 +521,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     eprintln!("broken bond source_y={:.3}..{:.3}", broken_y.0, broken_y.1);
     let expected_mass = upper
         .iter()
-        .map(|id| f64::from(instance.chunks[id].mass_properties.mass))
+        .map(|id| f64::from(chunk(app.world(), building, id).mass_properties.mass))
         .sum::<f64>();
     let actual_mass = instance
         .clusters
@@ -517,7 +532,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
     assert!(
         manifest.bonds.iter().any(|bond| upper.contains(&bond.a)
             && upper.contains(&bond.b)
-            && !instance.bonds[&bond.id]
+            && !bonds[&bond.id]
             && bond.center[1] > 20.0
             && bond.center[1] < roof_y
             && records[bond.a.as_str()].kind != "roof"
@@ -540,8 +555,8 @@ fn trace_landing_step(
         .get(&instance.asset)
         .unwrap()
         .manifest;
-    let newly_broken = instance
-        .bonds
+    let bonds = bond_states(world, building);
+    let newly_broken = bonds
         .iter()
         .filter(|(id, active)| !**active && previous_bonds.get(*id) == Some(&true))
         .map(|(id, _)| id.as_str())
@@ -642,7 +657,7 @@ fn trace_landing_step(
             .collect::<Vec<_>>();
         eprintln!("QUEUED {shocks:?}");
     }
-    *previous_bonds = instance.bonds.clone();
+    *previous_bonds = bonds;
 }
 
 fn trace_landing_contact_speeds(world: &mut World) {
@@ -813,23 +828,11 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
             .map(|bond| bond.id.clone())
             .collect::<Vec<_>>()
     };
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        for id in ids {
-            instance.bonds.insert(id, false);
-        }
-        instance.topology_dirty = true;
+    for id in ids {
+        break_bond(app.world_mut(), building, &id);
     }
     crate::physics::rebuild_clusters(app.world_mut());
-    let before = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .bonds
-        .clone();
+    let before = bond_states(app.world(), building);
     assert!(
         app.world()
             .get::<BuildingInstance>(building)
@@ -843,10 +846,7 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
     assert_eq!(state.invalidated, 0);
     assert!(state.shocks.is_empty());
     assert!(state.pending.is_empty());
-    assert_eq!(
-        app.world().get::<BuildingInstance>(building).unwrap().bonds,
-        before
-    );
+    assert_eq!(bond_states(app.world(), building), before);
 }
 
 #[test]
@@ -920,22 +920,9 @@ fn split_free_beam_for_queued_hit() -> (App, Entity, Vec<String>, Vec<String>) {
         .keys()
         .cloned()
         .collect();
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        instance.bonds.insert(RIGHT_BOND.into(), false);
-        instance.topology_dirty = true;
-    }
+    break_bond(app.world_mut(), building, RIGHT_BOND);
     crate::physics::rebuild_clusters(app.world_mut());
-    let body = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .chunks[BEAM]
-        .cluster
-        .unwrap();
+    let body = chunk(app.world(), building, BEAM).cluster.unwrap();
     let current = app.world().get::<Cluster>(body).unwrap().chunks.clone();
     assert_eq!(current.len(), 2);
     (app, building, original, current)
@@ -960,13 +947,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
         }]),
         ..default()
     };
-    let body = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .chunks[BEAM]
-        .cluster
-        .unwrap();
+    let body = chunk(app.world(), building, BEAM).cluster.unwrap();
     let velocity = app.world().get::<LinearVelocity>(body).unwrap().0;
     let mut state = state_for(original);
     let mut rebound = process_dynamic_impact(app.world(), &mut state).unwrap();
@@ -983,14 +964,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
     assert_eq!(continuation.chunks, current);
     assert!(continuation.prepared.is_some());
     state.shocks.push_back(continuation);
-    {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
-        instance.bonds.insert(LEFT_BOND.into(), false);
-        instance.topology_dirty = true;
-    }
+    break_bond(app.world_mut(), building, LEFT_BOND);
     crate::physics::rebuild_clusters(app.world_mut());
     assert!(process_dynamic_impact(app.world(), &mut state).is_none());
     assert_eq!(state.released, 1);
@@ -1001,12 +975,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
 #[test]
 fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
     let (app, building, original, _) = split_free_beam_for_queued_hit();
-    let before = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .bonds
-        .clone();
+    let before = bond_states(app.world(), building);
     let mut state = ImpactState {
         shocks: VecDeque::from([ClusterImpact {
             building,
@@ -1030,15 +999,12 @@ fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
     assert_eq!(state.released, 1);
     assert_eq!(state.rebound_fresh, 0);
     assert!(state.shocks.is_empty() && state.pending.is_empty());
-    assert_eq!(
-        app.world().get::<BuildingInstance>(building).unwrap().bonds,
-        before
-    );
+    assert_eq!(bond_states(app.world(), building), before);
 }
 
-fn offset_impact_fixture() -> (Manifest, BuildingInstance) {
+fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
     let mut manifest = crate::stress_smoke::beam_manifest();
-    let mut instance = BuildingInstance::pending(Handle::default());
+    let mut chunks = BTreeMap::new();
     for (index, record) in manifest.chunks.iter_mut().enumerate() {
         let rotation = Quat::from_euler(EulerRot::XYZ, 0.2, -0.4, 0.3 * index as f32);
         record.rotation = rotation.to_array();
@@ -1055,10 +1021,9 @@ fn offset_impact_fixture() -> (Manifest, BuildingInstance) {
             ),
         ]);
         let mass_properties = collider.mass_properties(700.0 + 100.0 * index as f32);
-        instance.chunks.insert(
+        chunks.insert(
             record.id.clone(),
-            crate::scene::ChunkInstance {
-                entity: Entity::PLACEHOLDER,
+            ChunkInstance {
                 primitives: Vec::new(),
                 alive: true,
                 triangles: Vec::new(),
@@ -1070,13 +1035,13 @@ fn offset_impact_fixture() -> (Manifest, BuildingInstance) {
             },
         );
     }
-    (manifest, instance)
+    (manifest, chunks)
 }
 
 #[test]
 fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
     use crate::stress_smoke::{LEFT_SUPPORT, RIGHT_SUPPORT};
-    let (manifest, instance) = offset_impact_fixture();
+    let (manifest, chunk_states) = offset_impact_fixture();
     let chunks = manifest
         .chunks
         .iter()
@@ -1094,7 +1059,7 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
             angular: DVec3::new(0.0, 500.0, -200.0),
         },
     )]);
-    let case = inertial_loads(&manifest, &instance, &chunks, &impulses).unwrap();
+    let case = inertial_loads(&manifest, |id| chunk_states.get(id), &chunks, &impulses).unwrap();
     assert!(case.force_balance_ratio < 1e-12);
     assert!(case.moment_balance_ratio < 1e-12);
     let left = stress::solve_with_gauge(
@@ -1133,27 +1098,24 @@ fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
 
 #[test]
 fn a_rigid_velocity_change_has_no_internal_impact_load() {
-    let (manifest, instance) = offset_impact_fixture();
+    let (manifest, chunk_states) = offset_impact_fixture();
     let chunks = manifest
         .chunks
         .iter()
         .map(|chunk| chunk.id.clone())
         .collect::<Vec<_>>();
-    let total_mass = instance
-        .chunks
+    let total_mass = chunk_states
         .values()
         .map(|chunk| f64::from(chunk.mass_properties.mass))
         .sum::<f64>();
-    let center = instance
-        .chunks
+    let center = chunk_states
         .values()
         .map(|chunk| chunk.center_in_building().as_dvec3() * f64::from(chunk.mass_properties.mass))
         .sum::<DVec3>()
         / total_mass;
     let linear = DVec3::new(2.0, -5.0, 3.0);
     let angular = DVec3::new(0.0, 0.0, 0.7);
-    let impulses = instance
-        .chunks
+    let impulses = chunk_states
         .iter()
         .map(|(id, chunk)| {
             let r = chunk.center_in_building().as_dvec3() - center;
@@ -1171,7 +1133,7 @@ fn a_rigid_velocity_change_has_no_internal_impact_load() {
             )
         })
         .collect();
-    let case = inertial_loads(&manifest, &instance, &chunks, &impulses).unwrap();
+    let case = inertial_loads(&manifest, |id| chunk_states.get(id), &chunks, &impulses).unwrap();
     for load in case.loads.values() {
         assert!(DVec3::from_array(load.force).length() < 1e-7);
         assert!(DVec3::from_array(load.moment).length() < 1e-7);
@@ -1180,9 +1142,6 @@ fn a_rigid_velocity_change_has_no_internal_impact_load() {
 
 #[test]
 fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() {
-    let mut app = app();
-    let building = spawn_beam(app.world_mut(), Vec3::ZERO);
-    let instance = app.world().get::<BuildingInstance>(building).unwrap();
     let rectangle = |normal: Vec3, center: Vec3, half_height: f32| {
         let tangent = Vec3::new(-normal.y, normal.x, 0.0);
         let half_width = 0.05_f32;
@@ -1217,10 +1176,50 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
     let total_area = planar.bonds.iter().map(|bond| bond.area).sum::<f32>();
     let intensity = planar.materials["concrete"].shear_strength * 1.2 / 0.8;
     let impulse = Vec3::NEG_X * (intensity * total_area * IMPACT_DURATION);
-    let mut pending = BTreeMap::new();
-    queue_local_damage(&planar, instance, building, BEAM, impulse, &mut pending);
+    let evaluate = |manifest: &Manifest| {
+        let mut world = World::new();
+        let building = world.spawn(Name::new("Local impact fixture")).id();
+        let mut instance = BuildingInstance::pending(Handle::default());
+        for record in &manifest.chunks {
+            let entity = world
+                .spawn((
+                    Name::new(record.id.clone()),
+                    ChildOf(building),
+                    ChunkInstance {
+                        primitives: Vec::new(),
+                        alive: true,
+                        triangles: Vec::new(),
+                        transform: record.transform(),
+                        mass_properties: MassProperties3d::ZERO,
+                        material: record.material.clone(),
+                        detail: None,
+                        cluster: None,
+                    },
+                ))
+                .id();
+            instance.chunks.insert(record.id.clone(), entity);
+        }
+        spawn_bonds(
+            &mut world.commands(),
+            building,
+            &mut instance,
+            &manifest.bonds,
+        );
+        world.flush();
+        let mut pending = BTreeMap::new();
+        queue_local_damage(
+            local_impact_bonds(&world, manifest, &instance, BEAM, instance.chunks[BEAM]),
+            building,
+            impulse,
+            &mut pending,
+        );
+        pending
+            .into_iter()
+            .map(|((_, id), utilization)| (id, utilization))
+            .collect::<BTreeMap<_, _>>()
+    };
     assert!(
-        pending.is_empty(),
+        evaluate(&planar).is_empty(),
         "The average plane should see only subcritical compression"
     );
 
@@ -1240,10 +1239,10 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
             )
         })
         .collect();
-    queue_local_damage(&folded, instance, building, BEAM, impulse, &mut pending);
+    let pending = evaluate(&folded);
     assert_eq!(pending.len(), 1);
     assert!(
-        (pending[&(building, LEFT_BOND.to_string())] - 1.2).abs() < 1e-5,
+        (pending[LEFT_BOND] - 1.2).abs() < 1e-5,
         "The folded facets must see shear hidden by their average plane"
     );
 
@@ -1266,8 +1265,7 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
             })
         })
         .collect();
-    let mut second = BTreeMap::new();
-    queue_local_damage(&subdivided, instance, building, BEAM, impulse, &mut second);
+    let second = evaluate(&subdivided);
     assert_eq!(
         pending.keys().collect::<Vec<_>>(),
         second.keys().collect::<Vec<_>>()

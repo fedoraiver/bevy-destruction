@@ -8,7 +8,10 @@ use crate::{
     diagnostics::RunMetrics,
     dust_material::DustMaterial,
     interaction::{BREAK_LIMIT, DamageRequests, ScriptedClick},
-    scene::{BuildingInstance, DamageDetail, DemoCamera, DetailStats, RemovedChunk},
+    scene::{
+        BondInstance, BuildingInstance, ChunkInstance, DamageDetail, DemoCamera, DetailStats,
+        PatchInstance, RemovedChunk,
+    },
     vfx::{PARTICLE_LIMIT, Particle, VfxStats},
 };
 
@@ -48,7 +51,9 @@ struct SmokeState {
 #[derive(SystemParam)]
 struct SmokeResources<'w, 's> {
     options: Res<'w, DemoOptions>,
-    assets: Res<'w, Assets<crate::asset::DestructibleAsset>>,
+    chunks: Query<'w, 's, &'static ChunkInstance>,
+    bonds: Query<'w, 's, &'static BondInstance>,
+    patches: Query<'w, 's, &'static PatchInstance>,
     vfx: Res<'w, VfxStats>,
     detail: Res<'w, DetailStats>,
     metrics: ResMut<'w, RunMetrics>,
@@ -104,7 +109,9 @@ fn drive(
 ) {
     let SmokeResources {
         options,
-        assets,
+        chunks,
+        bonds,
+        patches,
         vfx,
         detail,
         mut metrics,
@@ -166,6 +173,7 @@ fn drive(
             instance
                 .chunks
                 .values()
+                .filter_map(|&entity| chunks.get(entity).ok())
                 .filter(|chunk| chunk.alive)
                 .flat_map(|chunk| &chunk.triangles)
                 .filter(|t| (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero().z > 0.95)
@@ -387,9 +395,10 @@ fn drive(
             state.rim_focus = instance
                 .patches
                 .iter()
+                .filter_map(|&entity| patches.get(entity).ok().map(PatchInstance::patch))
                 .filter(|patch| {
                     patch
-                        .exposed_survivor(|id| instance.chunks[id].alive)
+                        .exposed_survivor(|id| chunks.get(instance.chunks[id]).unwrap().alive)
                         .is_some()
                 })
                 .flat_map(|patch| &patch.rims)
@@ -399,7 +408,7 @@ fn drive(
             let deleted = instance
                 .chunks
                 .values()
-                .filter(|chunk| !chunk.alive)
+                .filter(|&&entity| chunks.get(entity).is_ok_and(|chunk| !chunk.alive))
                 .count();
             state.first_removed = deleted;
             if !(1..=BREAK_LIMIT).contains(&deleted) {
@@ -417,8 +426,12 @@ fn drive(
                     state.errors.push("Removed chunk kept debug edges".into());
                 }
             }
-            let manifest = &assets.get(&instance.asset).unwrap().manifest;
-            for (id, chunk) in instance.chunks.iter().filter(|(_, chunk)| !chunk.alive) {
+            for (entity, chunk) in instance
+                .chunks
+                .values()
+                .filter_map(|&entity| chunks.get(entity).ok().map(|chunk| (entity, chunk)))
+                .filter(|(_, chunk)| !chunk.alive)
+            {
                 if chunk
                     .primitives
                     .iter()
@@ -439,11 +452,11 @@ fn drive(
                         .errors
                         .push("First click penetrated the front layer".into());
                 }
-                if manifest
+                if instance
                     .bonds
-                    .iter()
-                    .filter(|bond| &bond.a == id || &bond.b == id)
-                    .any(|bond| instance.bonds[&bond.id])
+                    .values()
+                    .filter_map(|&entity| bonds.get(entity).ok())
+                    .any(|bond| bond.active && bond.endpoints.contains(&entity))
                 {
                     state
                         .errors
@@ -525,6 +538,7 @@ fn drive(
             for point in instance
                 .chunks
                 .values()
+                .filter_map(|&entity| chunks.get(entity).ok())
                 .filter(|chunk| chunk.alive)
                 .flat_map(|chunk| &chunk.triangles)
                 .filter(|t| (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero().z > 0.95)
@@ -619,7 +633,13 @@ fn drive(
                     .errors
                     .push("A new hit lost immediate feedback under saturation".into());
             }
-            let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": instance.chunks.values().map(|c| c.primitives.len()).sum::<usize>(),
+            let primitives = instance
+                .chunks
+                .values()
+                .filter_map(|&entity| chunks.get(entity).ok())
+                .map(|chunk| chunk.primitives.len())
+                .sum::<usize>();
+            let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": primitives,
                 "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
                 "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time, "last_burst_frame": state.last_burst_frame, "settled_frame": state.settled_frame,

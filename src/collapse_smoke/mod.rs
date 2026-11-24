@@ -9,7 +9,7 @@ use crate::{
     debug::FractureEdges,
     diagnostics::RunMetrics,
     physics::Cluster,
-    scene::{BuildingInstance, DemoCamera, RemovedChunk},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RemovedChunk},
     stress_runtime::StressState,
 };
 
@@ -372,6 +372,8 @@ fn drive(
         &GlobalTransform,
         Option<&StressState>,
     )>,
+    mut chunks: Query<&mut ChunkInstance>,
+    mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
         &Cluster,
         &RigidBody,
@@ -493,12 +495,17 @@ fn drive(
             let frame = state.frame;
             state.first_release.get_or_insert(frame);
             state.largest_released_upper = state.largest_released_upper.max(upper_chunks);
-            let body = instance.chunks[&cluster.chunks[0]].cluster.unwrap();
+            let body = chunks
+                .get(instance.chunks[&cluster.chunks[0]])
+                .unwrap()
+                .cluster
+                .unwrap();
             let static_supports = state
                 .support_path
                 .iter()
                 .filter_map(|id| {
-                    let chunk = &instance.chunks[id.as_str()];
+                    let entity = instance.chunks[id.as_str()];
+                    let chunk = chunks.get(entity).unwrap();
                     if !chunk.alive {
                         return None;
                     }
@@ -506,7 +513,7 @@ fn drive(
                     bodies
                         .get(support)
                         .is_ok_and(|entry| *entry.1 == RigidBody::Static)
-                        .then_some((id.as_str(), chunk.entity, support))
+                        .then_some((id.as_str(), entity, support))
                 })
                 .collect::<Vec<_>>();
             if let Some(stub) = contacted_static_support(
@@ -564,7 +571,11 @@ fn drive(
         }
         20 => {
             let selection = match select_collapse_support(&asset.manifest, |id| {
-                instance.chunks[id].mass_properties.mass
+                chunks
+                    .get(instance.chunks[id])
+                    .unwrap()
+                    .mass_properties
+                    .mass
             }) {
                 Ok(selection) => selection,
                 Err(error) => {
@@ -587,7 +598,7 @@ fn drive(
                         >= selection.upper_floor_y
                 })
                 .map(|record| {
-                    let chunk = &instance.chunks[&record.id];
+                    let chunk = chunks.get(instance.chunks[&record.id]).unwrap();
                     (
                         record.id.clone(),
                         (chunk.center_in_building(), chunk.mass_properties.mass),
@@ -601,14 +612,17 @@ fn drive(
             state.expected_mass = instance
                 .chunks
                 .iter()
-                .filter(|(id, chunk)| chunk.alive && !state.removed.contains(*id))
-                .map(|(_, chunk)| f64::from(chunk.mass_properties.mass))
+                .filter(|(id, _)| !state.removed.contains(*id))
+                .map(|(_, &entity)| chunks.get(entity).unwrap())
+                .filter(|chunk| chunk.alive)
+                .map(|chunk| f64::from(chunk.mass_properties.mass))
                 .sum();
             for id in &state.removed {
-                let chunk = instance.chunks.get_mut(id).unwrap();
+                let entity = instance.chunks[id];
+                let mut chunk = chunks.get_mut(entity).unwrap();
                 chunk.alive = false;
                 commands
-                    .entity(chunk.entity)
+                    .entity(entity)
                     .insert((RemovedChunk, Visibility::Hidden))
                     .remove::<FractureEdges>();
                 for &primitive in &chunk.primitives {
@@ -617,7 +631,7 @@ fn drive(
             }
             for bond in &asset.manifest.bonds {
                 if state.removed.contains(&bond.a) || state.removed.contains(&bond.b) {
-                    instance.bonds.insert(bond.id.clone(), false);
+                    bonds.get_mut(instance.bonds[&bond.id]).unwrap().active = false;
                 }
             }
             instance.topology_dirty = true;

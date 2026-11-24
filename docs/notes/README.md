@@ -17,6 +17,7 @@
 | [0003](implemented/0003-collision-driven-fracture.md) | 碰撞驱动的断裂与事件卸载 |
 | [0012](implemented/0012-density-derived-mass-properties.md) | Avian 按碰撞体与密度计算质量属性 |
 | [0021](implemented/0021-explicit-ecs-access-and-cluster-ownership.md) | 承载系统的显式访问与刚体簇归属 |
+| [0023](implemented/0023-ecs-structure-entities.md) | 运行时结构图的 ECS 实体 |
 
 ### 资产制作
 

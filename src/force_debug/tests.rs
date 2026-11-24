@@ -109,25 +109,29 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
             },
         ))
         .id();
+    let front = world
+        .spawn((
+            Name::new("Front force inspection target"),
+            ChildOf(body),
+            InheritedVisibility::VISIBLE,
+            ChunkInstance {
+                primitives: vec![],
+                alive: true,
+                triangles: vec![[
+                    Vec3::new(-1.0, -1.0, 0.0),
+                    Vec3::new(1.0, -1.0, 0.0),
+                    Vec3::Y,
+                ]],
+                transform: Transform::IDENTITY,
+                mass_properties: avian3d::prelude::MassProperties3d::ZERO,
+                material: "concrete".into(),
+                detail: None,
+                cluster: Some(body),
+            },
+        ))
+        .id();
     let mut instance = BuildingInstance::pending(Handle::default());
-    instance.chunks.insert(
-        "front".into(),
-        crate::scene::ChunkInstance {
-            entity: world.spawn(InheritedVisibility::VISIBLE).id(),
-            primitives: vec![],
-            alive: true,
-            triangles: vec![[
-                Vec3::new(-1.0, -1.0, 0.0),
-                Vec3::new(1.0, -1.0, 0.0),
-                Vec3::Y,
-            ]],
-            transform: Transform::IDENTITY,
-            mass_properties: avian3d::prelude::MassProperties3d::ZERO,
-            material: "concrete".into(),
-            detail: None,
-            cluster: Some(body),
-        },
-    );
+    instance.chunks.insert("front".into(), front);
     world.entity_mut(building).insert(instance);
 
     app.update();
@@ -178,27 +182,43 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
     let other = world.spawn_empty().id();
     let mut instance = BuildingInstance::pending(Handle::default());
     for id in ["a", "b"] {
-        instance.chunks.insert(
-            id.into(),
-            crate::scene::ChunkInstance {
-                entity: world.spawn_empty().id(),
-                primitives: Vec::new(),
-                alive: true,
-                triangles: Vec::new(),
-                transform: Transform::IDENTITY,
-                mass_properties: avian3d::prelude::MassProperties3d::ZERO,
-                material: "concrete".into(),
-                detail: None,
-                cluster: Some(body),
-            },
-        );
+        let entity = world
+            .spawn((
+                Name::new(format!("Force member {id}")),
+                ChunkInstance {
+                    primitives: Vec::new(),
+                    alive: true,
+                    triangles: Vec::new(),
+                    transform: Transform::IDENTITY,
+                    mass_properties: MassProperties3d::ZERO,
+                    material: "concrete".into(),
+                    detail: None,
+                    cluster: Some(body),
+                },
+            ))
+            .id();
+        instance.chunks.insert(id.into(), entity);
     }
-    let mut sample = DynamicForceSample {
+    let a = instance.chunks["a"];
+    let b = instance.chunks["b"];
+    let bond = world
+        .spawn((
+            Name::new("Force test bond"),
+            ChildOf(building),
+            BondInstance {
+                id: "a-b".into(),
+                endpoints: [a, b],
+                active: true,
+            },
+        ))
+        .id();
+    instance.bonds.insert("a-b".into(), bond);
+    let sample = DynamicForceSample {
         building,
         body,
         chunks: vec!["a".into(), "b".into()],
         bonds: BTreeMap::new(),
-        bond_signature: bond_signature(&instance.bonds),
+        bond_signature: bond_signature([("a-b", true)]),
         captured_at: 0.0,
     };
     let mut cluster = Cluster {
@@ -206,37 +226,28 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
         anchored: false,
     };
     let parent = ChildOf(building);
-    assert!(sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
-    assert!(!sample_members_current(
-        &sample,
-        &instance,
-        &cluster,
-        &ChildOf(other)
-    ));
-    instance.chunks.get_mut("b").unwrap().alive = false;
-    assert!(!sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
-    instance.chunks.get_mut("b").unwrap().alive = true;
-    instance.chunks.get_mut("b").unwrap().cluster = Some(other);
-    assert!(!sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
-    instance.chunks.get_mut("b").unwrap().cluster = Some(body);
+    let current = |world: &World, cluster: &Cluster, parent: &ChildOf| {
+        sample_members_current(
+            &sample,
+            &instance,
+            cluster,
+            parent,
+            |entity| world.get::<ChunkInstance>(entity),
+            || bond_signature([("a-b", world.get::<BondInstance>(bond).unwrap().active)]),
+        )
+    };
+    assert!(current(&world, &cluster, &parent));
+    assert!(!current(&world, &cluster, &ChildOf(other)));
+    world.get_mut::<ChunkInstance>(b).unwrap().alive = false;
+    assert!(!current(&world, &cluster, &parent));
+    world.get_mut::<ChunkInstance>(b).unwrap().alive = true;
+    world.get_mut::<ChunkInstance>(b).unwrap().cluster = Some(other);
+    assert!(!current(&world, &cluster, &parent));
+    world.get_mut::<ChunkInstance>(b).unwrap().cluster = Some(body);
     cluster.chunks.pop();
-    assert!(!sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
+    assert!(!current(&world, &cluster, &parent));
     cluster.chunks.push("b".into());
-    instance.bonds.insert("a-b".into(), true);
-    sample.bond_signature = bond_signature(&instance.bonds);
-    assert!(sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
-    instance.bonds.insert("a-b".into(), false);
-    assert!(!sample_members_current(
-        &sample, &instance, &cluster, &parent
-    ));
+    assert!(current(&world, &cluster, &parent));
+    world.get_mut::<BondInstance>(bond).unwrap().active = false;
+    assert!(!current(&world, &cluster, &parent));
 }

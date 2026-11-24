@@ -10,7 +10,7 @@ use crate::{
     asset::DestructibleAsset,
     interaction::build_bond_feedback,
     physics,
-    scene::{BuildingInstance, ChunkInstance},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, PatchInstance},
     stress::{self, BondStress, NodeLoad, SolverSettings, node_center},
     structure,
     vfx::BreakBurst,
@@ -143,6 +143,9 @@ fn hash_weight(chunk: &ChunkInstance, hash: &mut impl Hasher) {
 pub(crate) fn update_stress(
     mut commands: Commands,
     mut buildings: Query<(Entity, &mut BuildingInstance, Option<&mut StressState>)>,
+    chunks: Query<&ChunkInstance>,
+    mut bonds: Query<&mut BondInstance>,
+    patches: Query<&PatchInstance>,
     settings: Res<StressSettings>,
     time: Res<Time<Fixed>>,
     gravity: Res<Gravity>,
@@ -183,6 +186,14 @@ pub(crate) fn update_stress(
             .compute_transform();
         let local_gravity = root.rotation.conjugate() * gravity.0;
         let loads = loads.by_building.get(&building).unwrap_or(&empty_loads);
+        let chunk_at = |entity| chunks.get(entity).expect("Indexed building chunk exists");
+        let bond_active = |entity| {
+            bonds
+                .get(entity)
+                .expect("Indexed building bond exists")
+                .active
+        };
+        let mut bond_states = None;
         let unchanged = state.cache.is_some_and(|cache| {
             cache.source_tick == source_tick
                 && cache.loads_tick == loads_tick
@@ -194,14 +205,17 @@ pub(crate) fn update_stress(
         } else {
             let mut hash = std::hash::DefaultHasher::new();
             instance.asset.id().hash(&mut hash);
-            for (id, chunk) in &instance.chunks {
+            for (id, &entity) in &instance.chunks {
+                let chunk = chunk_at(entity);
                 id.hash(&mut hash);
                 chunk.alive.hash(&mut hash);
                 if chunk.alive {
                     hash_weight(chunk, &mut hash);
                 }
             }
-            instance.bonds.hash(&mut hash);
+            bond_states
+                .insert(instance.bond_states(bond_active))
+                .hash(&mut hash);
             for value in local_gravity.to_array() {
                 value.to_bits().hash(&mut hash);
             }
@@ -219,6 +233,7 @@ pub(crate) fn update_stress(
             && state.cache.is_some_and(|cache| now >= cache.retry_at);
         let recompute = state.cache.is_none_or(|cache| cache.key != key) || retry;
         if recompute {
+            let bond_states = bond_states.get_or_insert_with(|| instance.bond_states(bond_active));
             let started = bevy::platform::time::Instant::now();
             state.solves += 1;
             state.reports.clear();
@@ -230,10 +245,10 @@ pub(crate) fn update_stress(
             let alive = instance
                 .chunks
                 .iter()
-                .filter(|(_, chunk)| chunk.alive)
+                .filter(|(_, entity)| chunk_at(**entity).alive)
                 .map(|(id, _)| id.clone())
                 .collect();
-            let components = structure::components(&asset.manifest, &alive, &instance.bonds);
+            let components = structure::components(&asset.manifest, &alive, bond_states);
             let records = asset
                 .manifest
                 .chunks
@@ -263,11 +278,11 @@ pub(crate) fn update_stress(
                         && component.chunks.binary_search(&bond.b).is_ok()
                     {
                         bond.id.hash(&mut component_hash);
-                        instance.bonds[&bond.id].hash(&mut component_hash);
+                        bond_states[&bond.id].hash(&mut component_hash);
                     }
                 }
                 for id in &component.chunks {
-                    hash_weight(&instance.chunks[id], &mut component_hash);
+                    hash_weight(chunk_at(instance.chunks[id]), &mut component_hash);
                     if let Some(load) = loads.get(id) {
                         id.hash(&mut component_hash);
                         for value in load.force.into_iter().chain(load.moment) {
@@ -294,7 +309,7 @@ pub(crate) fn update_stress(
                     .iter()
                     .filter_map(|id| {
                         let record = records.get(id.as_str())?;
-                        let chunk = &instance.chunks[id];
+                        let chunk = chunk_at(instance.chunks[id]);
                         let center = chunk.center_in_building().as_dvec3();
                         let weight =
                             local_gravity.as_dvec3() * f64::from(chunk.mass_properties.mass);
@@ -318,7 +333,7 @@ pub(crate) fn update_stress(
                 match stress::solve(
                     &asset.manifest,
                     &component.chunks,
-                    &instance.bonds,
+                    bond_states,
                     &applied_loads,
                     &settings.solver,
                 ) {
@@ -405,7 +420,7 @@ pub(crate) fn update_stress(
         {
             state.requires_damage_update = state.bonds.iter().any(|(id, bond)| {
                 bond.valid
-                    && instance.bonds.get(id).copied().unwrap_or(false)
+                    && instance.bonds.get(id).copied().is_some_and(bond_active)
                     && (bond.stress.utilization > 1.0
                         || bond.stress.utilization >= settings.immediate_utilization
                         || bond.damage >= 1.0)
@@ -426,7 +441,7 @@ pub(crate) fn update_stress(
         if state.requires_damage_update {
             let mut candidates = Vec::new();
             for (id, bond) in &mut state.bonds {
-                if !bond.valid || !instance.bonds.get(id).copied().unwrap_or(false) {
+                if !bond.valid || !instance.bonds.get(id).copied().is_some_and(bond_active) {
                     continue;
                 }
                 let utilization = bond.stress.utilization;
@@ -439,24 +454,30 @@ pub(crate) fn update_stress(
             candidates.truncate(settings.max_breaks_per_step);
             if !candidates.is_empty() {
                 for (id, _) in candidates {
-                    instance.bonds.insert(id.clone(), false);
+                    bonds.get_mut(instance.bonds[&id]).unwrap().active = false;
                     state.broken_total += 1;
                     state.last_broken.push(id);
                 }
                 instance.topology_dirty = true;
 
                 // 在刚体簇重建前，从断裂瞬间的位姿生成反馈。
-                if let Some(burst) =
-                    build_bond_feedback(&instance, &asset.manifest, &state.last_broken, |body| {
-                        match body {
-                            Some(body) => {
-                                let (position, rotation) = poses.get(body).unwrap();
-                                Transform::from_translation(position.0).with_rotation(rotation.0)
-                            }
-                            None => root,
+                if let Some(burst) = build_bond_feedback(
+                    &instance,
+                    &asset.manifest,
+                    &state.last_broken,
+                    chunk_at,
+                    instance
+                        .patches
+                        .iter()
+                        .map(|&entity| patches.get(entity).unwrap().patch()),
+                    |body| match body {
+                        Some(body) => {
+                            let (position, rotation) = poses.get(body).unwrap();
+                            Transform::from_translation(position.0).with_rotation(rotation.0)
                         }
-                    })
-                {
+                        None => root,
+                    },
+                ) {
                     bursts.write(burst);
                 }
             }

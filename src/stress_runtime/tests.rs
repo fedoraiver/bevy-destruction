@@ -29,9 +29,13 @@ fn tick(app: &mut App, count: usize) {
 }
 
 fn body(world: &World, root: Entity) -> Entity {
-    world.get::<BuildingInstance>(root).unwrap().chunks[BEAM]
-        .cluster
-        .unwrap()
+    let entity = world.get::<BuildingInstance>(root).unwrap().chunks[BEAM];
+    world.get::<ChunkInstance>(entity).unwrap().cluster.unwrap()
+}
+
+fn bond_active(world: &World, root: Entity, id: &str) -> bool {
+    let entity = world.get::<BuildingInstance>(root).unwrap().bonds[id];
+    world.get::<BondInstance>(entity).unwrap().active
 }
 
 #[test]
@@ -78,9 +82,8 @@ fn overload_releases_a_still_connected_beam_and_keeps_shared_asset_instance_stab
     }
     remove_left_support(app.world_mut(), damaged);
     tick(&mut app, 2);
-    let instance = app.world().get::<BuildingInstance>(damaged).unwrap();
     assert!(
-        instance.bonds[RIGHT_BOND],
+        bond_active(app.world(), damaged, RIGHT_BOND),
         "Fixture lost support before stress-driven fracture"
     );
     let state = app.world().get::<StressState>(damaged).unwrap();
@@ -97,7 +100,7 @@ fn overload_releases_a_still_connected_beam_and_keeps_shared_asset_instance_stab
     tick(&mut app, 90);
     let state = app.world().get::<StressState>(damaged).unwrap();
     assert_eq!(state.broken_total, 1);
-    assert!(!app.world().get::<BuildingInstance>(damaged).unwrap().bonds[RIGHT_BOND]);
+    assert!(!bond_active(app.world(), damaged, RIGHT_BOND));
     let released = body(app.world(), damaged);
     assert_ne!(released, original);
     assert_eq!(
@@ -114,7 +117,7 @@ fn overload_releases_a_still_connected_beam_and_keeps_shared_asset_instance_stab
             .unwrap()
             .bonds
             .values()
-            .all(|active| *active)
+            .all(|&entity| app.world().get::<BondInstance>(entity).unwrap().active)
     );
 }
 
@@ -154,10 +157,12 @@ fn initial_overload_can_fracture_before_the_first_cluster_exists() {
     let expected_point = origin + Vec3::from(bond.center);
     app.add_systems(
         FixedPostUpdate,
-        (move |instances: Query<&BuildingInstance>, mut bursts: MessageReader<BreakBurst>| {
+        (move |instances: Query<&BuildingInstance>,
+               bonds: Query<&BondInstance>,
+               mut bursts: MessageReader<BreakBurst>| {
             let instance = instances.get(root).unwrap();
             assert!(instance.clusters.is_empty());
-            assert!(!instance.bonds[RIGHT_BOND]);
+            assert!(!bonds.get(instance.bonds[RIGHT_BOND]).unwrap().active);
             let mut bursts = bursts.read();
             let burst = bursts
                 .next()
@@ -195,12 +200,11 @@ fn self_weight_uses_collider_mass_and_shifts_moment_to_the_structural_node() {
     )]);
     let density = 2400.0;
     let properties = collider.mass_properties(density);
-    let entity = {
-        let mut instance = app.world_mut().get_mut::<BuildingInstance>(root).unwrap();
-        let chunk = instance.chunks.get_mut(BEAM).unwrap();
-        chunk.mass_properties = properties;
-        chunk.entity
-    };
+    let entity = app.world().get::<BuildingInstance>(root).unwrap().chunks[BEAM];
+    app.world_mut()
+        .get_mut::<ChunkInstance>(entity)
+        .unwrap()
+        .mass_properties = properties;
     app.world_mut()
         .entity_mut(entity)
         .insert((collider, ColliderDensity(density)));
@@ -309,7 +313,7 @@ fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
             .unwrap()
             .bonds
             .values()
-            .any(|active| !active)
+            .any(|&entity| !warm.world().get::<BondInstance>(entity).unwrap().active)
     );
 
     let mut cold = app(60.0);
@@ -326,7 +330,7 @@ fn immediate_threshold_below_one_applies_before_and_after_cache_warmup() {
 
 #[test]
 fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
-    use crate::scene::{ChunkIdentity, ChunkInstance};
+    use crate::scene::ChunkIdentity;
     let mut app = app(60.0);
     let root = spawn_beam(app.world_mut(), Vec3::ZERO);
     let asset = app
@@ -363,6 +367,7 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
     let entity = app
         .world_mut()
         .spawn((
+            Name::new("Detached stress fixture chunk"),
             transform,
             ChildOf(root),
             collider,
@@ -370,6 +375,16 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
             ChunkIdentity {
                 building: root,
                 id: "floating".into(),
+            },
+            ChunkInstance {
+                primitives: Vec::new(),
+                alive: true,
+                triangles: Vec::new(),
+                transform,
+                mass_properties,
+                material: "concrete".into(),
+                detail: None,
+                cluster: None,
             },
         ))
         .id();
@@ -384,30 +399,20 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
         .get_mut::<BuildingInstance>(root)
         .unwrap()
         .chunks
-        .insert(
-            "floating".into(),
-            ChunkInstance {
-                entity,
-                primitives: Vec::new(),
-                alive: true,
-                triangles: Vec::new(),
-                transform,
-                mass_properties,
-                material: "concrete".into(),
-                detail: None,
-                cluster: None,
-            },
-        );
+        .insert("floating".into(), entity);
     tick(&mut app, 5);
     let state = app.world().get::<StressState>(root).unwrap();
     let solves = state.numerical_solves;
     let force = state.bonds[RIGHT_BOND].stress.force;
     let supported = body(app.world(), root);
-    {
-        let mut instance = app.world_mut().get_mut::<BuildingInstance>(root).unwrap();
-        instance.chunks.get_mut("floating").unwrap().alive = false;
-        instance.topology_dirty = true;
-    }
+    app.world_mut()
+        .get_mut::<ChunkInstance>(entity)
+        .unwrap()
+        .alive = false;
+    app.world_mut()
+        .get_mut::<BuildingInstance>(root)
+        .unwrap()
+        .topology_dirty = true;
     tick(&mut app, 3);
     let state = app.world().get::<StressState>(root).unwrap();
     assert_eq!(state.numerical_solves, solves);
@@ -457,7 +462,7 @@ fn failed_solve_does_not_break_bonds_and_recovers_after_settings_change() {
             .unwrap()
             .bonds
             .values()
-            .all(|active| *active)
+            .all(|&entity| app.world().get::<BondInstance>(entity).unwrap().active)
     );
     app.world_mut()
         .resource_mut::<StressSettings>()
@@ -544,7 +549,7 @@ mod collapse {
     use super::*;
     use crate::{
         asset::{ChunkRecord, Manifest},
-        scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider},
+        scene::{BuildingBounds, ChunkIdentity, chunk_collider, spawn_bonds},
     };
     use avian3d::collision::contact_types::ContactGraph;
     use bevy::time::TimeUpdateStrategy;
@@ -576,7 +581,11 @@ mod collapse {
             });
         let root = app
             .world_mut()
-            .spawn((Transform::IDENTITY, Visibility::Visible))
+            .spawn((
+                Name::new("Stress collapse fixture building"),
+                Transform::IDENTITY,
+                Visibility::Visible,
+            ))
             .id();
         let mut instance = BuildingInstance::pending(asset);
         instance.bounds = Some(BuildingBounds {
@@ -584,11 +593,6 @@ mod collapse {
             max: Vec3::new(8.0, 6.24, 0.0),
         });
         instance.topology_dirty = true;
-        instance.bonds = manifest
-            .bonds
-            .iter()
-            .map(|bond| (bond.id.clone(), true))
-            .collect();
         for record in &manifest.chunks {
             let alive = !record.part_id.contains("-l00") || keep_support(record);
             let local = record.transform();
@@ -598,12 +602,23 @@ mod collapse {
             let entity = app
                 .world_mut()
                 .spawn((
+                    Name::new(record.id.clone()),
                     local,
                     GlobalTransform::from(local),
                     ChildOf(root),
                     ChunkIdentity {
                         building: root,
                         id: record.id.clone(),
+                    },
+                    ChunkInstance {
+                        primitives: Vec::new(),
+                        alive,
+                        triangles: Vec::new(),
+                        transform: local,
+                        mass_properties,
+                        material: record.material.clone(),
+                        detail: None,
+                        cluster: None,
                     },
                 ))
                 .id();
@@ -612,27 +627,26 @@ mod collapse {
                     .entity_mut(entity)
                     .insert((collider, ColliderDensity(density)));
             }
-            instance.chunks.insert(
-                record.id.clone(),
-                ChunkInstance {
-                    entity,
-                    primitives: Vec::new(),
-                    alive,
-                    triangles: Vec::new(),
-                    transform: local,
-                    mass_properties,
-                    material: record.material.clone(),
-                    detail: None,
-                    cluster: None,
-                },
-            );
+            instance.chunks.insert(record.id.clone(), entity);
         }
+        let world = app.world_mut();
+        let mut commands = world.commands();
+        spawn_bonds(&mut commands, root, &mut instance, &manifest.bonds);
+        world.flush();
         for bond in &manifest.bonds {
-            if !instance.chunks[&bond.a].alive || !instance.chunks[&bond.b].alive {
-                instance.bonds.insert(bond.id.clone(), false);
+            if [&bond.a, &bond.b].into_iter().any(|id| {
+                !world
+                    .get::<ChunkInstance>(instance.chunks[id])
+                    .unwrap()
+                    .alive
+            }) {
+                world
+                    .get_mut::<BondInstance>(instance.bonds[&bond.id])
+                    .unwrap()
+                    .active = false;
             }
         }
-        app.world_mut().entity_mut(root).insert(instance);
+        world.entity_mut(root).insert(instance);
         (app, root)
     }
 
@@ -655,13 +669,15 @@ mod collapse {
         let expected_mass = instance
             .chunks
             .values()
+            .map(|&entity| app.world().get::<ChunkInstance>(entity).unwrap())
             .filter(|chunk| chunk.alive)
             .map(|chunk| f64::from(chunk.mass_properties.mass))
             .sum::<f64>();
         let upper = instance
             .chunks
             .iter()
-            .filter_map(|(id, chunk)| {
+            .filter_map(|(id, &entity)| {
+                let chunk = app.world().get::<ChunkInstance>(entity).unwrap();
                 let center = chunk.center_in_building();
                 (center.y >= 3.0).then_some((id.clone(), (center, chunk.mass_properties.mass)))
             })
@@ -671,12 +687,13 @@ mod collapse {
             app.update();
             let instance = app.world().get::<BuildingInstance>(root).unwrap();
             let stub = static_stub.map(|id| {
-                let stub = &instance.chunks[id];
+                let entity = instance.chunks[id];
+                let stub = app.world().get::<ChunkInstance>(entity).unwrap();
                 let body = stub.cluster.unwrap();
                 assert!(stub.alive);
                 assert!(app.world().get::<physics::Cluster>(body).unwrap().anchored);
                 assert_eq!(app.world().get::<RigidBody>(body), Some(&RigidBody::Static));
-                stub.entity
+                entity
             });
             let mut total_mass = 0.0_f64;
             for &body in &instance.clusters {
@@ -790,7 +807,7 @@ mod collapse {
                 .unwrap()
                 .chunks
                 .values()
-                .filter(|chunk| chunk.alive)
+                .filter(|&&entity| app.world().get::<ChunkInstance>(entity).unwrap().alive)
                 .count(),
             217
         );

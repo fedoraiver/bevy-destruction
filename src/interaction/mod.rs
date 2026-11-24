@@ -8,7 +8,11 @@ use crate::{
     asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
     debug::FractureEdges,
-    scene::{BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, RemovedChunk},
+    fracture_detail::ContactPatch,
+    scene::{
+        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, PatchInstance,
+        RemovedChunk,
+    },
     vfx::{BreakBurst, EmissionSurface},
 };
 
@@ -42,39 +46,47 @@ pub(crate) fn bond_feedback(world: &mut World, building: Entity, broken: &[Strin
         .resource::<Assets<DestructibleAsset>>()
         .get(&instance.asset)
         .unwrap();
-    let burst = build_bond_feedback(instance, &asset.manifest, broken, |body| {
-        if let Some(body) = body {
-            Transform::from_translation(world.get::<Position>(body).unwrap().0)
-                .with_rotation(world.get::<Rotation>(body).unwrap().0)
-        } else {
-            crate::physics::global_transform(world, building).compute_transform()
-        }
-    });
+    let burst = build_bond_feedback(
+        instance,
+        &asset.manifest,
+        broken,
+        |entity| world.get::<ChunkInstance>(entity).unwrap(),
+        instance
+            .patches
+            .iter()
+            .map(|&entity| world.get::<PatchInstance>(entity).unwrap().patch()),
+        |body| {
+            if let Some(body) = body {
+                Transform::from_translation(world.get::<Position>(body).unwrap().0)
+                    .with_rotation(world.get::<Rotation>(body).unwrap().0)
+            } else {
+                crate::physics::global_transform(world, building).compute_transform()
+            }
+        },
+    );
     if let Some(burst) = burst {
         world.write_message(burst);
     }
 }
 
-pub(crate) fn build_bond_feedback(
+pub(crate) fn build_bond_feedback<'a>(
     instance: &BuildingInstance,
     manifest: &Manifest,
     broken: &[String],
+    chunk_at: impl Fn(Entity) -> &'a ChunkInstance,
+    patches: impl Iterator<Item = &'a ContactPatch>,
     world_pose: impl Fn(Option<Entity>) -> Transform,
 ) -> Option<BreakBurst> {
     let bond = manifest
         .bonds
         .iter()
         .find(|bond| broken.contains(&bond.id))?;
-    let chunk = &instance.chunks[&bond.a];
-    let pose_for = |id: &str| world_pose(instance.chunks[id].cluster);
+    let chunk = chunk_at(instance.chunks[&bond.a]);
+    let pose_for = |id: &str| world_pose(chunk_at(instance.chunks[id]).cluster);
     let pose = pose_for(&bond.a);
     let mut surfaces = Vec::new();
     let mut area = 0.0;
-    for patch in instance
-        .patches
-        .iter()
-        .filter(|patch| broken.contains(&patch.bond_id))
-    {
+    for patch in patches.filter(|patch| broken.contains(&patch.bond_id)) {
         let pose = pose_for(&patch.a);
         area += patch.area;
         surfaces.extend(patch.triangles.iter().map(|triangle| EmissionSurface {
@@ -182,6 +194,9 @@ pub fn apply_damage(
     identities: Query<&ChunkIdentity>,
     poses: Query<(&Position, &Rotation)>,
     mut instances: Query<&mut BuildingInstance>,
+    mut chunks: Query<&mut ChunkInstance>,
+    mut bonds: Query<&mut BondInstance>,
+    patches: Query<(&PatchInstance, &ChildOf)>,
     assets: Res<Assets<DestructibleAsset>>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
@@ -192,16 +207,7 @@ pub fn apply_damage(
             1000.0,
             true,
             &SpatialQueryFilter::default(),
-            &|entity| {
-                let Ok(identity) = identities.get(entity) else {
-                    return false;
-                };
-                instances
-                    .get(identity.building)
-                    .ok()
-                    .and_then(|instance| instance.chunks.get(&identity.id))
-                    .is_some_and(|chunk| chunk.alive)
-            },
+            &|entity| chunks.get(entity).is_ok_and(|chunk| chunk.alive),
         );
         let Some(hit) = hit else {
             continue;
@@ -218,20 +224,24 @@ pub fn apply_damage(
         let point = ray.get_point(hit.distance);
         let normal = hit.normal;
         let mut candidates = Vec::new();
-        for bond in &asset.manifest.bonds {
-            if !instance.bonds.get(&bond.id).copied().unwrap_or(false) {
+        for &entity in instance.bonds.values() {
+            let bond = bonds.get(entity).unwrap();
+            if !bond.active {
                 continue;
             }
-            let neighbor = if bond.a == identity.id {
-                &bond.b
-            } else if bond.b == identity.id {
-                &bond.a
+            debug_assert_eq!(instance.bonds[&bond.id], entity);
+            let [a, b] = bond.endpoints;
+            let neighbor = if hit.entity == a {
+                b
+            } else if hit.entity == b {
+                a
             } else {
                 continue;
             };
-            if let Some(chunk) = instance.chunks.get(neighbor).filter(|chunk| chunk.alive)
+            if let Ok(chunk) = chunks.get(neighbor)
+                && chunk.alive
                 && let Some(distance) = {
-                    let rest_from_world = world_from_rest(chunk, &poses).inverse();
+                    let rest_from_world = world_from_rest(neighbor, chunk, &poses).inverse();
                     surface_distance(
                         &chunk.triangles,
                         rest_from_world.transform_point3(point),
@@ -240,7 +250,7 @@ pub fn apply_damage(
                 }
                 && distance <= BREAK_RADIUS
             {
-                candidates.push((neighbor.clone(), distance));
+                candidates.push((identities.get(neighbor).unwrap().id.clone(), distance));
             }
         }
         candidates.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -272,17 +282,21 @@ pub fn apply_damage(
             .iter()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        for patch in instance.patches.iter() {
-            if !instance.bonds[&patch.bond_id] {
+        for &entity in &instance.patches {
+            let (runtime_patch, parent) = patches.get(entity).unwrap();
+            if !bonds.get(parent.parent()).unwrap().active {
                 continue;
             }
+            let patch = runtime_patch.patch();
             let removed_a = selected.contains(&patch.a);
             let removed_b = selected.contains(&patch.b);
             if removed_a == removed_b {
                 continue;
             }
             let survivor = if removed_a { &patch.b } else { &patch.a };
-            if !instance.chunks[survivor].alive {
+            let survivor_entity = instance.chunks[survivor];
+            let chunk = chunks.get(survivor_entity).unwrap();
+            if !chunk.alive {
                 continue;
             }
             dirty.insert(survivor.clone());
@@ -292,7 +306,7 @@ pub fn apply_damage(
             } else {
                 patch.normal
             };
-            let world_from_rest = world_from_rest(&instance.chunks[survivor], &poses);
+            let world_from_rest = world_from_rest(survivor_entity, chunk, &poses);
             surfaces.extend(patch.triangles.iter().map(|triangle| EmissionSurface {
                 triangle: triangle.map(|point| world_from_rest.transform_point3(point)),
                 normal: world_from_rest.transform_vector3(normal).normalize(),
@@ -308,19 +322,25 @@ pub fn apply_damage(
         surfaces.truncate(256);
         instance.detail_dirty.extend(dirty);
         for id in &selected {
-            let chunk = instance.chunks.get_mut(id).unwrap();
+            let entity = instance.chunks[id];
+            let mut chunk = chunks.get_mut(entity).unwrap();
             chunk.alive = false;
             commands
-                .entity(chunk.entity)
+                .entity(entity)
                 .insert((RemovedChunk, Visibility::Hidden))
                 .remove::<FractureEdges>();
             for &primitive in &chunk.primitives {
                 commands.entity(primitive).despawn();
             }
         }
-        for bond in &asset.manifest.bonds {
-            if selected.contains(&bond.a) || selected.contains(&bond.b) {
-                instance.bonds.insert(bond.id.clone(), false);
+        for &entity in instance.bonds.values() {
+            let mut bond = bonds.get_mut(entity).unwrap();
+            if bond.active
+                && selected
+                    .iter()
+                    .any(|id| bond.endpoints.contains(&instance.chunks[id]))
+            {
+                bond.active = false;
             }
         }
         instance.topology_dirty = true;
@@ -346,10 +366,11 @@ pub fn apply_damage(
 }
 
 fn world_from_rest(
+    entity: Entity,
     chunk: &ChunkInstance,
     poses: &Query<(&Position, &Rotation)>,
 ) -> bevy::math::Affine3A {
-    let (position, rotation) = poses.get(chunk.entity).expect("Chunk has a physics pose");
+    let (position, rotation) = poses.get(entity).expect("Chunk has a physics pose");
     Transform::from_translation(position.0)
         .with_rotation(rotation.0)
         .compute_affine()

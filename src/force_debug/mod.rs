@@ -16,7 +16,7 @@ use crate::{
     },
     material::{HEAT_AMBER_TAG, HEAT_RED_TAG},
     physics::Cluster,
-    scene::{BuildingInstance, ChunkIdentity, DemoCamera},
+    scene::{BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera},
     stress::BondStress,
     stress_runtime::{StressSettings, StressState, StructuralLoads},
 };
@@ -172,7 +172,7 @@ fn pick_target(
     cameras: Query<(&Camera, &Projection, &GlobalTransform), With<DemoCamera>>,
     instances: Query<(Entity, &BuildingInstance)>,
     poses: Query<&GlobalTransform, With<Cluster>>,
-    inherited: Query<&InheritedVisibility>,
+    chunks: Query<(&ChunkInstance, &InheritedVisibility)>,
     occluders: Query<
         (&Collider, &GlobalTransform, &InheritedVisibility),
         (Without<ChunkIdentity>, With<Mesh3d>),
@@ -209,12 +209,11 @@ fn pick_target(
 
     let mut source_chunks = Vec::new();
     for (building, instance) in &instances {
-        for (id, chunk) in &instance.chunks {
-            if !chunk.alive
-                || !inherited
-                    .get(chunk.entity)
-                    .is_ok_and(|visible| visible.get())
-            {
+        for (id, &entity) in &instance.chunks {
+            let Ok((chunk, visible)) = chunks.get(entity) else {
+                continue;
+            };
+            if !chunk.alive || !visible.get() {
                 continue;
             }
             let Some(pose) = chunk.cluster.and_then(|body| poses.get(body).ok()) else {
@@ -255,22 +254,25 @@ fn pick_target(
     }
 }
 
-pub(crate) fn sample_members_current(
+fn sample_members_current<'a>(
     sample: &DynamicForceSample,
     instance: &BuildingInstance,
     cluster: &Cluster,
     parent: &ChildOf,
+    chunk: impl Fn(Entity) -> Option<&'a ChunkInstance>,
+    current_bond_signature: impl FnOnce() -> u64,
 ) -> bool {
     parent.parent() == sample.building
         && !cluster.anchored
-        && sample.bond_signature == bond_signature(&instance.bonds)
         && cluster.chunks.len() == sample.chunks.len()
         && sample.chunks.iter().all(|id| {
             instance
                 .chunks
                 .get(id)
+                .and_then(|&entity| chunk(entity))
                 .is_some_and(|chunk| chunk.alive && chunk.cluster == Some(sample.body))
         })
+        && sample.bond_signature == current_bond_signature()
 }
 
 fn heat_tag(utilization: f64) -> u32 {
@@ -338,7 +340,6 @@ fn draw(
     mut samples: ResMut<ForceSamples>,
     mut stats: ResMut<ForceViewStats>,
     time: Res<Time<Fixed>>,
-    assets: Res<Assets<DestructibleAsset>>,
     gravity: Res<Gravity>,
     settings: Res<StressSettings>,
     loads: Res<StructuralLoads>,
@@ -348,6 +349,8 @@ fn draw(
         Option<&StressState>,
         &GlobalTransform,
     )>,
+    chunks: Query<(&ChunkIdentity, &ChunkInstance)>,
+    bonds: Query<&BondInstance>,
     bodies: Query<(&GlobalTransform, &RigidBody, &Cluster, &ChildOf)>,
     mut tags: Query<&mut MeshTag>,
     mut painted: Local<BTreeMap<Entity, u32>>,
@@ -361,6 +364,7 @@ fn draw(
     }
     stats.pick_queries = usize::from(aim.queried);
     let now = time.elapsed_secs_f64();
+    let mut signatures = BTreeMap::new();
     samples.prune(
         now,
         |sample| {
@@ -370,7 +374,23 @@ fn draw(
                 .zip(bodies.get(sample.body).ok())
                 .is_some_and(|((_, instance, _, _), (_, kind, cluster, parent))| {
                     *kind == RigidBody::Dynamic
-                        && sample_members_current(sample, &instance, cluster, parent)
+                        && sample_members_current(
+                            sample,
+                            &instance,
+                            cluster,
+                            parent,
+                            |entity| chunks.get(entity).ok().map(|(_, chunk)| chunk),
+                            || {
+                                *signatures.entry(sample.building).or_insert_with(|| {
+                                    bond_signature(instance.bonds.iter().map(|(id, &entity)| {
+                                        (
+                                            id.as_str(),
+                                            bonds.get(entity).is_ok_and(|bond| bond.active),
+                                        )
+                                    }))
+                                })
+                            },
+                        )
                 })
         },
         |sample| {
@@ -380,7 +400,8 @@ fn draw(
                     instance
                         .chunks
                         .get(&sample.chunk)
-                        .is_some_and(|chunk| chunk.alive)
+                        .and_then(|&entity| chunks.get(entity).ok())
+                        .is_some_and(|(_, chunk)| chunk.alive)
                 })
         },
     );
@@ -388,9 +409,6 @@ fn draw(
     let mut desired = BTreeMap::new();
     let mut inspection_bonds = Vec::new();
     for (building, instance, state, root) in &instances {
-        let Some(asset) = assets.get(&instance.asset) else {
-            continue;
-        };
         let selected = aim.hit.as_ref().filter(|hit| hit.key.0 == building);
         let current_static = state.filter(|state| {
             settings.enabled
@@ -401,18 +419,19 @@ fn draw(
                     root.compute_transform().rotation.conjugate() * gravity.0,
                 )
         });
-        let mut heat = BTreeMap::<&str, u32>::new();
-        for bond in &asset.manifest.bonds {
-            if !instance.bonds.get(&bond.id).copied().unwrap_or(false) {
-                continue;
-            }
-            let Some((a, b)) = instance
-                .chunks
-                .get(&bond.a)
-                .zip(instance.chunks.get(&bond.b))
-            else {
+        let mut heat = BTreeMap::<(&str, Entity), u32>::new();
+        for &entity in instance.bonds.values() {
+            let Ok(bond) = bonds.get(entity) else {
                 continue;
             };
+            if !bond.active {
+                continue;
+            }
+            let Ok([(a_id, a), (b_id, b)]) = chunks.get_many(bond.endpoints) else {
+                continue;
+            };
+            let a_id = a_id.id.as_str();
+            let b_id = b_id.id.as_str();
             let Some(body) = a
                 .cluster
                 .filter(|body| a.alive && b.alive && b.cluster == Some(*body))
@@ -454,17 +473,17 @@ fn draw(
 
             let tag = heat_tag(stress.utilization);
             if tag != 0 {
-                for id in [bond.a.as_str(), bond.b.as_str()] {
-                    heat.entry(id)
+                for endpoint in [(a_id, bond.endpoints[0]), (b_id, bond.endpoints[1])] {
+                    heat.entry(endpoint)
                         .and_modify(|old| *old = (*old).max(tag))
                         .or_insert(tag);
                 }
             }
             if let Some(hit) = selected
-                && (hit.key.1 == bond.a || hit.key.1 == bond.b)
+                && (hit.key.1 == a_id || hit.key.1 == b_id)
             {
                 inspection_bonds.push(InspectionBond {
-                    direction: direction_on_chunk(pose, stress.force, hit.key.1 == bond.a),
+                    direction: direction_on_chunk(pose, stress.force, hit.key.1 == a_id),
                     readout: ForceBondReadout {
                         id: bond.id.clone(),
                         force_n,
@@ -475,13 +494,9 @@ fn draw(
                 });
             }
         }
-        for (id, tag) in heat {
-            desired.extend(
-                instance.chunks[id]
-                    .primitives
-                    .iter()
-                    .map(|&primitive| (primitive, tag)),
-            );
+        for ((id, entity), tag) in heat {
+            let (_, chunk) = chunks.get(entity).expect("Heat endpoint is a live chunk");
+            desired.extend(chunk.primitives.iter().map(|&primitive| (primitive, tag)));
             stats.tinted_chunks.insert((building, id.to_owned()), tag);
         }
     }

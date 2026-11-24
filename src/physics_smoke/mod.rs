@@ -7,7 +7,7 @@ use crate::{
     DemoOptions,
     asset::{DestructibleAsset, Manifest},
     physics::Cluster,
-    scene::{BuildingInstance, DemoCamera},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera},
 };
 
 pub struct PhysicsSmokePlugin;
@@ -195,6 +195,8 @@ fn drive(
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<PhysicsSmokeState>,
     mut instances: Query<(Entity, &mut BuildingInstance)>,
+    mut chunks: Query<&mut ChunkInstance>,
+    mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
         Entity,
         &Cluster,
@@ -301,7 +303,13 @@ fn drive(
             };
             state.expected_mass = selected
                 .iter()
-                .map(|id| instance.chunks[id].mass_properties.mass)
+                .map(|id| {
+                    chunks
+                        .get(instance.chunks[id])
+                        .unwrap()
+                        .mass_properties
+                        .mass
+                })
                 .sum();
             info!(
                 "Physics smoke: releasing roof pair {selected:?}; existing clusters={:?}",
@@ -310,9 +318,10 @@ fn drive(
                     .collect::<Vec<_>>()
             );
             for id in &selected {
+                let chunk = chunks.get(instance.chunks[id]).unwrap();
                 state
                     .initial_centers
-                    .insert(id.clone(), instance.chunks[id].center_in_building());
+                    .insert(id.clone(), chunk.center_in_building());
             }
             state.cleared_chunks = asset
                 .manifest
@@ -335,10 +344,10 @@ fn drive(
                 .into_iter()
                 .collect();
             for id in &state.cleared_chunks {
-                let chunk = instance.chunks.get_mut(id).unwrap();
-                chunk.alive = false;
+                let entity = instance.chunks[id];
+                chunks.get_mut(entity).unwrap().alive = false;
                 commands
-                    .entity(chunk.entity)
+                    .entity(entity)
                     .insert((crate::scene::RemovedChunk, Visibility::Hidden));
             }
             for bond in &asset.manifest.bonds {
@@ -348,7 +357,7 @@ fn drive(
                     || state.cleared_chunks.contains(&bond.a)
                     || state.cleared_chunks.contains(&bond.b)
                 {
-                    instance.bonds.insert(bond.id.clone(), false);
+                    bonds.get_mut(instance.bonds[&bond.id]).unwrap().active = false;
                 } else if a {
                     state.pair_bonds.push(bond.id.clone());
                 }
@@ -410,7 +419,10 @@ fn drive(
                 let parent_center = position.0 + rotation.0 * center.0;
                 for id in &cluster.chunks {
                     if state.selected.contains(id) {
-                        let local = instance.chunks[id].center_in_building();
+                        let local = chunks
+                            .get(instance.chunks[id])
+                            .unwrap()
+                            .center_in_building();
                         let point = position.0 + rotation.0 * local;
                         let velocity = linear.0 + angular.0.cross(point - parent_center);
                         state.split_predictions.insert(
@@ -426,7 +438,7 @@ fn drive(
                 }
             }
             for bond in &state.pair_bonds {
-                instance.bonds.insert(bond.clone(), false);
+                bonds.get_mut(instance.bonds[bond]).unwrap().active = false;
             }
             instance.topology_dirty = true;
             state.verify_split_pending = true;

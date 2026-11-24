@@ -28,6 +28,8 @@
 
 分析撞击和处理场景结构变更仍有多阶段的独占流程。之后的重构需保留接触、断键、重建和反馈之间的消费时点。
 
+[ADR 0023](0023-ecs-structure-entities.md) 记录后续的结构图 ECS 实体化。
+
 ## 来源
 
 [承载系统](../../../src/stress_runtime/mod.rs) · [断裂反馈](../../../src/interaction/mod.rs) · [刚体簇](../../../src/physics/mod.rs) · [撞击处理](../../../src/projectiles/mod.rs) · [受力显示](../../../src/force_debug/mod.rs)

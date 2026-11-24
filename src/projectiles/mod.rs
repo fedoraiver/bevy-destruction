@@ -8,14 +8,16 @@ use bevy::{
 
 use crate::{
     DemoOptions,
-    asset::{DestructibleAsset, Manifest},
+    asset::{BondPatchRecord, DestructibleAsset, Manifest, PhysicalMaterial},
     camera::CameraControl,
     force_samples::{
         DynamicForceSample, ForceCapture, ForceSamples, ImpulseSample, MAX_IMPULSE_SAMPLES,
         bond_signature,
     },
     physics::Cluster,
-    scene::{BuildingInstance, ChunkIdentity, DemoCamera},
+    scene::{
+        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, StructuralPatch,
+    },
     stress::{self, NodeLoad, SolverSettings},
 };
 
@@ -261,10 +263,12 @@ fn impact_damage(world: &mut World) {
             (pair.collider2, impulse, 1.0),
         ] {
             if let Some(identity) = world.get::<ChunkIdentity>(collider) {
-                let Some(instance) = world.get::<BuildingInstance>(identity.building) else {
+                if world.get::<BuildingInstance>(identity.building).is_none() {
+                    continue;
+                }
+                let Some(chunk) = world.get::<ChunkInstance>(collider) else {
                     continue;
                 };
-                let chunk = &instance.chunks[&identity.id];
                 if !chunk.alive {
                     continue;
                 }
@@ -354,7 +358,8 @@ fn impact_damage(world: &mut World) {
         else {
             continue;
         };
-        let chunk = &instance.chunks[&id];
+        let hit = instance.chunks[&id];
+        let chunk = world.get::<ChunkInstance>(hit).unwrap();
         if !chunk.alive {
             continue;
         }
@@ -363,10 +368,8 @@ fn impact_damage(world: &mut World) {
         };
         let impulse = world.get::<Rotation>(body).unwrap().0.conjugate() * impulse;
         queue_local_damage(
-            &asset.manifest,
-            instance,
+            local_impact_bonds(world, &asset.manifest, instance, &id, hit),
             building,
-            &id,
             impulse,
             &mut state.pending,
         );
@@ -377,20 +380,25 @@ fn impact_damage(world: &mut World) {
     let mut structural_broken = 0;
     if let Some(report) = &mut structural
         && let Some((building, bonds)) = report.fracture.take()
-        && let Some(mut instance) = world.get_mut::<BuildingInstance>(building)
     {
         for id in bonds {
-            if let Some(active) = instance.bonds.get_mut(&id)
-                && *active
+            let bond = world
+                .get::<BuildingInstance>(building)
+                .and_then(|instance| instance.bonds.get(&id).copied());
+            if let Some(mut bond) = bond.and_then(|entity| world.get_mut::<BondInstance>(entity))
+                && bond.active
             {
-                *active = false;
+                bond.active = false;
                 broken.entry(building).or_default().push(id);
                 structural_broken += 1;
                 budget -= 1;
             }
         }
         if structural_broken > 0 {
-            instance.topology_dirty = true;
+            world
+                .get_mut::<BuildingInstance>(building)
+                .unwrap()
+                .topology_dirty = true;
             if let Some(shock) = report.continuation.take() {
                 state.shocks.push_back(shock);
             }
@@ -403,19 +411,24 @@ fn impact_damage(world: &mut World) {
         .collect::<Vec<_>>();
     pending.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     for ((building, id), _) in pending {
-        let Some(mut instance) = world.get_mut::<BuildingInstance>(building) else {
+        let bond = world
+            .get::<BuildingInstance>(building)
+            .and_then(|instance| instance.bonds.get(&id).copied());
+        let Some(mut bond) = bond
+            .and_then(|entity| world.get_mut::<BondInstance>(entity))
+            .filter(|bond| bond.active)
+        else {
             state.pending.remove(&(building, id));
             continue;
         };
-        if !instance.bonds.get(&id).copied().unwrap_or(false) {
-            state.pending.remove(&(building, id));
-            continue;
-        }
         if budget == 0 {
             break;
         }
-        instance.bonds.insert(id.clone(), false);
-        instance.topology_dirty = true;
+        bond.active = false;
+        world
+            .get_mut::<BuildingInstance>(building)
+            .unwrap()
+            .topology_dirty = true;
         broken.entry(building).or_default().push(id.clone());
         state.pending.remove(&(building, id));
         budget -= 1;
@@ -464,31 +477,70 @@ fn impact_damage(world: &mut World) {
     world.insert_resource(state);
 }
 
-fn queue_local_damage(
-    manifest: &Manifest,
-    instance: &BuildingInstance,
+struct LocalImpactBond<'a> {
+    id: &'a str,
+    hit_first: bool,
+    materials: [&'a PhysicalMaterial; 2],
+    patches: Vec<&'a BondPatchRecord>,
+}
+
+fn local_impact_bonds<'a>(
+    world: &'a World,
+    manifest: &'a Manifest,
+    instance: &'a BuildingInstance,
+    hit_id: &'a str,
+    hit: Entity,
+) -> impl Iterator<Item = LocalImpactBond<'a>> {
+    manifest.bonds.iter().filter_map(move |record| {
+        if record.a != hit_id && record.b != hit_id {
+            return None;
+        }
+        let entity = *instance.bonds.get(&record.id)?;
+        let bond = world.get::<BondInstance>(entity)?;
+        if !bond.active || !bond.endpoints.contains(&hit) {
+            return None;
+        }
+        let mut patch_indices = world
+            .get::<Children>(entity)
+            .into_iter()
+            .flatten()
+            .filter_map(|&entity| world.get::<StructuralPatch>(entity))
+            .map(|patch| patch.index)
+            .collect::<Vec<_>>();
+        // Preserve the asset's facet order when summing contact areas.
+        patch_indices.sort_unstable();
+        Some(LocalImpactBond {
+            id: &bond.id,
+            hit_first: bond.endpoints[0] == hit,
+            materials: bond.endpoints.map(|endpoint| {
+                let chunk = world.get::<ChunkInstance>(endpoint).unwrap();
+                &manifest.materials[&chunk.material]
+            }),
+            patches: patch_indices
+                .into_iter()
+                .map(|index| &record.patches[index])
+                .collect(),
+        })
+    })
+}
+
+fn queue_local_damage<'a>(
+    bonds: impl Iterator<Item = LocalImpactBond<'a>>,
     building: Entity,
-    id: &str,
     impulse: Vec3,
     pending: &mut BTreeMap<(Entity, String), f32>,
 ) {
-    let bonds = manifest
-        .bonds
-        .iter()
-        .filter(|bond| (bond.a == id || bond.b == id) && instance.bonds[&bond.id])
-        .collect::<Vec<_>>();
+    let bonds = bonds.collect::<Vec<_>>();
     let total_area = bonds
         .iter()
         .flat_map(|bond| &bond.patches)
         .map(|patch| patch.area)
         .sum::<f32>();
     for bond in bonds {
-        let material = |id: &str| &manifest.materials[&instance.chunks[id].material];
-        let a = material(&bond.a);
-        let b = material(&bond.b);
+        let [a, b] = bond.materials;
         let utilization = |normal: Vec3| {
             let projected = impulse.dot(normal);
-            let tension = projected * if bond.a == id { -1.0 } else { 1.0 };
+            let tension = projected * if bond.hit_first { -1.0 } else { 1.0 };
             let normal_strength = if tension > 0.0 {
                 a.tension_strength.min(b.tension_strength)
             } else {
@@ -507,7 +559,7 @@ fn queue_local_damage(
             .map(|patch| utilization(Vec3::from(patch.normal)))
             .fold(0.0_f32, f32::max);
         if utilization >= 1.0 {
-            let prior = pending.entry((building, bond.id.clone())).or_default();
+            let prior = pending.entry((building, bond.id.to_owned())).or_default();
             *prior = prior.max(utilization);
         }
     }
@@ -529,9 +581,9 @@ struct ImpactChunk<'a> {
     inertia: DMat3,
 }
 
-fn inertial_loads(
+fn inertial_loads<'a>(
     manifest: &Manifest,
-    instance: &BuildingInstance,
+    get_chunk: impl Fn(&str) -> Option<&'a ChunkInstance>,
     chunks: &[String],
     impulses: &BTreeMap<String, ImpulseLoad>,
 ) -> Option<InertialLoadCase> {
@@ -541,7 +593,7 @@ fn inertial_loads(
         .iter()
         .filter(|record| selected.contains(record.id.as_str()))
         .map(|record| {
-            let chunk = instance.chunks.get(&record.id)?;
+            let chunk = get_chunk(&record.id)?;
             let properties = &chunk.mass_properties;
             let inertia = properties.global_angular_inertia_tensor(chunk.transform.rotation);
             Some(ImpactChunk {
@@ -664,14 +716,18 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         else {
             continue;
         };
+        let get_chunk = |id: &str| {
+            instance
+                .chunks
+                .get(id)
+                .and_then(|&entity| world.get::<ChunkInstance>(entity))
+        };
         if shock.prepared.is_none() {
             let source_bodies = shock
                 .loads
                 .keys()
                 .map(|id| {
-                    instance
-                        .chunks
-                        .get(id)
+                    get_chunk(id)
                         .filter(|chunk| chunk.alive)
                         .and_then(|chunk| chunk.cluster)
                 })
@@ -713,7 +769,7 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         }
         let mut groups = BTreeMap::<Entity, Vec<String>>::new();
         for id in &shock.chunks {
-            if let Some(chunk) = instance.chunks.get(id).filter(|chunk| chunk.alive)
+            if let Some(chunk) = get_chunk(id).filter(|chunk| chunk.alive)
                 && let Some(body) = chunk.cluster
             {
                 groups.entry(body).or_default().push(id.clone());
@@ -735,7 +791,8 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         let started = bevy::platform::time::Instant::now();
         // Continuations retain these inputs until the membership checks above release the event.
         if shock.prepared.is_none() {
-            let Some(case) = inertial_loads(&asset.manifest, instance, &shock.chunks, &shock.loads)
+            let Some(case) =
+                inertial_loads(&asset.manifest, get_chunk, &shock.chunks, &shock.loads)
             else {
                 continue;
             };
@@ -753,11 +810,13 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
             continuation: None,
             force_sample: None,
         };
+        let bond_states =
+            instance.bond_states(|entity| world.get::<BondInstance>(entity).unwrap().active);
         let result = if case.force_balance_ratio <= 1e-6 && case.moment_balance_ratio <= 1e-6 {
             stress::solve_with_gauge(
                 &asset.manifest,
                 &shock.chunks,
-                &instance.bonds,
+                &bond_states,
                 &case.loads,
                 &SolverSettings::default(),
                 &shock.chunks[0],
@@ -793,7 +852,11 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
                             body: *groups.keys().next().unwrap(),
                             chunks: shock.chunks.clone(),
                             bonds: solution.bonds,
-                            bond_signature: bond_signature(&instance.bonds),
+                            bond_signature: bond_signature(
+                                bond_states
+                                    .iter()
+                                    .map(|(id, &active)| (id.as_str(), active)),
+                            ),
                             captured_at: world.resource::<Time<Fixed>>().elapsed_secs_f64(),
                         });
                     }
@@ -807,10 +870,8 @@ fn process_dynamic_impact(world: &World, state: &mut ImpactState) -> Option<Dyna
         if !report.valid {
             for (id, load) in &shock.loads {
                 queue_local_damage(
-                    &asset.manifest,
-                    instance,
+                    local_impact_bonds(world, &asset.manifest, instance, id, instance.chunks[id]),
                     shock.building,
-                    id,
                     load.linear.as_vec3(),
                     &mut state.pending,
                 );

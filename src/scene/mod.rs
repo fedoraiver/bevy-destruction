@@ -16,7 +16,9 @@ use bevy::{
 
 use crate::{
     DemoOptions,
-    asset::{ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building},
+    asset::{
+        BondRecord, ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building,
+    },
     camera::{Crosshair, FreeCamera},
     contact_mask::ContactMaskBuilder,
     debug::fracture_edges,
@@ -70,8 +72,8 @@ impl BuildingBounds {
     }
 }
 
+#[derive(Component)]
 pub struct ChunkInstance {
-    pub entity: Entity,
     pub primitives: Vec<Entity>,
     pub alive: bool,
     pub triangles: Vec<[Vec3; 3]>,
@@ -92,11 +94,11 @@ impl ChunkInstance {
 #[derive(Component)]
 pub struct BuildingInstance {
     pub asset: Handle<DestructibleAsset>,
-    pub chunks: BTreeMap<String, ChunkInstance>,
-    pub bonds: BTreeMap<String, bool>,
+    pub chunks: BTreeMap<String, Entity>,
+    pub bonds: BTreeMap<String, Entity>,
     pub bounds: Option<BuildingBounds>,
     pub error: Option<String>,
-    pub patches: Arc<Vec<ContactPatch>>,
+    pub patches: Vec<Entity>,
     pub detail_dirty: std::collections::BTreeSet<String>,
     pub clusters: Vec<Entity>,
     pub topology_dirty: bool,
@@ -110,11 +112,98 @@ impl BuildingInstance {
             bonds: BTreeMap::new(),
             bounds: None,
             error: None,
-            patches: Arc::new(Vec::new()),
+            patches: Vec::new(),
             detail_dirty: default(),
             clusters: Vec::new(),
             topology_dirty: false,
         }
+    }
+
+    pub(crate) fn bond_states(
+        &self,
+        mut is_active: impl FnMut(Entity) -> bool,
+    ) -> BTreeMap<String, bool> {
+        self.bonds
+            .iter()
+            .map(|(id, &entity)| (id.clone(), is_active(entity)))
+            .collect()
+    }
+}
+
+#[derive(Component)]
+pub struct BondInstance {
+    pub id: String,
+    pub endpoints: [Entity; 2],
+    pub active: bool,
+}
+
+#[derive(Component)]
+pub struct StructuralPatch {
+    pub index: usize,
+}
+
+#[derive(Component)]
+pub struct PatchInstance {
+    pub index: usize,
+    geometry: Arc<Vec<ContactPatch>>,
+}
+
+impl PatchInstance {
+    pub fn patch(&self) -> &ContactPatch {
+        &self.geometry[self.index]
+    }
+}
+
+pub(crate) fn spawn_bonds(
+    commands: &mut Commands,
+    building: Entity,
+    instance: &mut BuildingInstance,
+    bonds: &[BondRecord],
+) {
+    for record in bonds {
+        let entity = commands
+            .spawn((
+                Name::new(format!("Bond {}", record.id)),
+                ChildOf(building),
+                BondInstance {
+                    id: record.id.clone(),
+                    endpoints: [instance.chunks[&record.a], instance.chunks[&record.b]],
+                    active: true,
+                },
+            ))
+            .id();
+        instance.bonds.insert(record.id.clone(), entity);
+        for index in 0..record.patches.len() {
+            commands.spawn((
+                Name::new(format!("Structural patch {}:{index}", record.id)),
+                ChildOf(entity),
+                StructuralPatch { index },
+            ));
+        }
+    }
+}
+
+pub(crate) fn spawn_patches(
+    commands: &mut Commands,
+    building: Entity,
+    instance: &mut BuildingInstance,
+    patches: Arc<Vec<ContactPatch>>,
+) {
+    for (index, patch) in patches.iter().enumerate() {
+        let Some(&bond) = instance.bonds.get(&patch.bond_id) else {
+            panic!("Surface patch {} has no bond in {building:?}", patch.id);
+        };
+        let entity = commands
+            .spawn((
+                Name::new(format!("Surface patch {}", patch.id)),
+                ChildOf(bond),
+                PatchInstance {
+                    index,
+                    geometry: patches.clone(),
+                },
+            ))
+            .id();
+        instance.patches.push(entity);
     }
 }
 
@@ -559,7 +648,9 @@ pub(crate) fn instantiate_pending(
             }
         };
         stats.cache_build_ms += mask_started.elapsed().as_secs_f64() * 1000.0;
+        let mut ready = BuildingInstance::pending(instance.asset.clone());
         let mut material_cache = BTreeMap::new();
+        let mut primitive_count = 0;
         for (chunk, collider, density, mass_properties, edges) in prepared {
             let record = &asset.manifest.chunks[chunk.record_index];
             if !options.no_detail {
@@ -615,42 +706,33 @@ pub(crate) fn instantiate_pending(
                 }).insert((ChildOf(entity), MeshTag::new(0))).id();
                 primitives.push(primitive_entity);
             }
-            instance.chunks.insert(
-                record.id.clone(),
-                ChunkInstance {
-                    entity,
-                    primitives,
-                    alive: true,
-                    triangles,
-                    transform,
-                    mass_properties,
-                    material: record.material.clone(),
-                    detail: None,
-                    cluster: None,
-                },
-            );
+            primitive_count += primitives.len();
+            commands.entity(entity).insert(ChunkInstance {
+                primitives,
+                alive: true,
+                triangles,
+                transform,
+                mass_properties,
+                material: record.material.clone(),
+                detail: None,
+                cluster: None,
+            });
+            ready.chunks.insert(record.id.clone(), entity);
         }
-        instance.bonds = asset
-            .manifest
-            .bonds
-            .iter()
-            .map(|bond| (bond.id.clone(), true))
-            .collect();
-        instance.bounds = Some(bounds);
-        instance.topology_dirty = true;
-        instance.patches = patches;
-        stats.patches = instance.patches.len();
+        spawn_bonds(&mut commands, root, &mut ready, &asset.manifest.bonds);
+        spawn_patches(&mut commands, root, &mut ready, patches);
+        ready.bounds = Some(bounds);
+        ready.topology_dirty = true;
+        stats.patches = ready.patches.len();
         info!(
             "Instantiated {}: {} chunks, {} primitives, {} bonds",
             asset.manifest.name,
-            instance.chunks.len(),
-            instance
-                .chunks
-                .values()
-                .map(|c| c.primitives.len())
-                .sum::<usize>(),
-            instance.bonds.len()
+            ready.chunks.len(),
+            primitive_count,
+            ready.bonds.len()
         );
+        // Publish the indexes only after the entities they name have been spawned.
+        commands.entity(root).insert(ready);
     }
 }
 
@@ -659,6 +741,7 @@ fn update_hint(
         &BuildingInstance,
         Option<&crate::stress_runtime::StressState>,
     )>,
+    chunks: Query<&ChunkInstance>,
     mut hints: Query<&mut Text, With<Hint>>,
 ) {
     let Some((instance, stress)) = instances.iter().next() else {
@@ -669,7 +752,11 @@ fn update_hint(
     } else if instance.bounds.is_some() {
         format!(
             "WASD: move | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right/R: rigid ball/cube | F1-F6: scenes | 0: edges | 9: heat | Esc: exit     {}/{} chunks",
-            instance.chunks.values().filter(|chunk| chunk.alive).count(),
+            instance
+                .chunks
+                .values()
+                .filter(|&&entity| chunks.get(entity).is_ok_and(|chunk| chunk.alive))
+                .count(),
             instance.chunks.len()
         )
     } else {
@@ -707,6 +794,9 @@ fn update_details(
     mut commands: Commands,
     options: Res<DemoOptions>,
     mut instances: Query<(Entity, &mut BuildingInstance)>,
+    mut chunks: Query<&mut ChunkInstance>,
+    bonds: Query<&BondInstance>,
+    patches: Query<(&PatchInstance, &ChildOf)>,
     details: Query<&DamageDetail>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
@@ -732,34 +822,36 @@ fn update_details(
     for instance_id in instance_ids {
         let (_, mut instance) = instances.get_mut(instance_id).unwrap();
         instance.detail_dirty.clear();
-        let mut exposed = BTreeMap::<String, Vec<usize>>::new();
-        for (patch_index, patch) in instance.patches.iter().enumerate() {
-            if let Some(survivor) = patch.exposed_survivor(|id| instance.chunks[id].alive) {
+        let mut exposed = BTreeMap::<String, Vec<&PatchInstance>>::new();
+        let alive = |id: &str| chunks.get(instance.chunks[id]).unwrap().alive;
+        for &entity in &instance.patches {
+            let (runtime_patch, parent) = patches.get(entity).unwrap();
+            let patch = runtime_patch.patch();
+            if let Some(survivor) = patch.exposed_survivor(alive) {
                 exposed
                     .entry(survivor.to_owned())
                     .or_default()
-                    .push(patch_index);
-            } else if instance.chunks[&patch.a].alive
-                && instance.chunks[&patch.b].alive
-                && !instance.bonds.get(&patch.bond_id).copied().unwrap_or(true)
+                    .push(runtime_patch);
+            } else if alive(&patch.a)
+                && alive(&patch.b)
+                && !bonds.get(parent.parent()).unwrap().active
             {
                 for id in [&patch.a, &patch.b] {
-                    exposed.entry(id.clone()).or_default().push(patch_index);
+                    exposed.entry(id.clone()).or_default().push(runtime_patch);
                 }
             }
         }
-        let chunk_ids = instance.chunks.keys().cloned().collect::<Vec<_>>();
-        for id in chunk_ids {
-            let chunk = &instance.chunks[&id];
+        for (id, &chunk_entity) in &instance.chunks {
+            let mut chunk = chunks.get_mut(chunk_entity).unwrap();
             let mut selected = Vec::new();
             let mut patch_ids = Vec::new();
-            for &patch_index in exposed.get(&id).into_iter().flatten() {
-                let patch = &instance.patches[patch_index];
+            for &runtime_patch in exposed.get(id).into_iter().flatten() {
+                let patch = runtime_patch.patch();
                 let cached = detail_cache
                     .by_patch
-                    .entry((instance.asset.id(), patch_index, patch.a == id))
+                    .entry((instance.asset.id(), runtime_patch.index, patch.a == *id))
                     .or_insert_with(|| {
-                        detail_mesh(patch, &id).map(|mesh| {
+                        detail_mesh(patch, id).map(|mesh| {
                             let triangles = mesh
                                 .indices()
                                 .map_or(mesh.count_vertices(), |indices| indices.len())
@@ -806,7 +898,7 @@ fn update_details(
                     commands
                         .spawn((
                             Name::new("Exposed jagged fracture rim"),
-                            ChildOf(chunk.entity),
+                            ChildOf(chunk_entity),
                             Mesh3d(
                                 meshes.add(
                                     surface_coordinates(mesh, Transform::IDENTITY)
@@ -826,7 +918,7 @@ fn update_details(
             } else {
                 None
             };
-            instance.chunks.get_mut(&id).unwrap().detail = entity;
+            chunk.detail = entity;
         }
     }
     stats.active_meshes = mesh_count;

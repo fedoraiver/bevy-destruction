@@ -14,7 +14,8 @@ use crate::{
         ProjectileShape, RigidProjectile,
     },
     scene::{
-        BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, RemovedChunk,
+        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
+        RemovedChunk, spawn_bonds, spawn_patches,
     },
     stress_runtime::{StressSettings, StressState},
 };
@@ -224,12 +225,7 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
         max: Vec3::new(1.5, 1.2, 0.1),
     });
     instance.topology_dirty = true;
-    instance.bonds = manifest
-        .bonds
-        .iter()
-        .map(|bond| (bond.id.clone(), true))
-        .collect();
-    instance.patches = std::sync::Arc::new(
+    let patches = std::sync::Arc::new(
         manifest
             .bonds
             .iter()
@@ -289,35 +285,34 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
                 ChildOf(chunk),
             ))
             .id();
-        instance.chunks.insert(
-            record.id,
-            ChunkInstance {
-                entity: chunk,
-                primitives: vec![primitive],
-                alive: true,
-                triangles: Vec::new(),
-                transform: local,
-                mass_properties,
-                material: "concrete".into(),
-                detail: None,
-                cluster: None,
-            },
-        );
+        world.entity_mut(chunk).insert(ChunkInstance {
+            primitives: vec![primitive],
+            alive: true,
+            triangles: Vec::new(),
+            transform: local,
+            mass_properties,
+            material: "concrete".into(),
+            detail: None,
+            cluster: None,
+        });
+        instance.chunks.insert(record.id, chunk);
     }
+    let mut commands = world.commands();
+    spawn_bonds(&mut commands, root, &mut instance, &manifest.bonds);
+    spawn_patches(&mut commands, root, &mut instance, patches);
+    world.flush();
     world.entity_mut(root).insert(instance);
     root
 }
 
 pub(crate) fn remove_left_support(world: &mut World, root: Entity) {
-    let entity = {
+    let (entity, bond) = {
         let mut instance = world.get_mut::<BuildingInstance>(root).unwrap();
-        let chunk = instance.chunks.get_mut(LEFT_SUPPORT).unwrap();
-        chunk.alive = false;
-        let entity = chunk.entity;
-        instance.bonds.insert(LEFT_BOND.into(), false);
         instance.topology_dirty = true;
-        entity
+        (instance.chunks[LEFT_SUPPORT], instance.bonds[LEFT_BOND])
     };
+    world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
+    world.get_mut::<BondInstance>(bond).unwrap().active = false;
     world
         .entity_mut(entity)
         .insert((RemovedChunk, Visibility::Hidden));
@@ -345,6 +340,8 @@ fn drive(
     mut settings: ResMut<StressSettings>,
     buildings: Query<(&BuildingInstance, Option<&StressState>), Without<StressProbe>>,
     probes: Query<(&BuildingInstance, &StressState), With<StressProbe>>,
+    chunks: Query<&ChunkInstance>,
+    bonds: Query<&BondInstance>,
     bodies: Query<(
         &Cluster,
         &Position,
@@ -418,7 +415,7 @@ fn drive(
     state.max_impulse = impacts.max_impulse;
     if let Some((instance, stress)) = probe {
         state.broken_bonds = stress.broken_total;
-        if let Some(cluster) = instance.chunks[BEAM].cluster
+        if let Some(cluster) = chunks.get(instance.chunks[BEAM]).unwrap().cluster
             && let Ok((cluster, position, rotation, center, kind, sleeping)) = bodies.get(cluster)
         {
             let height = (position.0 + rotation.0 * center.0).y;
@@ -496,11 +493,12 @@ fn drive(
                         "tension_pa":bond.stress.tension,"compression_pa":bond.stress.compression,
                         "shear_pa":bond.stress.shear,"section_exact":bond.stress.section_exact,
                     }));
-                    state.saw_anchored_overload = instance.bonds[RIGHT_BOND]
-                        && bond.valid
-                        && bond.stress.utilization > 1.0
-                        && bond.damage > 0.0
-                        && bond.damage < 1.0;
+                    state.saw_anchored_overload =
+                        bonds.get(instance.bonds[RIGHT_BOND]).unwrap().active
+                            && bond.valid
+                            && bond.stress.utilization > 1.0
+                            && bond.damage > 0.0
+                            && bond.damage < 1.0;
                 }
                 if !state.saw_anchored_overload {
                     state.errors.push(
@@ -544,6 +542,7 @@ fn drive(
             let target = building
                 .chunks
                 .values()
+                .map(|&entity| chunks.get(entity).unwrap())
                 .filter(|chunk| {
                     chunk.alive
                         && chunk.cluster.is_some_and(|entity| {

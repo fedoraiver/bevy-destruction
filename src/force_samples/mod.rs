@@ -40,7 +40,7 @@ pub struct ForceSamples {
     pub impulses: VecDeque<ImpulseSample>,
 }
 
-pub fn bond_signature(bonds: &BTreeMap<String, bool>) -> u64 {
+pub fn bond_signature<'a>(bonds: impl IntoIterator<Item = (&'a str, bool)>) -> u64 {
     let mut hash = std::hash::DefaultHasher::new();
     for (id, active) in bonds {
         id.hash(&mut hash);
@@ -69,8 +69,8 @@ impl ForceSamples {
     pub fn prune(
         &mut self,
         now: f64,
-        force_current: impl Fn(&DynamicForceSample) -> bool,
-        impulse_current: impl Fn(&ImpulseSample) -> bool,
+        mut force_current: impl FnMut(&DynamicForceSample) -> bool,
+        mut impulse_current: impl FnMut(&ImpulseSample) -> bool,
     ) {
         self.dynamic.retain(|sample| {
             (0.0..=FORCE_SAMPLE_SECONDS).contains(&(now - sample.captured_at))

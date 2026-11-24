@@ -38,7 +38,7 @@ fn upper_static_support_contact_is_detected_when_the_lower_member_has_no_impulse
 }
 use crate::{
     physics::DestructionPhysicsPlugin,
-    scene::{BuildingBounds, ChunkIdentity, ChunkInstance, chunk_collider},
+    scene::{BuildingBounds, ChunkIdentity, chunk_collider, spawn_bonds},
     stress_runtime::StressRuntimePlugin,
 };
 use bevy::time::TimeUpdateStrategy;
@@ -135,30 +135,34 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                 ColliderDensity(density),
             ))
             .id();
-        instance.chunks.insert(
-            record.id.clone(),
-            ChunkInstance {
-                entity,
-                primitives: Vec::new(),
-                alive: true,
-                triangles: Vec::new(),
-                transform: local,
-                mass_properties,
-                material: record.material.clone(),
-                detail: None,
-                cluster: None,
-            },
-        );
+        app.world_mut().entity_mut(entity).insert(ChunkInstance {
+            primitives: Vec::new(),
+            alive: true,
+            triangles: Vec::new(),
+            transform: local,
+            mass_properties,
+            material: record.material.clone(),
+            detail: None,
+            cluster: None,
+        });
+        instance.chunks.insert(record.id.clone(), entity);
     }
     instance.bounds = Some(BuildingBounds { min, max });
-    instance.bonds = manifest
-        .bonds
-        .iter()
-        .map(|bond| (bond.id.clone(), true))
-        .collect();
+    spawn_bonds(
+        &mut app.world_mut().commands(),
+        building,
+        &mut instance,
+        &manifest.bonds,
+    );
+    app.world_mut().flush();
     instance.topology_dirty = true;
+    let chunk_at = |id: &str| {
+        app.world()
+            .get::<ChunkInstance>(instance.chunks[id])
+            .unwrap()
+    };
     let selected =
-        select_collapse_support(&manifest, |id| instance.chunks[id].mass_properties.mass).unwrap();
+        select_collapse_support(&manifest, |id| chunk_at(id).mass_properties.mass).unwrap();
     let upper = manifest
         .chunks
         .iter()
@@ -170,7 +174,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
                 >= selected.upper_floor_y
         })
         .map(|record| {
-            let chunk = &instance.chunks[&record.id];
+            let chunk = chunk_at(&record.id);
             (
                 record.id.clone(),
                 (chunk.center_in_building(), chunk.mass_properties.mass),
@@ -182,7 +186,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         .chunks
         .iter()
         .filter(|(id, _)| !selected.removed.contains(*id))
-        .map(|(_, chunk)| f64::from(chunk.mass_properties.mass))
+        .map(|(id, _)| f64::from(chunk_at(id).mass_properties.mass))
         .sum::<f64>();
     app.world_mut().entity_mut(building).insert(instance);
     for _ in 0..5 {
@@ -197,19 +201,21 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
         "Intact production rectangle is unstable"
     );
     {
-        let mut instance = app
-            .world_mut()
-            .get_mut::<BuildingInstance>(building)
-            .unwrap();
+        let world = app.world_mut();
         for id in &selected.removed {
-            instance.chunks.get_mut(id).unwrap().alive = false;
+            let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
+            world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
         }
         for bond in &manifest.bonds {
             if selected.removed.contains(&bond.a) || selected.removed.contains(&bond.b) {
-                instance.bonds.insert(bond.id.clone(), false);
+                let entity = world.get::<BuildingInstance>(building).unwrap().bonds[&bond.id];
+                world.get_mut::<BondInstance>(entity).unwrap().active = false;
             }
         }
-        instance.topology_dirty = true;
+        world
+            .get_mut::<BuildingInstance>(building)
+            .unwrap()
+            .topology_dirty = true;
     }
     let (mut released_mass, mut drop, mut tilt, mut support_contact) =
         (0.0_f32, 0.0_f32, 0.0_f32, false);
@@ -220,11 +226,12 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
             .support_path
             .iter()
             .filter_map(|id| {
-                let chunk = &instance.chunks[id];
+                let entity = instance.chunks[id];
+                let chunk = app.world().get::<ChunkInstance>(entity).unwrap();
                 chunk
                     .cluster
                     .filter(|&body| app.world().get::<RigidBody>(body) == Some(&RigidBody::Static))
-                    .map(|body| (chunk.entity, body))
+                    .map(|body| (entity, body))
             })
             .collect::<Vec<_>>();
         let mut mass = 0.0_f64;

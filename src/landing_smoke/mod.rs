@@ -8,7 +8,7 @@ use crate::{
     diagnostics::RunMetrics,
     physics::Cluster,
     projectiles::ImpactStats,
-    scene::{BuildingInstance, DemoCamera, RemovedChunk},
+    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RemovedChunk},
 };
 
 pub struct LandingSmokePlugin;
@@ -65,6 +65,8 @@ fn drive(
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<LandingState>,
     mut instances: Query<(Entity, &mut BuildingInstance)>,
+    mut chunks: Query<&mut ChunkInstance>,
+    mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
         &Cluster,
         &Position,
@@ -173,7 +175,15 @@ fn drive(
             state.initial_mass = state
                 .upper
                 .iter()
-                .map(|id| f64::from(instance.chunks[id].mass_properties.mass))
+                .map(|id| {
+                    f64::from(
+                        chunks
+                            .get(instance.chunks[id])
+                            .unwrap()
+                            .mass_properties
+                            .mass,
+                    )
+                })
                 .sum();
             state.initial_bonds = asset
                 .manifest
@@ -181,11 +191,12 @@ fn drive(
                 .iter()
                 .filter(|bond| state.upper.contains(&bond.a) && state.upper.contains(&bond.b))
                 .count();
-            for (id, chunk) in &mut instance.chunks {
+            for (id, &entity) in &instance.chunks {
                 if !state.upper.contains(id) {
+                    let mut chunk = chunks.get_mut(entity).unwrap();
                     chunk.alive = false;
                     commands
-                        .entity(chunk.entity)
+                        .entity(entity)
                         .insert((RemovedChunk, Visibility::Hidden))
                         .remove::<FractureEdges>();
                     for &primitive in &chunk.primitives {
@@ -195,7 +206,7 @@ fn drive(
             }
             for bond in &asset.manifest.bonds {
                 if !state.upper.contains(&bond.a) || !state.upper.contains(&bond.b) {
-                    instance.bonds.insert(bond.id.clone(), false);
+                    bonds.get_mut(instance.bonds[&bond.id]).unwrap().active = false;
                 }
             }
             instance.topology_dirty = true;
@@ -261,7 +272,7 @@ fn drive(
                     state.upper.contains(&bond.a)
                         && state.upper.contains(&bond.b)
                         && bond.center[1] > state.cut + 4.0
-                        && !instance.bonds[&bond.id]
+                        && !bonds.get(instance.bonds[&bond.id]).unwrap().active
                 })
                 .count();
             state.retained_internal_bonds = asset
@@ -271,7 +282,7 @@ fn drive(
                 .filter(|bond| {
                     state.upper.contains(&bond.a)
                         && state.upper.contains(&bond.b)
-                        && instance.bonds[&bond.id]
+                        && bonds.get(instance.bonds[&bond.id]).unwrap().active
                 })
                 .count();
             if state.first_impact.is_none() || impacts.structural_solves == 0 {

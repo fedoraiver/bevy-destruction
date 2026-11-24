@@ -201,35 +201,53 @@ fn shared_patches() -> Arc<Vec<ContactPatch>> {
 fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity {
     let root = world.spawn((Transform::IDENTITY, Visibility::Visible)).id();
     let mut instance = BuildingInstance::pending(Handle::default());
-    instance.patches = patches;
     for id in ["a", "b", "c"] {
         let entity = world
-            .spawn((Transform::IDENTITY, Visibility::Visible, ChildOf(root)))
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Visible,
+                ChildOf(root),
+                ChunkInstance {
+                    primitives: Vec::new(),
+                    alive: true,
+                    triangles: Vec::new(),
+                    transform: Transform::IDENTITY,
+                    mass_properties: MassProperties3d::ZERO,
+                    material: "concrete".into(),
+                    detail: None,
+                    cluster: None,
+                },
+            ))
             .id();
-        instance.chunks.insert(
-            id.into(),
-            ChunkInstance {
-                entity,
-                primitives: Vec::new(),
-                alive: true,
-                triangles: Vec::new(),
-                transform: Transform::IDENTITY,
-                mass_properties: MassProperties3d::ZERO,
-                material: "concrete".into(),
-                detail: None,
-                cluster: None,
-            },
-        );
+        instance.chunks.insert(id.into(), entity);
     }
+    let template = crate::stress_smoke::beam_manifest().bonds.remove(0);
+    let bonds = patches
+        .iter()
+        .map(|patch| BondRecord {
+            id: patch.bond_id.clone(),
+            a: patch.a.clone(),
+            b: patch.b.clone(),
+            ..template.clone()
+        })
+        .collect::<Vec<_>>();
+    let mut commands = world.commands();
+    spawn_bonds(&mut commands, root, &mut instance, &bonds);
+    spawn_patches(&mut commands, root, &mut instance, patches);
+    world.flush();
     instance.detail_dirty.insert("a".into());
     world.entity_mut(root).insert(instance);
     root
 }
 
 fn remove_chunk(world: &mut World, root: Entity, id: &str) {
-    let mut instance = world.get_mut::<BuildingInstance>(root).unwrap();
-    instance.chunks.get_mut(id).unwrap().alive = false;
-    instance.detail_dirty.insert(id.into());
+    let entity = world.get::<BuildingInstance>(root).unwrap().chunks[id];
+    world.get_mut::<ChunkInstance>(entity).unwrap().alive = false;
+    world
+        .get_mut::<BuildingInstance>(root)
+        .unwrap()
+        .detail_dirty
+        .insert(id.into());
 }
 
 fn detail_snapshot(world: &World, root: Entity) -> Vec<(String, Vec<String>, Vec<[f32; 3]>)> {
@@ -237,9 +255,10 @@ fn detail_snapshot(world: &World, root: Entity) -> Vec<(String, Vec<String>, Vec
     instance
         .chunks
         .iter()
-        .filter_map(|(id, chunk)| {
+        .filter_map(|(id, &chunk_entity)| {
+            let chunk = world.get::<ChunkInstance>(chunk_entity).unwrap();
             let entity = chunk.detail?;
-            assert_eq!(world.get::<ChildOf>(entity).unwrap().parent(), chunk.entity);
+            assert_eq!(world.get::<ChildOf>(entity).unwrap().parent(), chunk_entity);
             let detail = world.get::<DamageDetail>(entity).unwrap();
             let mesh = world
                 .resource::<Assets<Mesh>>()
@@ -274,7 +293,11 @@ fn shared_contact_cache_keeps_damage_local_and_reuses_unchanged_mesh() {
     assert_eq!(snapshot[0].1, ["ab"]);
     assert!(!snapshot[0].2.is_empty());
     assert!(snapshot[0].2.iter().flatten().all(|p| p.is_finite()));
-    let detail = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"]
+    let chunk = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
+    let detail = app
+        .world()
+        .get::<ChunkInstance>(chunk)
+        .unwrap()
         .detail
         .unwrap();
     let mesh = app.world().get::<Mesh3d>(detail).unwrap().0.clone();
@@ -299,11 +322,11 @@ fn severed_bond_exposes_both_live_sides_only_in_the_damaged_instance() {
     let patches = shared_patches();
     let intact = spawn_instance(app.world_mut(), patches.clone());
     let detached = spawn_instance(app.world_mut(), patches);
+    let bond = app.world().get::<BuildingInstance>(detached).unwrap().bonds["ab"];
     app.world_mut()
-        .get_mut::<BuildingInstance>(detached)
+        .get_mut::<BondInstance>(bond)
         .unwrap()
-        .bonds
-        .insert("ab".into(), false);
+        .active = false;
     app.update();
     assert!(detail_snapshot(app.world(), intact).is_empty());
     let snapshot = detail_snapshot(app.world(), detached);
@@ -333,7 +356,11 @@ fn removal_order_preserves_geometry_and_removing_survivor_cleans_detail() {
     assert_eq!(detail_snapshot(app.world(), first), expected);
     assert_eq!(app.world().resource::<DetailStats>().cached_meshes, 2);
 
-    let old_detail = app.world().get::<BuildingInstance>(first).unwrap().chunks["a"]
+    let chunk = app.world().get::<BuildingInstance>(first).unwrap().chunks["a"];
+    let old_detail = app
+        .world()
+        .get::<ChunkInstance>(chunk)
+        .unwrap()
         .detail
         .unwrap();
     remove_chunk(app.world_mut(), first, "a");
@@ -342,4 +369,42 @@ fn removal_order_preserves_geometry_and_removing_survivor_cleans_detail() {
     assert!(app.world().get_entity(old_detail).is_err());
     assert_eq!(detail_snapshot(app.world(), second), expected);
     assert_eq!(app.world().resource::<DetailStats>().active_meshes, 1);
+}
+
+#[test]
+fn despawning_one_building_releases_its_graph_entities_and_keeps_shared_geometry() {
+    let mut world = World::new();
+    let geometry = shared_patches();
+    let removed = spawn_instance(&mut world, geometry.clone());
+    let retained = spawn_instance(&mut world, geometry);
+    let first = world.get::<BuildingInstance>(removed).unwrap();
+    let other = world.get::<BuildingInstance>(retained).unwrap();
+    let removed_entities = [first.chunks["a"], first.bonds["ab"], first.patches[0]];
+    let retained_entities = [other.chunks["a"], other.bonds["ab"], other.patches[0]];
+    let [chunk, bond, patch] = removed_entities;
+    let bond_state = world.get::<BondInstance>(bond).unwrap();
+    assert_eq!(bond_state.endpoints, [chunk, first.chunks["b"]]);
+    assert_eq!(world.get::<ChildOf>(patch).unwrap().parent(), bond);
+    let facet = world
+        .get::<Children>(bond)
+        .unwrap()
+        .iter()
+        .find(|&entity| world.get::<StructuralPatch>(entity).is_some())
+        .unwrap();
+    assert_eq!(world.get::<StructuralPatch>(facet).unwrap().index, 0);
+    assert!(std::ptr::eq(
+        world.get::<PatchInstance>(patch).unwrap().patch(),
+        world
+            .get::<PatchInstance>(retained_entities[2])
+            .unwrap()
+            .patch(),
+    ));
+
+    world.despawn(removed);
+    for entity in removed_entities.into_iter().chain([facet]) {
+        assert!(world.get_entity(entity).is_err());
+    }
+    for entity in retained_entities {
+        assert!(world.get_entity(entity).is_ok());
+    }
 }

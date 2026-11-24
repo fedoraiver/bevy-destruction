@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn same_asset_visibility_fixtures_own_independent_bonds() {
+    let mut world = World::new();
+    world.init_resource::<crate::camera::CameraControl>();
+    world.init_resource::<Assets<Mesh>>();
+    world.init_resource::<Assets<StandardMaterial>>();
+    world.init_resource::<Assets<BuildingMaterial>>();
+    world.init_resource::<Assets<DestructibleAsset>>();
+    let fixture = spawn_visibility_fixture(&mut world);
+
+    let original = world.get::<BuildingInstance>(fixture.building).unwrap();
+    let twin = world.get::<BuildingInstance>(fixture.twin).unwrap();
+    assert_eq!(original.asset, twin.asset);
+    assert_eq!(original.bonds.len(), TARGETS.len());
+    assert_eq!(twin.bonds.len(), TARGETS.len());
+    for (id, &original_bond) in &original.bonds {
+        let twin_bond = twin.bonds[id];
+        assert_ne!(original_bond, twin_bond);
+        for (building, entity) in [(fixture.building, original_bond), (fixture.twin, twin_bond)] {
+            let bond = world.get::<BondInstance>(entity).unwrap();
+            assert_eq!(world.get::<ChildOf>(entity).unwrap().parent(), building);
+            assert!(bond.active);
+            for endpoint in bond.endpoints {
+                assert_eq!(
+                    world.get::<ChunkIdentity>(endpoint).unwrap().building,
+                    building
+                );
+            }
+        }
+    }
+    let original_bond = original.bonds["visibility-window"];
+    let twin_bond = twin.bonds["visibility-window"];
+    world.get_mut::<BondInstance>(original_bond).unwrap().active = false;
+    assert!(world.get::<BondInstance>(twin_bond).unwrap().active);
+}
+
 fn readback_fixture() -> Capture {
     Capture {
         width: 120,

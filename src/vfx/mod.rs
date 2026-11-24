@@ -12,7 +12,7 @@ use bevy::{
 
 use crate::{
     dust_material::{DustMaterial, DustSettings, dust_atlas, dust_material, dust_settings},
-    scene::{BuildingInstance, ChunkIdentity, DemoCamera, RemovedChunk},
+    scene::{ChunkInstance, DemoCamera, RemovedChunk},
 };
 
 pub const PARTICLE_LIMIT: usize = 640;
@@ -702,10 +702,9 @@ fn animate_particles(
     mut stats: ResMut<VfxStats>,
     spatial: SpatialQuery,
     cameras: Query<&Transform, With<DemoCamera>>,
-    identities: Query<(&ChunkIdentity, Has<RemovedChunk>)>,
+    chunks: Query<(&ChunkInstance, Has<RemovedChunk>)>,
     colliders: Query<&ColliderOf>,
     bodies: Query<&RigidBody>,
-    instances: Query<&BuildingInstance>,
     mut particles: Query<
         (
             Entity,
@@ -739,15 +738,9 @@ fn animate_particles(
         collision_candidates.truncate(MAX_COLLISION_QUERIES);
     }
     let live_collider = |entity| {
-        let Ok((identity, removed)) = identities.get(entity) else {
-            return false;
-        };
-        !removed
-            && instances
-                .get(identity.building)
-                .ok()
-                .and_then(|instance| instance.chunks.get(&identity.id))
-                .is_some_and(|chunk| chunk.alive)
+        chunks
+            .get(entity)
+            .is_ok_and(|(chunk, removed)| chunk.alive && !removed)
     };
     let static_collider = |entity| {
         colliders
