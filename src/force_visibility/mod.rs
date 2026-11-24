@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use avian3d::prelude::{Collider, SimpleCollider};
+use avian3d::prelude::{Collider, ColliderAabb, SimpleCollider};
 use bevy::{math::Affine3A, prelude::*};
 
 use crate::asset::DestructibleAsset;
@@ -34,14 +34,8 @@ pub struct ForceVisibilityCache {
 }
 
 struct SourceGeometry {
-    bounds: Bounds,
+    bounds: ColliderAabb,
     collider: Option<Collider>,
-}
-
-#[derive(Clone, Copy)]
-struct Bounds {
-    min: Vec3,
-    max: Vec3,
 }
 
 struct LocalRay {
@@ -112,11 +106,7 @@ impl ForceVisibilityCache {
         let limit = (distance + hit_epsilon(distance)).min(max_distance);
         for extra in extras {
             let local_ray = local_ray(ray, extra.world_from_local)?;
-            let aabb = extra.collider.aabb(Vec3::ZERO, Quat::IDENTITY, 0.0);
-            let bounds = Bounds {
-                min: aabb.min,
-                max: aabb.max,
-            };
+            let bounds = extra.collider.aabb(Vec3::ZERO, Quat::IDENTITY, 0.0);
             if !bounds.min.is_finite() || !bounds.max.is_finite() {
                 return None;
             }
@@ -152,11 +142,8 @@ fn local_ray(ray: Ray3d, world_from_local: Affine3A) -> Option<LocalRay> {
     })
 }
 
-fn source_bounds(triangles: &[[Vec3; 3]]) -> Option<Bounds> {
-    let mut bounds = Bounds {
-        min: Vec3::INFINITY,
-        max: Vec3::NEG_INFINITY,
-    };
+fn source_bounds(triangles: &[[Vec3; 3]]) -> Option<ColliderAabb> {
+    let mut bounds = ColliderAabb::INVALID;
     let mut has_surface = false;
     for triangle in triangles {
         if triangle.iter().any(|point| !point.is_finite()) {
@@ -234,7 +221,7 @@ fn cast(collider: &Collider, ray: &LocalRay, world_limit: f32) -> Option<f32> {
         })
 }
 
-fn ray_bounds(bounds: Bounds, ray: &LocalRay, world_limit: f32) -> bool {
+fn ray_bounds(bounds: ColliderAabb, ray: &LocalRay, world_limit: f32) -> bool {
     let mut near: f32 = 0.0;
     let mut far = world_limit * ray.scale;
     for axis in 0..3 {
