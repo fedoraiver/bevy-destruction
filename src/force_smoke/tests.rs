@@ -1,4 +1,6 @@
 use super::*;
+use avian3d::prelude::RigidBodyColliders;
+
 use crate::scene::BondOfBuilding;
 
 #[test]
@@ -19,7 +21,10 @@ fn same_asset_visibility_fixtures_own_independent_bonds() {
     for (id, &original_bond) in &original.bonds {
         let twin_bond = twin.bonds[id];
         assert_ne!(original_bond, twin_bond);
-        for (building, entity) in [(fixture.building, original_bond), (fixture.twin, twin_bond)] {
+        for (building, body, entity) in [
+            (fixture.building, fixture.body, original_bond),
+            (fixture.twin, twin.clusters[0], twin_bond),
+        ] {
             let bond = world.get::<BondInstance>(entity).unwrap();
             assert_eq!(
                 world.get::<BondOfBuilding>(entity).unwrap().building,
@@ -30,6 +35,14 @@ fn same_asset_visibility_fixtures_own_independent_bonds() {
                 assert_eq!(
                     world.get::<ChunkIdentity>(endpoint).unwrap().building,
                     building
+                );
+                assert_eq!(world.get::<ColliderOf>(endpoint).unwrap().body, body);
+                assert!(world.get::<Collider>(endpoint).is_none());
+                assert!(
+                    world
+                        .get::<RigidBodyColliders>(body)
+                        .unwrap()
+                        .contains(&endpoint)
                 );
             }
         }

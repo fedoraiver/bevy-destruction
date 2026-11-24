@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use avian3d::prelude::{
-    AngularInertia, CenterOfMass, Collider, ComputeMassProperties3d, GravityScale, Mass,
-    NoAutoAngularInertia, NoAutoCenterOfMass, NoAutoMass, Position, RigidBody, Rotation,
+    AngularInertia, CenterOfMass, Collider, ColliderOf, ComputeMassProperties3d, GravityScale,
+    Mass, NoAutoAngularInertia, NoAutoCenterOfMass, NoAutoMass, Position, RigidBody, Rotation,
 };
 use bevy::{
     asset::RenderAssetUsages,
@@ -432,7 +432,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             transform: record.transform(),
             mass_properties,
             material: "concrete".into(),
-            cluster: Some(body),
         });
         instance.chunks.insert(shape.id, entity);
         manifest.chunks.push(record);
@@ -523,7 +522,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             transform: chunk.transform,
             mass_properties: chunk.mass_properties,
             material: chunk.material.clone(),
-            cluster: Some(twin_body),
         };
         let entity = world
             .spawn((
@@ -572,6 +570,19 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         chunks: chunks.clone(),
         anchored: false,
     });
+    // These visual fixtures model body ownership and use only meshes for geometry.
+    for (owner, origin, instance) in [
+        (body, FIXTURE_ORIGIN, &instance),
+        (twin_body, twin_origin, &second),
+    ] {
+        let global = GlobalTransform::from_translation(origin);
+        world.entity_mut(owner).insert(global);
+        for &entity in instance.chunks.values() {
+            world
+                .entity_mut(entity)
+                .insert((global, ColliderOf { body: owner }));
+        }
+    }
     let mut commands = world.commands();
     spawn_bonds(&mut commands, building, &mut instance, &manifest.bonds);
     spawn_bonds(&mut commands, twin, &mut second, &manifest.bonds);
@@ -689,11 +700,11 @@ fn aim_at_real_impulse_chunk(world: &mut World) {
         .unwrap();
     let eye = world.get::<GlobalTransform>(camera).unwrap().translation();
     let instance = world.get::<BuildingInstance>(building).unwrap();
-    let chunk = world.get::<ChunkInstance>(instance.chunks[&id]).unwrap();
-    let Some(pose) = chunk
-        .cluster
-        .and_then(|body| world.get::<GlobalTransform>(body))
-        .copied()
+    let entity = instance.chunks[&id];
+    let chunk = world.get::<ChunkInstance>(entity).unwrap();
+    let Some(pose) = world
+        .get::<ColliderOf>(entity)
+        .and_then(|owner| world.get::<GlobalTransform>(owner.body))
     else {
         return;
     };
@@ -822,13 +833,12 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
                 .chunks
                 .iter()
                 .filter(|record| {
-                    let chunk = world
-                        .get::<ChunkInstance>(instance.chunks[&record.id])
-                        .unwrap();
+                    let entity = instance.chunks[&record.id];
+                    let chunk = world.get::<ChunkInstance>(entity).unwrap();
                     chunk.alive
-                        && chunk
-                            .cluster
-                            .and_then(|body| world.get::<RigidBody>(body))
+                        && world
+                            .get::<ColliderOf>(entity)
+                            .and_then(|owner| world.get::<RigidBody>(owner.body))
                             .is_some_and(|body| *body == RigidBody::Static)
                 })
                 .filter(|record| {

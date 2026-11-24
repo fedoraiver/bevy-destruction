@@ -220,7 +220,9 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
     let building = world.spawn_empty().id();
     let body = world
         .spawn((
+            Name::new("Force inspection body"),
             GlobalTransform::IDENTITY,
+            RigidBody::Static,
             ChildOf(building),
             Cluster {
                 chunks: vec!["front".into()],
@@ -232,6 +234,7 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
         .spawn((
             Name::new("Front force inspection target"),
             ChildOf(body),
+            GlobalTransform::IDENTITY,
             InheritedVisibility::VISIBLE,
             ChunkInstance {
                 primitives: vec![],
@@ -244,10 +247,10 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
                 transform: Transform::IDENTITY,
                 mass_properties: avian3d::prelude::MassProperties3d::ZERO,
                 material: "concrete".into(),
-                cluster: Some(body),
             },
         ))
         .id();
+    world.entity_mut(front).insert(ColliderOf { body });
     let mut instance = BuildingInstance::pending(Handle::default());
     instance.chunks.insert("front".into(), front);
     world.entity_mut(building).insert(instance);
@@ -296,13 +299,26 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
 fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
     let mut world = World::new();
     let building = world.spawn_empty().id();
-    let body = world.spawn_empty().id();
-    let other = world.spawn_empty().id();
+    let body = world
+        .spawn((
+            Name::new("Original force body"),
+            GlobalTransform::IDENTITY,
+            RigidBody::Dynamic,
+        ))
+        .id();
+    let other = world
+        .spawn((
+            Name::new("Other force body"),
+            GlobalTransform::IDENTITY,
+            RigidBody::Dynamic,
+        ))
+        .id();
     let mut instance = BuildingInstance::pending(Handle::default());
     for id in ["a", "b"] {
         let entity = world
             .spawn((
                 Name::new(format!("Force member {id}")),
+                GlobalTransform::IDENTITY,
                 ChunkInstance {
                     primitives: Vec::new(),
                     alive: true,
@@ -310,10 +326,10 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
                     transform: Transform::IDENTITY,
                     mass_properties: MassProperties3d::ZERO,
                     material: "concrete".into(),
-                    cluster: Some(body),
                 },
             ))
             .id();
+        world.entity_mut(entity).insert(ColliderOf { body });
         instance.chunks.insert(id.into(), entity);
     }
     let a = instance.chunks["a"];
@@ -349,7 +365,11 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
             &instance,
             cluster,
             parent,
-            |entity| world.get::<ChunkInstance>(entity),
+            |entity| {
+                world
+                    .get::<ChunkInstance>(entity)
+                    .map(|chunk| (chunk, world.get::<ColliderOf>(entity)))
+            },
             || bond_signature([("a-b", world.get::<BondInstance>(bond).unwrap().active)]),
         )
     };
@@ -358,9 +378,11 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
     world.get_mut::<ChunkInstance>(b).unwrap().alive = false;
     assert!(!current(&world, &cluster, &parent));
     world.get_mut::<ChunkInstance>(b).unwrap().alive = true;
-    world.get_mut::<ChunkInstance>(b).unwrap().cluster = Some(other);
+    world.entity_mut(b).insert(ColliderOf { body: other });
     assert!(!current(&world, &cluster, &parent));
-    world.get_mut::<ChunkInstance>(b).unwrap().cluster = Some(body);
+    world.entity_mut(b).remove::<ColliderOf>();
+    assert!(!current(&world, &cluster, &parent));
+    world.entity_mut(b).insert(ColliderOf { body });
     cluster.chunks.pop();
     assert!(!current(&world, &cluster, &parent));
     cluster.chunks.push("b".into());

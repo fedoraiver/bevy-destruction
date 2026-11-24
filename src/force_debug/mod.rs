@@ -171,8 +171,8 @@ fn pick_target(
     window: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &Projection, &GlobalTransform), With<DemoCamera>>,
     instances: Query<(Entity, &BuildingInstance)>,
-    poses: Query<&GlobalTransform, With<Cluster>>,
-    chunks: Query<(&ChunkInstance, &InheritedVisibility)>,
+    poses: Query<(&GlobalTransform, &ChildOf), With<Cluster>>,
+    chunks: Query<(&ChunkInstance, &ColliderOf, &InheritedVisibility)>,
     occluders: Query<
         (&Collider, &GlobalTransform, &InheritedVisibility),
         (Without<ChunkIdentity>, With<Mesh3d>),
@@ -210,15 +210,18 @@ fn pick_target(
     let mut source_chunks = Vec::new();
     for (building, instance) in &instances {
         for (id, &entity) in &instance.chunks {
-            let Ok((chunk, visible)) = chunks.get(entity) else {
+            let Ok((chunk, collider, visible)) = chunks.get(entity) else {
                 continue;
             };
             if !chunk.alive || !visible.get() {
                 continue;
             }
-            let Some(pose) = chunk.cluster.and_then(|body| poses.get(body).ok()) else {
+            let Ok((pose, parent)) = poses.get(collider.body) else {
                 continue;
             };
+            if parent.parent() != building {
+                continue;
+            }
             source_chunks.push(VisibilityChunk {
                 key: (building, id.clone()),
                 asset: instance.asset.id(),
@@ -259,7 +262,7 @@ fn sample_members_current<'a>(
     instance: &BuildingInstance,
     cluster: &Cluster,
     parent: &ChildOf,
-    chunk: impl Fn(Entity) -> Option<&'a ChunkInstance>,
+    chunk: impl Fn(Entity) -> Option<(&'a ChunkInstance, Option<&'a ColliderOf>)>,
     current_bond_signature: impl FnOnce() -> u64,
 ) -> bool {
     parent.parent() == sample.building
@@ -270,7 +273,9 @@ fn sample_members_current<'a>(
                 .chunks
                 .get(id)
                 .and_then(|&entity| chunk(entity))
-                .is_some_and(|chunk| chunk.alive && chunk.cluster == Some(sample.body))
+                .is_some_and(|(chunk, collider)| {
+                    chunk.alive && collider.is_some_and(|collider| collider.body == sample.body)
+                })
         })
         && sample.bond_signature == current_bond_signature()
 }
@@ -349,7 +354,7 @@ fn draw(
         Option<Ref<StructuralLoads>>,
         &GlobalTransform,
     )>,
-    chunks: Query<(&ChunkIdentity, &ChunkInstance)>,
+    chunks: Query<(&ChunkIdentity, &ChunkInstance, Option<&ColliderOf>)>,
     bonds: Query<&BondInstance>,
     bodies: Query<(&GlobalTransform, &RigidBody, &Cluster, &ChildOf)>,
     mut tags: Query<&mut MeshTag>,
@@ -379,7 +384,12 @@ fn draw(
                             &instance,
                             cluster,
                             parent,
-                            |entity| chunks.get(entity).ok().map(|(_, chunk)| chunk),
+                            |entity| {
+                                chunks
+                                    .get(entity)
+                                    .ok()
+                                    .map(|(_, chunk, collider)| (chunk, collider))
+                            },
                             || {
                                 *signatures.entry(sample.building).or_insert_with(|| {
                                     bond_signature(instance.bonds.iter().map(|(id, &entity)| {
@@ -401,7 +411,7 @@ fn draw(
                         .chunks
                         .get(&sample.chunk)
                         .and_then(|&entity| chunks.get(entity).ok())
-                        .is_some_and(|(_, chunk)| chunk.alive)
+                        .is_some_and(|(_, chunk, _)| chunk.alive)
                 })
         },
     );
@@ -427,20 +437,23 @@ fn draw(
             if !bond.active {
                 continue;
             }
-            let Ok([(a_id, a), (b_id, b)]) = chunks.get_many(bond.endpoints) else {
+            let Ok([(a_id, a, Some(a_collider)), (b_id, b, Some(b_collider))]) =
+                chunks.get_many(bond.endpoints)
+            else {
                 continue;
             };
             let a_id = a_id.id.as_str();
             let b_id = b_id.id.as_str();
-            let Some(body) = a
-                .cluster
-                .filter(|body| a.alive && b.alive && b.cluster == Some(*body))
-            else {
+            if !a.alive || !b.alive || a_collider.body != b_collider.body {
+                continue;
+            }
+            let body = a_collider.body;
+            let Ok((pose, kind, _, parent)) = bodies.get(body) else {
                 continue;
             };
-            let Ok((pose, kind, _, _)) = bodies.get(body) else {
+            if parent.parent() != building {
                 continue;
-            };
+            }
             let impact = *kind == RigidBody::Dynamic;
             let stress = match kind {
                 RigidBody::Static => current_static
@@ -495,7 +508,7 @@ fn draw(
             }
         }
         for ((id, entity), tag) in heat {
-            let (_, chunk) = chunks.get(entity).expect("Heat endpoint is a live chunk");
+            let (_, chunk, _) = chunks.get(entity).expect("Heat endpoint is a live chunk");
             desired.extend(chunk.primitives.iter().map(|&primitive| (primitive, tag)));
             stats.tinted_chunks.insert((building, id.to_owned()), tag);
         }

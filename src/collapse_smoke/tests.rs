@@ -142,7 +142,6 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
             transform: local,
             mass_properties,
             material: record.material.clone(),
-            cluster: None,
         });
         instance.chunks.insert(record.id.clone(), entity);
     }
@@ -226,11 +225,9 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
             .iter()
             .filter_map(|id| {
                 let entity = instance.chunks[id];
-                let chunk = app.world().get::<ChunkInstance>(entity).unwrap();
-                chunk
-                    .cluster
-                    .filter(|&body| app.world().get::<RigidBody>(body) == Some(&RigidBody::Static))
-                    .map(|body| (entity, body))
+                let body = app.world().get::<ColliderOf>(entity)?.body;
+                (app.world().get::<RigidBody>(body) == Some(&RigidBody::Static))
+                    .then_some((entity, body))
             })
             .collect::<Vec<_>>();
         let mut mass = 0.0_f64;

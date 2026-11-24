@@ -30,7 +30,7 @@ fn tick(app: &mut App, count: usize) {
 
 fn body(world: &World, root: Entity) -> Entity {
     let entity = world.get::<BuildingInstance>(root).unwrap().chunks[BEAM];
-    world.get::<ChunkInstance>(entity).unwrap().cluster.unwrap()
+    world.get::<ColliderOf>(entity).unwrap().body
 }
 
 fn bond_active(world: &World, root: Entity, id: &str) -> bool {
@@ -380,7 +380,6 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
                 transform,
                 mass_properties,
                 material: "concrete".into(),
-                cluster: None,
             },
         ))
         .id();
@@ -610,7 +609,6 @@ mod collapse {
                         transform: local,
                         mass_properties,
                         material: record.material.clone(),
-                        cluster: None,
                     },
                 ))
                 .id();
@@ -681,7 +679,7 @@ mod collapse {
             let stub = static_stub.map(|id| {
                 let entity = instance.chunks[id];
                 let stub = app.world().get::<ChunkInstance>(entity).unwrap();
-                let body = stub.cluster.unwrap();
+                let body = app.world().get::<ColliderOf>(entity).unwrap().body;
                 assert!(stub.alive);
                 assert!(app.world().get::<physics::Cluster>(body).unwrap().anchored);
                 assert_eq!(app.world().get::<RigidBody>(body), Some(&RigidBody::Static));

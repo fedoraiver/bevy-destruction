@@ -105,18 +105,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             continue;
         };
         let manifest = &asset.manifest;
-        let mut alive = BTreeSet::new();
-        let mut chunks = BTreeMap::new();
-        for (id, &entity) in &instance.chunks {
-            let chunk = world.get::<ChunkInstance>(entity).unwrap();
-            if chunk.alive {
-                alive.insert(id.clone());
-            }
-            chunks.insert(id.clone(), (entity, chunk.cluster, chunk.transform));
-        }
-        let bonds =
-            instance.bond_states(|entity| world.get::<BondInstance>(entity).unwrap().active);
-        let components = structure::components(manifest, &alive, &bonds);
         let previous = instance.clusters.clone();
         let root_global = global_transform(world, building);
         let root_pose = root_global.compute_transform();
@@ -147,6 +135,23 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             })
             .collect::<BTreeMap<_, _>>();
 
+        let mut alive = BTreeSet::new();
+        let mut chunks = BTreeMap::new();
+        for (id, &entity) in &instance.chunks {
+            let chunk = world.get::<ChunkInstance>(entity).unwrap();
+            if chunk.alive {
+                alive.insert(id.clone());
+            }
+            let parent = world
+                .get::<ColliderOf>(entity)
+                .map(|owner| owner.body)
+                .filter(|body| motions.contains_key(body));
+            chunks.insert(id.clone(), (entity, parent, chunk.transform));
+        }
+        let bonds =
+            instance.bond_states(|entity| world.get::<BondInstance>(entity).unwrap().active);
+        let components = structure::components(manifest, &alive, &bonds);
+
         let retained = components
             .iter()
             .filter_map(|component| {
@@ -166,9 +171,8 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
 
         for (id, &(entity, _, _)) in &chunks {
             if !alive.contains(id) {
-                world.entity_mut(entity).remove::<Collider>();
+                world.entity_mut(entity).remove::<(Collider, ColliderOf)>();
                 world.entity_mut(entity).insert(ChildOf(building));
-                world.get_mut::<ChunkInstance>(entity).unwrap().cluster = None;
             }
         }
         world.flush();
@@ -222,7 +226,6 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     .entity_mut(entity)
                     .insert((local, global * local, ChildOf(body)));
                 world.entity_mut(entity).insert(ColliderOf { body });
-                world.get_mut::<ChunkInstance>(entity).unwrap().cluster = Some(body);
             }
             next.push(body);
             created.push((body, motion));

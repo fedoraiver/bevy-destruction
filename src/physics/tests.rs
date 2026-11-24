@@ -151,7 +151,6 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                     transform: local,
                     mass_properties,
                     material: record.material,
-                    cluster: None,
                 },
             ))
             .id();
@@ -193,7 +192,8 @@ fn remove(world: &mut World, building: Entity, id: &str) -> Entity {
 }
 
 fn body(world: &World, building: Entity, id: &str) -> Entity {
-    chunk(world, building, id).cluster.unwrap()
+    let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
+    world.get::<ColliderOf>(entity).unwrap().body
 }
 
 fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance {
@@ -238,6 +238,8 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let asset = asset(&mut app);
     let damaged = spawn_building(&mut app, asset.clone(), Transform::from_xyz(3.0, 0.0, 1.0));
     let intact = spawn_building(&mut app, asset, Transform::from_xyz(-3.0, 0.0, 1.0));
+    let support = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
+    assert!(app.world().get::<ColliderOf>(support).is_none());
     rebuild_clusters(app.world_mut());
     let old = body(app.world(), damaged, "a");
     let untouched = body(app.world(), intact, "a");
@@ -250,6 +252,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     assert_mass(app.world(), old, 14.0);
     assert_eq!(app.world().get::<RigidBodyColliders>(old).unwrap().len(), 4);
     let removed = remove(app.world_mut(), damaged, "a");
+    assert_eq!(app.world().get::<ColliderOf>(removed).unwrap().body, old);
     let surviving_ids =
         ["b", "c", "d"].map(|id| app.world().get::<BuildingInstance>(damaged).unwrap().chunks[id]);
     rebuild_clusters(app.world_mut());
@@ -277,6 +280,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         damaged
     );
     assert!(app.world().get::<Collider>(removed).is_none());
+    assert!(app.world().get::<ColliderOf>(removed).is_none());
     assert!(app.world().get::<RigidBody>(removed).is_none());
     assert!(app.world().get::<ChunkIdentity>(removed).is_some());
     for entity in surviving_ids {
@@ -299,6 +303,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     rebuild_clusters(app.world_mut());
     assert_eq!(body(app.world(), damaged, "b"), detached);
     app.update();
+    assert!(app.world().get::<ColliderOf>(removed).is_none());
     for entity in surviving_ids {
         assert_eq!(
             app.world().get::<ColliderOf>(entity).unwrap().body,

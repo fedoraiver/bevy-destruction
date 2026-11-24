@@ -214,7 +214,6 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
                     transform: Transform::IDENTITY,
                     mass_properties: MassProperties3d::ZERO,
                     material: "concrete".into(),
-                    cluster: None,
                 },
             ))
             .id();

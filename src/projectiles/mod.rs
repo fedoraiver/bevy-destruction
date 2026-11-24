@@ -231,8 +231,21 @@ struct ImpactStructure<'w, 's> {
     bonds: Query<'w, 's, &'static mut BondInstance>,
     bond_patches: Query<'w, 's, &'static BondPatches>,
     structural_patches: Query<'w, 's, &'static StructuralPatch>,
+    collider_owners: Query<'w, 's, &'static ColliderOf>,
     clusters: Query<'w, 's, (&'static Cluster, &'static RigidBody, &'static ChildOf)>,
     poses: Query<'w, 's, (&'static Position, &'static Rotation)>,
+}
+
+impl ImpactStructure<'_, '_> {
+    fn cluster_for(
+        &self,
+        collider: Entity,
+        building: Entity,
+    ) -> Option<(Entity, &Cluster, &RigidBody)> {
+        let body = self.collider_owners.get(collider).ok()?.body;
+        let (cluster, kind, parent) = self.clusters.get(body).ok()?;
+        (parent.parent() == building).then_some((body, cluster, kind))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -300,10 +313,11 @@ fn impact_damage(
                 if !chunk.alive {
                     continue;
                 }
-                let Some(body) = chunk.cluster else {
+                let Some((body, cluster, kind)) =
+                    structure.cluster_for(collider, identity.building)
+                else {
                     continue;
                 };
-                let (cluster, kind, _) = structure.clusters.get(body).unwrap();
                 if capture {
                     for manifold in &pair.manifolds {
                         for point in &manifold.points {
@@ -385,7 +399,7 @@ fn impact_damage(
         if !chunk.alive {
             continue;
         }
-        let Some(body) = chunk.cluster else {
+        let Some((body, _, _)) = structure.cluster_for(hit, building) else {
             continue;
         };
         let (_, rotation) = structure.poses.get(body).unwrap();
@@ -460,7 +474,13 @@ fn impact_damage(
             instance,
             &asset.manifest,
             ids,
-            |entity| structure.chunks.get(entity).unwrap(),
+            |entity| {
+                let chunk = structure.chunks.get(entity).unwrap();
+                let owner = structure
+                    .cluster_for(entity, building)
+                    .map(|(body, _, _)| body);
+                (chunk, owner)
+            },
             instance
                 .patches
                 .iter()
@@ -767,15 +787,24 @@ fn process_dynamic_impact(
                 .get(id)
                 .and_then(|&entity| structure.chunks.get(entity).ok())
         };
+        let live_body = |id: &str| {
+            let &entity = instance.chunks.get(id)?;
+            structure
+                .chunks
+                .get(entity)
+                .ok()
+                .filter(|chunk| chunk.alive)?;
+            structure
+                .collider_owners
+                .get(entity)
+                .ok()
+                .map(|owner| owner.body)
+        };
         if shock.prepared.is_none() {
             let source_bodies = shock
                 .loads
                 .keys()
-                .map(|id| {
-                    get_chunk(id)
-                        .filter(|chunk| chunk.alive)
-                        .and_then(|chunk| chunk.cluster)
-                })
+                .map(|id| live_body(id))
                 .collect::<Option<Vec<_>>>();
             let Some(source_bodies) = source_bodies.filter(|bodies| !bodies.is_empty()) else {
                 state.invalidated += 1;
@@ -818,9 +847,7 @@ fn process_dynamic_impact(
         }
         let mut groups = BTreeMap::<Entity, Vec<String>>::new();
         for id in &shock.chunks {
-            if let Some(chunk) = get_chunk(id).filter(|chunk| chunk.alive)
-                && let Some(body) = chunk.cluster
-            {
+            if let Some(body) = live_body(id) {
                 groups.entry(body).or_default().push(id.clone());
             }
         }
@@ -831,6 +858,15 @@ fn process_dynamic_impact(
         if groups.len() != 1 {
             // A solved parent response ends at separation. Only an independent,
             // never-solved hit may bind once to its current source-containing child.
+            state.released += 1;
+            continue;
+        }
+        let body = *groups.keys().next().unwrap();
+        if !structure
+            .clusters
+            .get(body)
+            .is_ok_and(|(_, _, parent)| parent.parent() == shock.building)
+        {
             state.released += 1;
             continue;
         }
@@ -895,7 +931,7 @@ fn process_dynamic_impact(
                     if capture {
                         report.force_sample = Some(DynamicForceSample {
                             building: shock.building,
-                            body: *groups.keys().next().unwrap(),
+                            body,
                             chunks: shock.chunks.clone(),
                             bonds: solution.bonds,
                             bond_signature: bond_signature(

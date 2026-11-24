@@ -373,6 +373,7 @@ fn drive(
         Option<&StressState>,
     )>,
     mut chunks: Query<&mut ChunkInstance>,
+    ownership: Query<&ColliderOf>,
     mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
         &Cluster,
@@ -383,6 +384,7 @@ fn drive(
         &AngularVelocity,
         &ComputedMass,
         &ChildOf,
+        Entity,
     )>,
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut metrics: ResMut<RunMetrics>,
@@ -466,7 +468,7 @@ fn drive(
     if state.frame > 20 && !instance.topology_dirty {
         state.strength_breaks = stress.broken_total.saturating_sub(state.before_broken);
         let mut total_mass = 0.0_f64;
-        for (cluster, kind, position, rotation, linear, angular, mass, parent) in &bodies {
+        for (cluster, kind, position, rotation, linear, angular, mass, parent, body) in &bodies {
             if parent.parent() != building {
                 continue;
             }
@@ -495,11 +497,6 @@ fn drive(
             let frame = state.frame;
             state.first_release.get_or_insert(frame);
             state.largest_released_upper = state.largest_released_upper.max(upper_chunks);
-            let body = chunks
-                .get(instance.chunks[&cluster.chunks[0]])
-                .unwrap()
-                .cluster
-                .unwrap();
             let static_supports = state
                 .support_path
                 .iter()
@@ -509,7 +506,7 @@ fn drive(
                     if !chunk.alive {
                         return None;
                     }
-                    let support = chunk.cluster?;
+                    let support = ownership.get(entity).ok()?.body;
                     bodies
                         .get(support)
                         .is_ok_and(|entry| *entry.1 == RigidBody::Static)

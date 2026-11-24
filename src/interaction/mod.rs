@@ -44,7 +44,7 @@ pub(crate) fn build_bond_feedback<'a>(
     instance: &BuildingInstance,
     manifest: &Manifest,
     broken: &[String],
-    chunk_at: impl Fn(Entity) -> &'a ChunkInstance,
+    chunk_at: impl Fn(Entity) -> (&'a ChunkInstance, Option<Entity>),
     patches: impl Iterator<Item = &'a ContactPatch>,
     world_pose: impl Fn(Option<Entity>) -> Transform,
 ) -> Option<BreakBurst> {
@@ -52,13 +52,13 @@ pub(crate) fn build_bond_feedback<'a>(
         .bonds
         .iter()
         .find(|bond| broken.contains(&bond.id))?;
-    let chunk = chunk_at(instance.chunks[&bond.a]);
-    let pose_for = |id: &str| world_pose(chunk_at(instance.chunks[id]).cluster);
-    let pose = pose_for(&bond.a);
+    let (chunk, body) = chunk_at(instance.chunks[&bond.a]);
+    let pose = world_pose(body);
     let mut surfaces = Vec::new();
     let mut area = 0.0;
     for patch in patches.filter(|patch| broken.contains(&patch.bond_id)) {
-        let pose = pose_for(&patch.a);
+        let (_, body) = chunk_at(instance.chunks[&patch.a]);
+        let pose = world_pose(body);
         area += patch.area;
         surfaces.extend(patch.triangles.iter().map(|triangle| EmissionSurface {
             triangle: triangle.map(|point| pose.transform_point(point)),

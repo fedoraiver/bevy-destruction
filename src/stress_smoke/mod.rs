@@ -292,7 +292,6 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
             transform: local,
             mass_properties,
             material: "concrete".into(),
-            cluster: None,
         });
         instance.chunks.insert(record.id, chunk);
     }
@@ -339,7 +338,7 @@ fn drive(
     mut settings: ResMut<StressSettings>,
     buildings: Query<(&BuildingInstance, Option<&StressState>), Without<StressProbe>>,
     probes: Query<(&BuildingInstance, &StressState), With<StressProbe>>,
-    chunks: Query<&ChunkInstance>,
+    chunks: Query<(&ChunkInstance, &ColliderOf)>,
     bonds: Query<&BondInstance>,
     bodies: Query<(
         &Cluster,
@@ -414,8 +413,9 @@ fn drive(
     state.max_impulse = impacts.max_impulse;
     if let Some((instance, stress)) = probe {
         state.broken_bonds = stress.broken_total;
-        if let Some(cluster) = chunks.get(instance.chunks[BEAM]).unwrap().cluster
-            && let Ok((cluster, position, rotation, center, kind, sleeping)) = bodies.get(cluster)
+        if let Ok((_, collider)) = chunks.get(instance.chunks[BEAM])
+            && let Ok((cluster, position, rotation, center, kind, sleeping)) =
+                bodies.get(collider.body)
         {
             let height = (position.0 + rotation.0 * center.0).y;
             state.stress_released |=
@@ -541,14 +541,11 @@ fn drive(
             let target = building
                 .chunks
                 .values()
-                .map(|&entity| chunks.get(entity).unwrap())
-                .filter(|chunk| {
-                    chunk.alive
-                        && chunk.cluster.is_some_and(|entity| {
-                            bodies.get(entity).is_ok_and(|body| body.0.anchored)
-                        })
+                .filter_map(|&entity| chunks.get(entity).ok())
+                .filter(|(chunk, collider)| {
+                    chunk.alive && bodies.get(collider.body).is_ok_and(|body| body.0.anchored)
                 })
-                .flat_map(|chunk| &chunk.triangles)
+                .flat_map(|(chunk, _)| &chunk.triangles)
                 .filter(|triangle| {
                     (triangle[1] - triangle[0])
                         .cross(triangle[2] - triangle[0])

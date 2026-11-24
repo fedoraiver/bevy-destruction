@@ -147,7 +147,7 @@ pub(crate) fn update_stress(
         Option<&mut StressState>,
         Option<Ref<StructuralLoads>>,
     )>,
-    chunks: Query<&ChunkInstance>,
+    chunks: Query<(&ChunkInstance, Option<&ColliderOf>)>,
     mut bonds: Query<&mut BondInstance>,
     patches: Query<&PatchInstance>,
     settings: Res<StressSettings>,
@@ -155,7 +155,7 @@ pub(crate) fn update_stress(
     gravity: Res<Gravity>,
     assets: Res<Assets<DestructibleAsset>>,
     transforms: TransformHelper,
-    poses: Query<(&Position, &Rotation)>,
+    poses: Query<(&Position, &Rotation, &ChildOf), With<physics::Cluster>>,
     mut bursts: MessageWriter<BreakBurst>,
 ) {
     if !settings.enabled {
@@ -192,7 +192,7 @@ pub(crate) fn update_stress(
         let loads = loads
             .as_deref()
             .map_or(&empty_loads, |loads| &loads.by_chunk);
-        let chunk_at = |entity| chunks.get(entity).expect("Indexed building chunk exists");
+        let chunk_at = |entity| chunks.get(entity).expect("Indexed building chunk exists").0;
         let bond_active = |entity| {
             bonds
                 .get(entity)
@@ -466,17 +466,20 @@ pub(crate) fn update_stress(
                     &instance,
                     &asset.manifest,
                     &state.last_broken,
-                    chunk_at,
+                    |entity| {
+                        let (chunk, collider) = chunks.get(entity).unwrap();
+                        (chunk, collider.map(|collider| collider.body))
+                    },
                     instance
                         .patches
                         .iter()
                         .map(|&entity| patches.get(entity).unwrap().patch()),
-                    |body| match body {
-                        Some(body) => {
-                            let (position, rotation) = poses.get(body).unwrap();
-                            Transform::from_translation(position.0).with_rotation(rotation.0)
-                        }
-                        None => root,
+                    |body| {
+                        body.and_then(|body| poses.get(body).ok())
+                            .filter(|(_, _, parent)| parent.parent() == building)
+                            .map_or(root, |(position, rotation, _)| {
+                                Transform::from_translation(position.0).with_rotation(rotation.0)
+                            })
                     },
                 ) {
                     bursts.write(burst);

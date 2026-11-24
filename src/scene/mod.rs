@@ -82,7 +82,6 @@ pub struct ChunkInstance {
     pub transform: Transform,
     pub mass_properties: MassProperties3d,
     pub material: String,
-    pub cluster: Option<Entity>,
 }
 
 impl ChunkInstance {
@@ -743,7 +742,6 @@ pub(crate) fn instantiate_pending(
                 transform,
                 mass_properties,
                 material: record.material.clone(),
-                cluster: None,
             });
             ready.chunks.insert(record.id.clone(), entity);
         }

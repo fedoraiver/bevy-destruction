@@ -54,12 +54,26 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
     let mut patches = Vec::new();
     for ((id, a, b), pose) in [("ab", "a", "b"), ("cd", "c", "d")].into_iter().zip(poses) {
         let body = world
-            .spawn((Position(pose.translation), Rotation(pose.rotation)))
+            .spawn((
+                ChildOf(root),
+                pose,
+                GlobalTransform::from(pose),
+                RigidBody::Dynamic,
+                crate::physics::Cluster {
+                    chunks: vec![a.into(), b.into()],
+                    anchored: false,
+                },
+                Position(pose.translation),
+                Rotation(pose.rotation),
+            ))
             .id();
         for chunk_id in [a, b] {
             let entity = world
                 .spawn((
-                    ChildOf(root),
+                    ChildOf(body),
+                    Transform::IDENTITY,
+                    GlobalTransform::from(pose),
+                    ColliderOf { body },
                     ChunkInstance {
                         primitives: Vec::new(),
                         alive: true,
@@ -67,7 +81,6 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
                         transform: Transform::IDENTITY,
                         mass_properties: MassProperties3d::ZERO,
                         material: "concrete".into(),
-                        cluster: Some(body),
                     },
                 ))
                 .id();
@@ -97,7 +110,12 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
         &instance,
         &manifest,
         &["ab".into(), "cd".into()],
-        |entity| world.get::<ChunkInstance>(entity).unwrap(),
+        |entity| {
+            (
+                world.get::<ChunkInstance>(entity).unwrap(),
+                world.get::<ColliderOf>(entity).map(|owner| owner.body),
+            )
+        },
         instance
             .patches
             .iter()

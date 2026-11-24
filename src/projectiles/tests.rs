@@ -15,6 +15,11 @@ fn chunk<'a>(world: &'a World, building: Entity, id: &str) -> &'a ChunkInstance 
     world.get::<ChunkInstance>(entity).unwrap()
 }
 
+fn body(world: &World, building: Entity, id: &str) -> Entity {
+    let entity = world.get::<BuildingInstance>(building).unwrap().chunks[id];
+    world.get::<ColliderOf>(entity).unwrap().body
+}
+
 fn bond_states(world: &World, building: Entity) -> BTreeMap<String, bool> {
     world
         .get::<BuildingInstance>(building)
@@ -127,7 +132,7 @@ fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
                 .values()
                 .all(|&entity| world.get::<ChunkInstance>(entity).unwrap().alive)
         );
-        let beam_body = chunk(world, building, BEAM).cluster.unwrap();
+        let beam_body = body(world, building, BEAM);
         assert!(!app.world().get::<Cluster>(beam_body).unwrap().anchored);
         assert_eq!(
             app.world().get::<RigidBody>(beam_body),
@@ -208,7 +213,7 @@ fn subthreshold_speed_contacts_do_not_break_bonds_or_accumulate_resting_damage()
     assert!(bonds[RIGHT_BOND]);
     assert!(
         app.world()
-            .get::<Cluster>(chunk(app.world(), building, BEAM).cluster.unwrap())
+            .get::<Cluster>(body(app.world(), building, BEAM))
             .unwrap()
             .anchored
     );
@@ -308,7 +313,6 @@ fn spawn_dropped_tower_at_height(
             transform: local,
             mass_properties,
             material: record.material.clone(),
-            cluster: None,
         });
         instance.chunks.insert(record.id.clone(), entity);
     }
@@ -346,7 +350,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
             );
     }
     app.update();
-    let first_body = chunk(app.world(), building, &upper[0]).cluster.unwrap();
+    let first_body = body(app.world(), building, &upper[0]);
     assert_eq!(
         app.world().get::<Cluster>(first_body).unwrap().chunks.len(),
         upper.len()
@@ -948,7 +952,7 @@ fn split_free_beam_for_queued_hit() -> (App, Entity, Vec<String>, Vec<String>) {
         .collect();
     break_bond(app.world_mut(), building, RIGHT_BOND);
     crate::physics::rebuild_clusters(app.world_mut());
-    let body = chunk(app.world(), building, BEAM).cluster.unwrap();
+    let body = body(app.world(), building, BEAM);
     let current = app.world().get::<Cluster>(body).unwrap().chunks.clone();
     assert_eq!(current.len(), 2);
     (app, building, original, current)
@@ -973,7 +977,7 @@ fn fresh_independent_hit_binds_once_to_its_current_child_without_reapplying_impu
         }]),
         ..default()
     };
-    let body = chunk(app.world(), building, BEAM).cluster.unwrap();
+    let body = body(app.world(), building, BEAM);
     let velocity = app.world().get::<LinearVelocity>(body).unwrap().0;
     let mut state = state_for(original);
     let mut rebound = evaluate_dynamic_impact(app.world_mut(), &mut state).unwrap();
@@ -1056,7 +1060,6 @@ fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
                 transform: record.transform(),
                 mass_properties,
                 material: record.material.clone(),
-                cluster: None,
             },
         );
     }
@@ -1217,7 +1220,6 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
                         transform: record.transform(),
                         mass_properties: MassProperties3d::ZERO,
                         material: record.material.clone(),
-                        cluster: None,
                     },
                 ))
                 .id();
