@@ -30,7 +30,12 @@ impl Plugin for FractureDebugPlugin {
             .init_gizmo_group::<FractureGizmos>()
             .add_systems(Startup, configure_lines)
             .add_systems(Update, toggle_overlay)
-            .add_systems(PostUpdate, draw_edges.after(TransformSystems::Propagate));
+            .add_systems(
+                PostUpdate,
+                draw_edges
+                    .after(TransformSystems::Propagate)
+                    .run_if(|overlay: Res<DebugOverlay>| overlay.enabled),
+            );
     }
 }
 
@@ -47,13 +52,9 @@ fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut overlay: ResMut<DebugOver
 }
 
 fn draw_edges(
-    overlay: Res<DebugOverlay>,
     chunks: Query<(&FractureEdges, &GlobalTransform, &InheritedVisibility)>,
     mut gizmos: Gizmos<FractureGizmos>,
 ) {
-    if !overlay.enabled {
-        return;
-    }
     for (edges, transform, visibility) in &chunks {
         if !visibility.get() {
             continue;

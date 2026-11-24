@@ -12,6 +12,8 @@
 
 2026-11-24 点击破坏的有限边最近点计算改用 Bevy `Segment3d`。
 
+2026-11-24 调试边线绘制由 Bevy 调度条件控制。
+
 ## 背景
 
 演示需要沿外墙、室内及近景观察建筑，并通过实际碰撞位置触发局部破坏。高楼和离散桥墩用于观察不同尺度、平面和支撑路径下的表现。
@@ -20,7 +22,7 @@
 
 - 用 Bevy 的 Rust `bsn!` 宏组合相机、灯光和碎块显示实体。读取 v2 清单及指定 GLB，待校验和依赖就绪后按 Chunk ID 建立实例；同一资产可在加载完成后继续实例化。资产契约见 [ADR 0005](0005-v2-asset-contract.md)。
 - 相机采用 60° 竖直视场的透视投影，裁剪距离为 0.05 至 500 m，切换场景后按建筑包围盒取景一次。WASD 沿相机方向移动，Space/Ctrl 沿世界竖直方向升降，输入归一化后以 6 m/s 移动。鼠标相对位移按 0.002 rad/px 更新，俯仰限制为 ±89°。Tab 切换鼠标捕获，失焦后暂停控制，恢复捕获的点击仅恢复控制。
-- 主键盘及数字小键盘的 `0` 切换橙色预破碎边线。线条取自焊接重复顶点后的真实折角与边界，跳过共面三角化对角线，保留深度遮挡。`9` 切换受力热力，按住 `Alt` 详查准星目标，见 [ADR 0009](0009-structural-diagnostics.md)。`Esc` 退出。
+- 主键盘及数字小键盘的 `0` 切换橙色预破碎边线。线条取自焊接重复顶点后的真实折角与边界，跳过共面三角化对角线，保留深度遮挡。绘制系统通过 `run_if` 读取开关，在变换传播后绘制。`9` 切换受力热力，按住 `Alt` 详查准星目标，见 [ADR 0009](0009-structural-diagnostics.md)。`Esc` 退出。
 - 左键通过中央准星查询最近的存活建筑 Collider；命中块必删，扩展范围仅限该块的直接连接邻块。半径 0.4 m、深度带 0.08 m、法线点积至少 0.7，每次最多删除 6 块。立即更新显示、存活状态和相邻连接，Collider 换属由 [ADR 0001](0001-rigid-cluster-runtime.md) 的固定步统一处理。表面和碎屑分别见 [ADR 0007](0007-fracture-surface-rendering.md)、[ADR 0008](0008-destruction-effects-and-rims.md)。
 - 右键发射刚性球，`R` 发射刚性方块。发射输入在相机移动后用 Bevy 的 `TransformHelper` 计算当前层级位姿，以该位姿确定发射起点和方向。撞击物的刚体参数及真实接触破坏见 [ADR 0003](0003-collision-driven-fracture.md)。
 - `DamageRequest` 携带一条点击破坏射线。玩家输入先发送消息，`apply_damage` 在同一次 `Update` 依序读取。冒烟探针在消费系统运行后发送的批量射线由下一次 `Update` 读取。
@@ -71,3 +73,5 @@
 [场景切换](../../../src/catalog/mod.rs) · [Bevy Observer](https://docs.rs/bevy/latest/bevy/ecs/prelude/struct.Observer.html)
 
 [Bevy 有限边最近点](https://docs.rs/bevy/latest/bevy/shape/struct.Segment3d.html#method.closest_point)
+
+[线框绘制](../../../src/debug/mod.rs) · [Bevy 调度条件](https://docs.rs/bevy/latest/bevy/ecs/schedule/trait.IntoScheduleConfigs.html#method.run_if)
