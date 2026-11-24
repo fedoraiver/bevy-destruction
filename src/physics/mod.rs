@@ -29,6 +29,18 @@ pub struct Cluster {
     pub anchored: bool,
 }
 
+pub(crate) fn building_clusters(
+    world: &World,
+    building: Entity,
+) -> impl Iterator<Item = Entity> + '_ {
+    world
+        .get::<Children>(building)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(move |&entity| world.get::<Cluster>(entity).is_some())
+}
+
 fn ground(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -105,7 +117,13 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             continue;
         };
         let manifest = &asset.manifest;
-        let previous = instance.clusters.clone();
+        let mut previous = building_clusters(world, building).collect::<Vec<_>>();
+        // Match the component order when retiring bodies so later entity allocation stays stable.
+        previous.sort_unstable_by(|&left, &right| {
+            let left = world.get::<Cluster>(left).unwrap();
+            let right = world.get::<Cluster>(right).unwrap();
+            left.chunks.first().cmp(&right.chunks.first())
+        });
         let root_global = global_transform(world, building);
         let root_pose = root_global.compute_transform();
         let initial = Motion {
@@ -177,12 +195,10 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         }
         world.flush();
 
-        let mut next = Vec::new();
         let mut created = Vec::new();
         for component in components {
             let parent = chunks[&component.chunks[0]].1;
-            if let Some(parent) = parent.filter(|parent| retained.contains(parent)) {
-                next.push(parent);
+            if parent.is_some_and(|parent| retained.contains(&parent)) {
                 continue;
             }
             let motion = parent.map_or(initial, |parent| motions[&parent]);
@@ -227,12 +243,11 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                     .insert((local, global * local, ChildOf(body)));
                 world.entity_mut(entity).insert(ColliderOf { body });
             }
-            next.push(body);
             created.push((body, motion));
         }
         world.flush();
         for old in previous {
-            if !next.contains(&old) {
+            if !retained.contains(&old) {
                 world.despawn(old);
             }
         }
@@ -258,9 +273,10 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                 world.entity_mut(body).insert(LinearVelocity(linear));
             }
         }
-        let mut instance = world.get_mut::<BuildingInstance>(building).unwrap();
-        instance.clusters = next;
-        instance.topology_dirty = false;
+        world
+            .get_mut::<BuildingInstance>(building)
+            .unwrap()
+            .topology_dirty = false;
         world.entity_mut(building).insert(RefreshDamageDetails);
     }
 }

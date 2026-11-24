@@ -32,9 +32,9 @@
 
 专用关系版本通过 149 项启用 `acceptance-test` 的工作区 Rust 回归，以及格式和 Clippy 检查。Windows 无窗回归通过矩形场景的 `gameplay` 和 `smoke`、`highrise_slab` 场景的 `landing`。
 
-## 未决问题
+## 后续实现记录
 
-后续可评估以层级查询取代建筑上的有序刚体簇索引。边带刷新与结构变更检测的分离见 [ADR 0008](0008-destruction-effects-and-rims.md#暴露边带)。
+建筑的刚体簇查询沿用直属子实体层级，见 [ADR 0021](0021-explicit-ecs-access-and-cluster-ownership.md#决策与实现)。边带刷新与结构变更检测的分离见 [ADR 0008](0008-destruction-effects-and-rims.md#暴露边带)。
 
 ## 来源
 

@@ -231,7 +231,7 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
             })
             .collect::<Vec<_>>();
         let mut mass = 0.0_f64;
-        for &body in &instance.clusters {
+        for body in crate::physics::building_clusters(app.world(), building) {
             let position = app.world().get::<Position>(body).unwrap().0;
             let rotation = app.world().get::<Rotation>(body).unwrap().0;
             assert!(position.is_finite() && rotation.is_finite());

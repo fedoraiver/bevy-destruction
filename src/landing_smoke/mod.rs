@@ -105,7 +105,11 @@ fn drive(
         }
         return;
     };
-    if instance.clusters.is_empty() {
+    let mut owned_bodies = bodies
+        .iter()
+        .filter(|(.., parent)| parent.parent() == building)
+        .peekable();
+    if owned_bodies.peek().is_none() {
         return;
     }
     let Some(asset) = assets.get(&instance.asset) else {
@@ -127,10 +131,7 @@ fn drive(
         ))
         .looking_at(Vec3::new(center.x, size.y * 0.4, center.z), Vec3::Y);
     }
-    let selected_bodies = bodies
-        .iter()
-        .filter(|(.., parent)| parent.parent() == building)
-        .collect::<Vec<_>>();
+    let selected_bodies = owned_bodies.collect::<Vec<_>>();
     if !state.upper.is_empty() {
         let finite = selected_bodies.iter().all(|body| {
             body.1.0.is_finite()

@@ -240,9 +240,11 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let intact = spawn_building(&mut app, asset, Transform::from_xyz(-3.0, 0.0, 1.0));
     let support = app.world().get::<BuildingInstance>(damaged).unwrap().chunks["a"];
     assert!(app.world().get::<ColliderOf>(support).is_none());
+    assert!(building_clusters(app.world(), damaged).next().is_none());
     rebuild_clusters(app.world_mut());
     let old = body(app.world(), damaged, "a");
     let untouched = body(app.world(), intact, "a");
+    assert!(building_clusters(app.world(), damaged).eq([old]));
     assert_eq!(app.world().get::<ChildOf>(old).unwrap().parent(), damaged);
     assert_eq!(
         app.world().get::<ChildOf>(untouched).unwrap().parent(),
@@ -295,6 +297,8 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         );
     }
     assert_eq!(body(app.world(), intact, "a"), untouched);
+    assert!(building_clusters(app.world(), intact).eq([untouched]));
+    assert!(building_clusters(app.world(), damaged).eq([detached]));
     assert_mass(app.world(), untouched, 14.0);
     app.world_mut()
         .get_mut::<BuildingInstance>(damaged)
@@ -302,6 +306,7 @@ fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
         .topology_dirty = true;
     rebuild_clusters(app.world_mut());
     assert_eq!(body(app.world(), damaged, "b"), detached);
+    assert!(building_clusters(app.world(), damaged).eq([detached]));
     app.update();
     assert!(app.world().get::<ColliderOf>(removed).is_none());
     for entity in surviving_ids {
@@ -340,12 +345,11 @@ fn moving_split_uses_physics_pose_and_inherits_angular_velocity_field() {
     assert!(app.world().get_entity(removed).is_ok());
     assert!(app.world().get::<Collider>(removed).is_none());
     assert_eq!(
-        app.world()
-            .get::<BuildingInstance>(building)
-            .unwrap()
-            .clusters
-            .len(),
-        2
+        building_clusters(app.world(), building).collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            body(app.world(), building, "b"),
+            body(app.world(), building, "d")
+        ]),
     );
     for (id, mass, local_center) in [
         ("b", 3.0, Vec3::new(0.0, 1.5, 0.0)),

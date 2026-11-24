@@ -99,7 +99,6 @@ pub struct BuildingInstance {
     pub bounds: Option<BuildingBounds>,
     pub error: Option<String>,
     pub patches: Vec<Entity>,
-    pub clusters: Vec<Entity>,
     pub topology_dirty: bool,
 }
 
@@ -112,7 +111,6 @@ impl BuildingInstance {
             bounds: None,
             error: None,
             patches: Vec::new(),
-            clusters: Vec::new(),
             topology_dirty: false,
         }
     }

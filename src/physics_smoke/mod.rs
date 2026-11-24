@@ -240,7 +240,12 @@ fn drive(
     let Some(asset) = assets.get(&instance.asset) else {
         return;
     };
-    if instance.clusters.is_empty() {
+    let building_bodies = || {
+        bodies
+            .iter()
+            .filter(|(.., parent)| parent.parent() == building)
+    };
+    if building_bodies().next().is_none() {
         if state.waiting == 1800 {
             state
                 .errors
@@ -265,11 +270,6 @@ fn drive(
     }
     state.frame += 1;
 
-    let building_bodies = || {
-        bodies
-            .iter()
-            .filter(|(.., parent)| parent.parent() == building)
-    };
     let selected_bodies = building_bodies()
         .filter(|(_, cluster, ..)| cluster.chunks.iter().any(|id| state.selected.contains(id)))
         .collect::<Vec<_>>();

@@ -428,7 +428,11 @@ fn drive(
     let (Some(bounds), Some(stress)) = (instance.bounds, stress) else {
         return;
     };
-    if instance.clusters.is_empty() || stress.solves == 0 {
+    let mut owned_bodies = bodies
+        .iter()
+        .filter(|(.., parent, _)| parent.parent() == building)
+        .peekable();
+    if stress.solves == 0 || owned_bodies.peek().is_none() {
         return;
     }
     let Some(asset) = assets.get(&instance.asset) else {
@@ -468,10 +472,7 @@ fn drive(
     if state.frame > 20 && !instance.topology_dirty {
         state.strength_breaks = stress.broken_total.saturating_sub(state.before_broken);
         let mut total_mass = 0.0_f64;
-        for (cluster, kind, position, rotation, linear, angular, mass, parent, body) in &bodies {
-            if parent.parent() != building {
-                continue;
-            }
+        for (cluster, kind, position, rotation, linear, angular, mass, _, body) in owned_bodies {
             state.finite &= position.0.is_finite()
                 && rotation.0.is_finite()
                 && linear.0.is_finite()
@@ -509,7 +510,9 @@ fn drive(
                     let support = ownership.get(entity).ok()?.body;
                     bodies
                         .get(support)
-                        .is_ok_and(|entry| *entry.1 == RigidBody::Static)
+                        .is_ok_and(|(_, kind, .., parent, _)| {
+                            *kind == RigidBody::Static && parent.parent() == building
+                        })
                         .then_some((id.as_str(), entity, support))
                 })
                 .collect::<Vec<_>>();

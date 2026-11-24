@@ -477,7 +477,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         );
         manifest.bonds.push(bond);
     }
-    instance.clusters = vec![body];
     let chunks = instance.chunks.keys().cloned().collect::<Vec<_>>();
     world.entity_mut(body).insert(Cluster {
         chunks: chunks.clone(),
@@ -511,7 +510,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
         .id();
     let mut second = BuildingInstance::pending(Handle::default());
     second.bounds = instance.bounds;
-    second.clusters = vec![twin_body];
     for (id, &original_entity) in &instance.chunks {
         let chunk = world.get::<ChunkInstance>(original_entity).unwrap();
         let original = chunk.primitives[0];

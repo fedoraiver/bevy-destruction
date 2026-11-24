@@ -10,6 +10,7 @@ use crate::{
     DemoOptions, DestructionPlugin,
     camera::FreeCamera,
     diagnostics,
+    physics::Cluster,
     projectiles::{ImpactStats, RigidProjectile},
     scene::{BondInstance, BuildingInstance, ChunkInstance},
 };
@@ -166,23 +167,30 @@ struct GameplayState {
 
 fn observe_gameplay(
     options: Res<DemoOptions>,
-    buildings: Query<(Entity, &BuildingInstance)>,
-    graph: (Query<&ChunkInstance>, Query<&BondInstance>),
+    buildings: Query<(Entity, &BuildingInstance, Option<&Children>)>,
+    graph: (
+        Query<&ChunkInstance>,
+        Query<&BondInstance>,
+        Query<(), With<Cluster>>,
+    ),
     cameras: Query<(Entity, &GlobalTransform, &FreeCamera), With<DemoCamera>>,
     projectiles: Query<&Collider, With<RigidProjectile>>,
     impacts: Res<ImpactStats>,
     mut state: ResMut<GameplayState>,
 ) {
-    let (chunks, bonds) = graph;
+    let (chunks, bonds, clusters) = graph;
     state.frame += 1;
     state.asset.clone_from(&options.asset);
     let building = buildings.single().ok();
-    state.building = building.map(|(entity, _)| entity);
-    state.load_error = building.and_then(|(_, instance)| instance.error.clone());
-    state.ready = building.is_some_and(|(_, instance)| {
-        instance.bounds.is_some() && !instance.clusters.is_empty() && instance.error.is_none()
+    state.building = building.map(|(entity, _, _)| entity);
+    state.load_error = building.and_then(|(_, instance, _)| instance.error.clone());
+    state.ready = building.is_some_and(|(_, instance, children)| {
+        instance.bounds.is_some()
+            && instance.error.is_none()
+            && children
+                .is_some_and(|children| children.iter().any(|child| clusters.contains(child)))
     });
-    state.removed_chunks = building.map_or(0, |(_, instance)| {
+    state.removed_chunks = building.map_or(0, |(_, instance, _)| {
         instance
             .chunks
             .values()
@@ -190,7 +198,7 @@ fn observe_gameplay(
             .filter(|chunk| !chunk.alive)
             .count()
     });
-    state.live_bonds = building.map_or(0, |(_, instance)| {
+    state.live_bonds = building.map_or(0, |(_, instance, _)| {
         instance
             .bonds
             .values()

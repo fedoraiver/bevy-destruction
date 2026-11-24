@@ -158,10 +158,14 @@ fn initial_overload_can_fracture_before_the_first_cluster_exists() {
     app.add_systems(
         FixedPostUpdate,
         (move |instances: Query<&BuildingInstance>,
+               children: Query<&Children>,
+               clusters: Query<(), With<Cluster>>,
                bonds: Query<&BondInstance>,
                mut bursts: MessageReader<BreakBurst>| {
             let instance = instances.get(root).unwrap();
-            assert!(instance.clusters.is_empty());
+            let children = children.get(root).unwrap();
+            assert!(children.contains(&instance.chunks[BEAM]));
+            assert!(!children.iter().any(|entity| clusters.contains(entity)));
             assert!(!bonds.get(instance.bonds[RIGHT_BOND]).unwrap().active);
             let mut bursts = bursts.read();
             let burst = bursts
@@ -686,7 +690,7 @@ mod collapse {
                 entity
             });
             let mut total_mass = 0.0_f64;
-            for &body in &instance.clusters {
+            for body in physics::building_clusters(app.world(), root) {
                 let rotation = app.world().get::<Rotation>(body).unwrap().0;
                 let position = app.world().get::<Position>(body).unwrap().0;
                 assert!(rotation.is_finite() && position.is_finite());

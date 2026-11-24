@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     camera::CameraControl,
-    physics::{Cluster, DestructionPhysicsPlugin},
+    physics::{Cluster, DestructionPhysicsPlugin, building_clusters},
     scene::spawn_bonds,
     stress_smoke::{BEAM, LEFT_BOND, RIGHT_BOND, spawn_beam},
 };
@@ -393,24 +393,19 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
             assert_eq!(stats.broken_bonds, 0, "Free fall fractured before contact");
             assert_eq!(stats.structural_solves, 0);
         }
-        for body in &app
-            .world()
-            .get::<BuildingInstance>(building)
-            .unwrap()
-            .clusters
-        {
-            assert!(app.world().get::<Position>(*body).unwrap().0.is_finite());
-            assert!(app.world().get::<Rotation>(*body).unwrap().0.is_finite());
+        for body in building_clusters(app.world(), building) {
+            assert!(app.world().get::<Position>(body).unwrap().0.is_finite());
+            assert!(app.world().get::<Rotation>(body).unwrap().0.is_finite());
             assert!(
                 app.world()
-                    .get::<LinearVelocity>(*body)
+                    .get::<LinearVelocity>(body)
                     .unwrap()
                     .0
                     .is_finite()
             );
             assert!(
                 app.world()
-                    .get::<AngularVelocity>(*body)
+                    .get::<AngularVelocity>(body)
                     .unwrap()
                     .0
                     .is_finite()
@@ -418,13 +413,8 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         }
     }
     let stats = app.world().resource::<ImpactStats>();
-    let sizes = app
-        .world()
-        .get::<BuildingInstance>(building)
-        .unwrap()
-        .clusters
-        .iter()
-        .map(|body| app.world().get::<Cluster>(*body).unwrap().chunks.len())
+    let sizes = building_clusters(app.world(), building)
+        .map(|body| app.world().get::<Cluster>(body).unwrap().chunks.len())
         .collect::<Vec<_>>();
     eprintln!(
         "upper-tower landing: broken={} dynamic={} solves={} released={} invalidated={} pending={} peak_utilization={:.3} speed={max_speed:.3} impulse={max_impulse:.1} sizes={sizes:?}",
@@ -473,12 +463,7 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         stats.structural_solves,
     );
     assert!(
-        app.world()
-            .get::<BuildingInstance>(building)
-            .unwrap()
-            .clusters
-            .len()
-            > 1,
+        sizes.len() > 1,
         "Broken landing bonds did not split the compound"
     );
     let instance = app.world().get::<BuildingInstance>(building).unwrap();
@@ -519,13 +504,14 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         .map(|record| source_y(record))
         .min_by(f32::total_cmp)
         .unwrap();
-    let main_body = *instance
-        .clusters
-        .iter()
-        .max_by_key(|&&body| app.world().get::<Cluster>(body).unwrap().chunks.len())
+    let main_body = building_clusters(app.world(), building)
+        .max_by_key(|&body| {
+            let cluster = app.world().get::<Cluster>(body).unwrap();
+            (cluster.chunks.len(), cluster.chunks.first())
+        })
         .unwrap();
     assert!(
-        instance.clusters.iter().any(|&body| {
+        building_clusters(app.world(), building).any(|body| {
             let cluster = app.world().get::<Cluster>(body).unwrap();
             let has_lower_kind = |kind| {
                 cluster.chunks.iter().any(|id| {
@@ -553,10 +539,8 @@ fn dropped_upper_tower_fractures_on_ground_contact() {
         .iter()
         .map(|id| f64::from(chunk(app.world(), building, id).mass_properties.mass))
         .sum::<f64>();
-    let actual_mass = instance
-        .clusters
-        .iter()
-        .map(|body| f64::from(computed_mass(app.world(), *body)))
+    let actual_mass = building_clusters(app.world(), building)
+        .map(|body| f64::from(computed_mass(app.world(), body)))
         .sum::<f64>();
     assert!((actual_mass - expected_mass).abs() < expected_mass * 1e-5);
     assert!(
@@ -610,16 +594,14 @@ fn trace_landing_step(
         .map(|record| (record.id.as_str(), record))
         .collect::<BTreeMap<_, _>>();
     *last_released = stats.released_structural_events;
-    let groups = instance
-        .clusters
-        .iter()
+    let groups = building_clusters(world, building)
         .map(|body| {
-            let cluster = world.get::<Cluster>(*body).unwrap();
+            let cluster = world.get::<Cluster>(body).unwrap();
             (
                 cluster.chunks.len(),
-                computed_mass(world, *body),
-                world.get::<LinearVelocity>(*body).unwrap().y,
-                world.get::<AngularVelocity>(*body).unwrap().length(),
+                computed_mass(world, body),
+                world.get::<LinearVelocity>(body).unwrap().y,
+                world.get::<AngularVelocity>(body).unwrap().length(),
                 (cluster.chunks.len() <= 4).then(|| cluster.chunks.clone()),
             )
         })
@@ -784,11 +766,8 @@ fn tower_landing_fracture_responds_to_drop_height() {
                 }
             }
         }
-        let instance = app.world().get::<BuildingInstance>(building).unwrap();
-        let mut sizes = instance
-            .clusters
-            .iter()
-            .map(|&body| app.world().get::<Cluster>(body).unwrap().chunks.len())
+        let mut sizes = building_clusters(app.world(), building)
+            .map(|body| app.world().get::<Cluster>(body).unwrap().chunks.len())
             .collect::<Vec<_>>();
         sizes.sort_unstable_by(|a, b| b.cmp(a));
         let stats = app.world().resource::<ImpactStats>();
@@ -863,14 +842,7 @@ fn a_split_releases_the_parent_shock_without_reusing_its_contact_impulse() {
     }
     crate::physics::rebuild_clusters(app.world_mut());
     let before = bond_states(app.world(), building);
-    assert!(
-        app.world()
-            .get::<BuildingInstance>(building)
-            .unwrap()
-            .clusters
-            .len()
-            > 1
-    );
+    assert!(building_clusters(app.world(), building).count() > 1);
     assert!(evaluate_dynamic_impact(app.world_mut(), &mut state).is_none());
     assert_eq!(state.released, 1);
     assert_eq!(state.invalidated, 0);

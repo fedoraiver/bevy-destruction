@@ -1,7 +1,7 @@
 use super::*;
 use avian3d::prelude::RigidBodyColliders;
 
-use crate::scene::BondOfBuilding;
+use crate::{physics::building_clusters, scene::BondOfBuilding};
 
 #[test]
 fn same_asset_visibility_fixtures_own_independent_bonds() {
@@ -18,12 +18,19 @@ fn same_asset_visibility_fixtures_own_independent_bonds() {
     assert_eq!(original.asset, twin.asset);
     assert_eq!(original.bonds.len(), TARGETS.len());
     assert_eq!(twin.bonds.len(), TARGETS.len());
+    assert!(building_clusters(&world, fixture.building).eq([fixture.body]));
+    let twin_body = {
+        let mut bodies = building_clusters(&world, fixture.twin);
+        let body = bodies.next().expect("The twin building has a cluster");
+        assert!(bodies.next().is_none());
+        body
+    };
     for (id, &original_bond) in &original.bonds {
         let twin_bond = twin.bonds[id];
         assert_ne!(original_bond, twin_bond);
         for (building, body, entity) in [
             (fixture.building, fixture.body, original_bond),
-            (fixture.twin, twin.clusters[0], twin_bond),
+            (fixture.twin, twin_body, twin_bond),
         ] {
             let bond = world.get::<BondInstance>(entity).unwrap();
             assert_eq!(
