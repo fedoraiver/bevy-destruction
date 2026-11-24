@@ -25,7 +25,7 @@
 图中的回路从撞击断键返回下一固定步。子簇在下一次重建时继承当前刚体运动。
 
 - 使用 Bevy 0.20 和 Avian 0.8，物理步长固定为 60 Hz。在 `FixedPostUpdate` 中，准静态承载先于刚体簇重建，重建早于 `PhysicsSystems::First`，撞击采样在 `PhysicsSystems::Last` 之后。
-- 每个 Chunk 保留带有 `ChunkIdentity` 的子 Collider，复合形状由资产凸代理组成。换属前禁用受影响的 Collider 并刷新操作，以清除 Avian 的旧接触。更新 `ColliderOf` 并刷新关系后，移除弃用的刚体，再启用存活 Collider。这样接触和约束缓存不会引用已移除的刚体。
+- 每个 Chunk 保留带有 `ChunkIdentity` 的子 Collider，复合形状由资产凸代理组成。换属前禁用受影响的 Collider 并刷新操作，以清除 Avian 的旧接触。更新存活碎块的 `ChildOf` 并刷新 Avian 派生的 `ColliderOf` 后，移除弃用的刚体，再启用存活 Collider。这样接触和约束缓存不会引用已移除的刚体。[归属决策](0021-explicit-ecs-access-and-cluster-ownership.md)
 - 每个代理先按原坐标构造凸包。若 Parry 将细长点集误判为低维并使构造失败，在包围盒各轴分别归一化后确定凸包面，检查三维点面数及正有向体积，再用原始坐标和这些面构造多面体。成功时保持原代理位置、尺度和复合形状归属。两种方法均失败时拒绝加载，并报告碎块 ID 和代理序号。
 - 固定地面是顶面 $Y=0$ 的 `400 m × 0.2 m × 400 m` 盒体，重力沿世界负 Y。地面和建筑簇的摩擦为 `0.7`，恢复系数为 `0.0`。
 

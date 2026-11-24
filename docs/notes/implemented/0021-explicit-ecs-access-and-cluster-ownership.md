@@ -10,6 +10,8 @@
 
 2026-11-24 改用建筑的 `Children` 枚举直属刚体簇。
 
+2026-11-24 重建改用 Avian 的碰撞体换属和 Bevy 的即时层级变换。
+
 ## 背景
 
 锚定承载系统独占整个 `World`，无法从系统签名看出它的依赖。刚体簇另外储存了一份所属建筑实体，同时已使用 `ChildOf` 建立同一个层级关系。两处归属可能在换属时产生分歧，进而影响撞击和受力样本。
@@ -19,8 +21,9 @@
 - 锚定承载通过 `Query`、`Res`、`TransformHelper` 和 `MessageWriter` 声明访问。首次求解后通过 `Commands` 添加应力状态。过载判定及反馈仍先于本固定步刚体簇重建，断裂反馈使用重建前位姿。
 - 刚体簇的所属建筑由 `ChildOf` 提供。撞击工况、受力显示和验收夹具沿用这条关系。碎块碰撞体仍通过 Avian 的 `ColliderOf` 关联刚体簇。
 - 分簇从建筑的直属 `Children` 选出带 `Cluster` 的实体。旧簇按其成员中的首个稳定碎块 ID 排序，以原有顺序清理。验收探针同样通过结构层级查询建筑的簇及就绪状态。
-- 分簇计划从 `ColliderOf` 读取旧归属，包括逻辑上已删除但尚待解除碰撞关系的碎块。提交时同步解除已删除碎块的碰撞和归属，存活碎块换属后再销毁旧簇和聚合新质量。点击后到下一固定步前，结构状态和碰撞归属分别反映各自的消费时点。首次分簇前的断裂反馈使用建筑位姿。
+- 分簇计划从 `ColliderOf` 读取旧归属，包括逻辑上已删除但尚待解除碰撞关系的碎块。提交时同步解除已删除碎块的碰撞和归属，存活碎块通过 `ChildOf` 换属。Avian 的 `ColliderHierarchyPlugin` 更新 `ColliderOf`，重建在销毁旧簇和聚合新质量前刷新该关系。点击后到下一固定步前，结构状态和碰撞归属分别反映各自的消费时点。首次分簇前的断裂反馈使用建筑位姿。
 - 刚体簇重建在独占系统中同步清理旧接触、更新碰撞体归属、重新聚合质量并赋予子簇速度。该顺序依赖中途刷新和读取即时结果。
+- 重建通过只读 `SystemState<TransformHelper>` 获取建筑在当前层级下的位姿，无需等待 `PostUpdate` 变换传播。后续拆分仍从父簇的 Avian 位姿和速度继承运动。
 - 撞击系统通过 `Query`、`Res` 和 `ResMut` 声明组件与资源访问。它在 `PhysicsSystems::Last` 后按顺序读取已求解的接触、执行动态求解、在共同预算内提交断键，并通过 `MessageWriter` 发送反馈。下一固定步的分簇消费断键结果。[接触与断裂规则](0003-collision-driven-fracture.md)
 
 ## 备选方案与取舍
@@ -32,6 +35,8 @@
 `ChunkInstance` 曾另存当前簇实体。直接查询 `ColliderOf` 可让撞击、受力诊断、断裂反馈和分簇读取同一份归属。调用方继续按自己的消费阶段校验存活状态和簇实体。`Cluster.chunks` 提供稳定顺序的结构成员快照，用于工况绑定和求解。
 
 `BuildingInstance.clusters` 曾保存有序的簇实体列表，重建需要在层级更新后同步写入该列表。由 `ChildOf` 和 `Children` 维护的直接关系统一提供建筑与簇的双向查询。分簇只在处理旧簇时从成员 ID 恢复排序，普通子实体通过 `Cluster` 过滤。
+
+重建曾同时写 `ChildOf` 和 `ColliderOf`，并自行遍历建筑的变换层级。Avian 按最近的刚体祖先维护存活 Collider 的归属，Bevy 提供传播前的即时位姿。复用两者使分簇只需写入父子关系并在清理前刷新，再按当前建筑层级定位簇。
 
 ## 验证要求与结果
 
@@ -51,6 +56,8 @@
 
 建筑簇查询迁移通过启用验收特性的 150 项工作区 Rust 回归、格式和 Clippy 检查。矩形场景 `physics`、`force`、`collapse`、`gameplay` 和板式高楼场景 `landing` 无窗验收均通过。
 
+碰撞体换属复用现有存活碎块重绑、旧接触清理、质量及动量回归。新增用例覆盖父实体平移和旋转后、变换尚未传播时的首次分簇。启用验收特性的 152 项工作区 Rust 回归、格式和 Clippy 检查通过，矩形场景 `physics` 无窗验收通过。
+
 ## 未决问题
 
 场景结构变更仍有多阶段的独占流程。之后的重构需保留接触、断键、重建和反馈之间的消费时点。
@@ -60,3 +67,5 @@
 ## 来源
 
 [承载系统](../../../src/stress_runtime/mod.rs) · [断裂反馈](../../../src/interaction/mod.rs) · [刚体簇](../../../src/physics/mod.rs) · [撞击处理](../../../src/projectiles/mod.rs) · [受力显示](../../../src/force_debug/mod.rs)
+
+[Avian 碰撞体层级](https://docs.rs/avian3d/latest/avian3d/struct.PhysicsPlugins.html#plugins) · [Bevy 层级变换](https://docs.rs/bevy/latest/bevy/prelude/struct.TransformHelper.html)

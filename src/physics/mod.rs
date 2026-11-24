@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use avian3d::prelude::*;
-use bevy::{ecs::system::InRef, prelude::*};
+use bevy::{
+    ecs::system::{InRef, SystemState},
+    prelude::*,
+};
 
 use crate::{
     asset::DestructibleAsset,
@@ -77,21 +80,6 @@ impl Motion {
     }
 }
 
-pub(crate) fn global_transform(world: &World, entity: Entity) -> GlobalTransform {
-    let mut ancestors = vec![entity];
-    let mut parent = world.get::<ChildOf>(entity);
-    while let Some(child_of) = parent {
-        ancestors.push(child_of.parent());
-        parent = world.get::<ChildOf>(child_of.parent());
-    }
-    ancestors
-        .into_iter()
-        .rev()
-        .fold(GlobalTransform::IDENTITY, |global, entity| {
-            global * *world.get::<Transform>(entity).unwrap()
-        })
-}
-
 fn update_new_cluster_mass(
     InRef(bodies): InRef<[(Entity, Motion)]>,
     mut mass_properties: MassPropertyHelper,
@@ -108,6 +96,10 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
         .filter(|(_, instance)| instance.topology_dirty && instance.bounds.is_some())
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
+    if buildings.is_empty() {
+        return;
+    }
+    let mut transforms = SystemState::<TransformHelper>::new(world);
     for building in buildings {
         let instance = world.get::<BuildingInstance>(building).unwrap();
         let Some(asset) = world
@@ -124,7 +116,11 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
             let right = world.get::<Cluster>(right).unwrap();
             left.chunks.first().cmp(&right.chunks.first())
         });
-        let root_global = global_transform(world, building);
+        let root_global = transforms
+            .get(world)
+            .expect("TransformHelper's read-only queries are available")
+            .compute_global_transform(building)
+            .expect("A loaded building has a valid transform hierarchy");
         let root_pose = root_global.compute_transform();
         let initial = Motion {
             position: root_pose.translation,
@@ -241,10 +237,10 @@ pub(crate) fn rebuild_clusters(world: &mut World) {
                 world
                     .entity_mut(entity)
                     .insert((local, global * local, ChildOf(body)));
-                world.entity_mut(entity).insert(ColliderOf { body });
             }
             created.push((body, motion));
         }
+        // Apply Avian's collider reparenting before any former owner despawns.
         world.flush();
         for old in previous {
             if !retained.contains(&old) {

@@ -233,6 +233,43 @@ fn assert_vec(actual: Vec3, expected: Vec3) {
 }
 
 #[test]
+fn first_cluster_uses_building_pose_before_transform_propagation() {
+    let mut app = app();
+    let asset = asset(&mut app);
+    let local = Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_x(0.25));
+    let building = spawn_building(&mut app, asset, local);
+    let world = app.world_mut();
+    let parent = world
+        .spawn((Name::new("Building pose parent"), Transform::IDENTITY))
+        .id();
+    world.entity_mut(building).insert(ChildOf(parent));
+    let parent_pose =
+        Transform::from_xyz(9.0, 1.0, -4.0).with_rotation(Quat::from_rotation_y(0.55));
+    *world.get_mut::<Transform>(parent).unwrap() = parent_pose;
+    let expected = (GlobalTransform::from(parent_pose) * local).compute_transform();
+    let stale = world
+        .get::<GlobalTransform>(building)
+        .unwrap()
+        .translation();
+    assert!(stale.distance(expected.translation) > 1.0);
+
+    rebuild_clusters(world);
+    let cluster = body(world, building, "a");
+    assert_vec(
+        world.get::<Position>(cluster).unwrap().0,
+        expected.translation,
+    );
+    assert!(
+        world
+            .get::<Rotation>(cluster)
+            .unwrap()
+            .0
+            .angle_between(expected.rotation)
+            < 1e-4
+    );
+}
+
+#[test]
 fn support_removal_reparents_live_colliders_and_preserves_other_instances() {
     let mut app = app();
     let asset = asset(&mut app);
