@@ -22,6 +22,125 @@ fn heat_levels_use_inclusive_capacity_thresholds() {
 }
 
 #[test]
+fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_step() {
+    use std::time::Duration;
+
+    use crate::{
+        physics::DestructionPhysicsPlugin,
+        stress::NodeLoad,
+        stress_runtime::StressRuntimePlugin,
+        stress_smoke::{BEAM, RIGHT_BOND, spawn_beam},
+    };
+    use bevy::{gizmos::GizmoAsset, time::TimeUpdateStrategy};
+
+    let mut app = App::new();
+    let step = Duration::from_secs_f64(1.0 / 60.0);
+    app.add_plugins((MinimalPlugins, TransformPlugin, PhysicsPlugins::default()))
+        .init_resource::<Assets<DestructibleAsset>>()
+        .init_resource::<Assets<GizmoAsset>>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Aim>()
+        .init_resource::<ForceSamples>()
+        .init_resource::<ForceViewStats>()
+        .insert_resource(DemoOptions {
+            force_smoke_output: Some(default()),
+            ..default()
+        })
+        .insert_resource(ForceCapture { enabled: true })
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(step))
+        .init_gizmo_group::<ForceGizmos>()
+        .add_plugins((DestructionPhysicsPlugin, StressRuntimePlugin))
+        .add_systems(PostUpdate, draw.after(TransformSystems::Propagate));
+    app.finish();
+    app.cleanup();
+    app.update();
+    let building = spawn_beam(app.world_mut(), Vec3::ZERO);
+    let other = spawn_beam(app.world_mut(), Vec3::X * 8.0);
+    for _ in 0..5 {
+        app.update();
+    }
+
+    let visible_bonds = |app: &App| {
+        let stats = app.world().resource::<ForceViewStats>();
+        [building, other].map(|building| {
+            stats
+                .valid_bonds
+                .iter()
+                .filter(|(owner, _)| *owner == building)
+                .count()
+        })
+    };
+    let force = |app: &App| {
+        app.world().get::<StressState>(building).unwrap().bonds[RIGHT_BOND]
+            .stress
+            .force[1]
+            .abs()
+    };
+    let draw_without_fixed_step = |app: &mut App| {
+        let now = app.world().resource::<Time<Fixed>>().elapsed();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+        app.update();
+        assert_eq!(app.world().resource::<Time<Fixed>>().elapsed(), now);
+        assert_eq!(visible_bonds(app), [0, 2]);
+    };
+    let resume_fixed_step = |app: &mut App| {
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(step));
+        app.update();
+        assert_eq!(visible_bonds(app), [2, 2]);
+    };
+    assert_eq!(visible_bonds(&app), [2, 2]);
+    let original_force = force(&app);
+    let other_solves = app
+        .world()
+        .get::<StressState>(other)
+        .unwrap()
+        .numerical_solves;
+
+    app.world_mut()
+        .entity_mut(building)
+        .insert(StructuralLoads {
+            by_chunk: BTreeMap::from([(
+                BEAM.into(),
+                NodeLoad {
+                    force: [0.0, -1000.0, 0.0],
+                    moment: [0.0; 3],
+                },
+            )]),
+        });
+    draw_without_fixed_step(&mut app);
+    resume_fixed_step(&mut app);
+    let loaded_force = force(&app);
+    assert!(loaded_force > original_force + 400.0);
+
+    app.world_mut()
+        .get_mut::<StructuralLoads>(building)
+        .unwrap()
+        .by_chunk
+        .get_mut(BEAM)
+        .unwrap()
+        .force[1] *= 2.0;
+    draw_without_fixed_step(&mut app);
+    resume_fixed_step(&mut app);
+    assert!(force(&app) > loaded_force + 400.0);
+
+    app.world_mut()
+        .entity_mut(building)
+        .remove::<StructuralLoads>();
+    draw_without_fixed_step(&mut app);
+    resume_fixed_step(&mut app);
+    assert_eq!(force(&app), original_force);
+    assert_eq!(
+        app.world()
+            .get::<StressState>(other)
+            .unwrap()
+            .numerical_solves,
+        other_solves
+    );
+}
+
+#[test]
 fn inspector_prioritizes_utilization_over_force_and_shows_at_most_three_bonds() {
     let mut bonds = [
         ("c", 0.7, 60.0),

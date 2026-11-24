@@ -250,18 +250,15 @@ fn healthy_cache_tracks_load_gravity_settings_and_topology_changes() {
         initial_force
     );
 
-    app.world_mut()
-        .resource_mut::<StructuralLoads>()
-        .by_building
-        .entry(root)
-        .or_default()
-        .insert(
+    app.world_mut().entity_mut(root).insert(StructuralLoads {
+        by_chunk: BTreeMap::from([(
             BEAM.into(),
             NodeLoad {
                 force: [0.0, -1000.0, 0.0],
                 moment: [0.0; 3],
             },
-        );
+        )]),
+    });
     tick(&mut app, 3);
     let loaded = app.world().get::<StressState>(root).unwrap();
     assert_eq!(loaded.solves, solves + 1);
@@ -419,18 +416,15 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
     assert_eq!(body(app.world(), root), supported);
     assert!(state.reports.iter().all(|report| report.valid));
     assert!(app.world().get::<Collider>(entity).is_none());
-    app.world_mut()
-        .resource_mut::<StructuralLoads>()
-        .by_building
-        .entry(root)
-        .or_default()
-        .insert(
+    app.world_mut().entity_mut(root).insert(StructuralLoads {
+        by_chunk: BTreeMap::from([(
             BEAM.into(),
             NodeLoad {
                 force: [0.0, -1000.0, 0.0],
                 moment: [0.0; 3],
             },
-        );
+        )]),
+    });
     tick(&mut app, 3);
     let state = app.world().get::<StressState>(root).unwrap();
     assert_eq!(state.numerical_solves, solves + 1);

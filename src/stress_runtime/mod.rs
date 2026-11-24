@@ -4,7 +4,7 @@ use std::{
 };
 
 use avian3d::prelude::*;
-use bevy::{math::DVec3, prelude::*};
+use bevy::{ecs::change_detection::Tick, math::DVec3, prelude::*};
 
 use crate::{
     asset::DestructibleAsset,
@@ -24,7 +24,6 @@ pub struct StressRuntimePlugin;
 impl Plugin for StressRuntimePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StressSettings>()
-            .init_resource::<StructuralLoads>()
             .add_message::<BreakBurst>()
             .add_systems(
                 FixedPostUpdate,
@@ -54,10 +53,10 @@ impl Default for StressSettings {
     }
 }
 
-/// Applied loads in building coordinates, with moments at the authored structural nodes.
-#[derive(Resource, Default)]
+/// Applied loads on this building, in building coordinates and about the authored structural nodes.
+#[derive(Component, Default)]
 pub struct StructuralLoads {
-    pub by_building: BTreeMap<Entity, BTreeMap<String, NodeLoad>>,
+    pub by_chunk: BTreeMap<String, NodeLoad>,
 }
 
 pub struct BondLoadState {
@@ -107,7 +106,7 @@ struct StaticComponentCache {
 struct StressCache {
     key: u64,
     source_tick: u32,
-    loads_tick: u32,
+    loads_tick: Option<Tick>,
     settings_tick: u32,
     gravity: Vec3,
     retry_at: f64,
@@ -117,7 +116,7 @@ impl StressState {
     pub fn inputs_current(
         &self,
         source_tick: u32,
-        loads_tick: u32,
+        loads_tick: Option<Tick>,
         settings_tick: u32,
         gravity: Vec3,
     ) -> bool {
@@ -139,17 +138,21 @@ fn hash_weight(chunk: &ChunkInstance, hash: &mut impl Hasher) {
         .hash(hash);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn update_stress(
     mut commands: Commands,
-    mut buildings: Query<(Entity, &mut BuildingInstance, Option<&mut StressState>)>,
+    mut buildings: Query<(
+        Entity,
+        &mut BuildingInstance,
+        Option<&mut StressState>,
+        Option<Ref<StructuralLoads>>,
+    )>,
     chunks: Query<&ChunkInstance>,
     mut bonds: Query<&mut BondInstance>,
     patches: Query<&PatchInstance>,
     settings: Res<StressSettings>,
     time: Res<Time<Fixed>>,
     gravity: Res<Gravity>,
-    loads: Res<StructuralLoads>,
     assets: Res<Assets<DestructibleAsset>>,
     transforms: TransformHelper,
     poses: Query<(&Position, &Rotation)>,
@@ -160,10 +163,9 @@ pub(crate) fn update_stress(
     }
     let dt = time.delta_secs_f64();
     let now = time.elapsed_secs_f64();
-    let loads_tick = loads.last_changed().get();
     let settings_tick = settings.last_changed().get();
     let empty_loads = BTreeMap::new();
-    for (building, mut instance, mut state) in &mut buildings {
+    for (building, mut instance, mut state, loads) in &mut buildings {
         if instance.bounds.is_none() || instance.error.is_some() {
             continue;
         }
@@ -185,7 +187,11 @@ pub(crate) fn update_stress(
             .expect("A loaded building has a valid transform hierarchy")
             .compute_transform();
         let local_gravity = root.rotation.conjugate() * gravity.0;
-        let loads = loads.by_building.get(&building).unwrap_or(&empty_loads);
+        // An absent component has a distinct version so removal invalidates only this building.
+        let loads_tick = loads.as_ref().map(|loads| loads.last_changed());
+        let loads = loads
+            .as_deref()
+            .map_or(&empty_loads, |loads| &loads.by_chunk);
         let chunk_at = |entity| chunks.get(entity).expect("Indexed building chunk exists");
         let bond_active = |entity| {
             bonds
@@ -194,12 +200,7 @@ pub(crate) fn update_stress(
                 .active
         };
         let mut bond_states = None;
-        let unchanged = state.cache.is_some_and(|cache| {
-            cache.source_tick == source_tick
-                && cache.loads_tick == loads_tick
-                && cache.settings_tick == settings_tick
-                && cache.gravity == local_gravity
-        });
+        let unchanged = state.inputs_current(source_tick, loads_tick, settings_tick, local_gravity);
         let key = if unchanged {
             state.cache.unwrap().key
         } else {

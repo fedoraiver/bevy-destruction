@@ -2,7 +2,6 @@ use bevy::prelude::*;
 
 use crate::{
     DemoOptions, camera::FreeCamera, projectiles::RigidProjectile, scene::BuildingInstance,
-    stress_runtime::StructuralLoads,
 };
 
 pub const SCENES: [(&str, &str); 6] = [
@@ -34,7 +33,6 @@ fn switch_scene(
     instances: Query<Entity, With<BuildingInstance>>,
     projectiles: Query<Entity, With<RigidProjectile>>,
     mut cameras: Query<&mut FreeCamera>,
-    mut loads: ResMut<StructuralLoads>,
     mut particles: Query<&mut crate::vfx::Particle>,
 ) {
     if options.scripted() {
@@ -55,7 +53,6 @@ fn switch_scene(
     for entity in instances.iter().chain(projectiles.iter()) {
         commands.entity(entity).despawn();
     }
-    loads.by_building.clear();
     for mut particle in &mut particles {
         particle.age = particle.lifetime;
     }

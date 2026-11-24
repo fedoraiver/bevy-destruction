@@ -342,11 +342,11 @@ fn draw(
     time: Res<Time<Fixed>>,
     gravity: Res<Gravity>,
     settings: Res<StressSettings>,
-    loads: Res<StructuralLoads>,
     instances: Query<(
         Entity,
         Ref<BuildingInstance>,
         Option<&StressState>,
+        Option<Ref<StructuralLoads>>,
         &GlobalTransform,
     )>,
     chunks: Query<(&ChunkIdentity, &ChunkInstance)>,
@@ -372,7 +372,7 @@ fn draw(
                 .get(sample.building)
                 .ok()
                 .zip(bodies.get(sample.body).ok())
-                .is_some_and(|((_, instance, _, _), (_, kind, cluster, parent))| {
+                .is_some_and(|((_, instance, _, _, _), (_, kind, cluster, parent))| {
                     *kind == RigidBody::Dynamic
                         && sample_members_current(
                             sample,
@@ -396,7 +396,7 @@ fn draw(
         |sample| {
             instances
                 .get(sample.building)
-                .is_ok_and(|(_, instance, _, _)| {
+                .is_ok_and(|(_, instance, _, _, _)| {
                     instance
                         .chunks
                         .get(&sample.chunk)
@@ -408,13 +408,13 @@ fn draw(
 
     let mut desired = BTreeMap::new();
     let mut inspection_bonds = Vec::new();
-    for (building, instance, state, root) in &instances {
+    for (building, instance, state, loads, root) in &instances {
         let selected = aim.hit.as_ref().filter(|hit| hit.key.0 == building);
         let current_static = state.filter(|state| {
             settings.enabled
                 && state.inputs_current(
                     instance.last_changed().get(),
-                    loads.last_changed().get(),
+                    loads.as_ref().map(|loads| loads.last_changed()),
                     settings.last_changed().get(),
                     root.compute_transform().rotation.conjugate() * gravity.0,
                 )
