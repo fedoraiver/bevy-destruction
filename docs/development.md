@@ -6,11 +6,12 @@
 
 - 用 `Entity` 标识运行时实体，以组件组合表达状态和能力。无数据的角色可以用标记组件表示，例如 `RemovedChunk`。项目代码创建的运行时实体及子实体在创建时提供可辨认的 `Name`，系统通过组件、关系和查询过滤条件选择实体。[场景与碎块组件](../src/scene/mod.rs)
 - 按数据职责、访问方式和生命周期组织组件。组件可提供构造、校验和本地计算方法。由系统读取其他实体、执行交互和写回结果。同一业务状态保留明确的数据来源，区分建筑初始位姿、Avian 当前物理位姿和用于显示的变换。[建筑实例](../src/scene/mod.rs) · [刚体簇重建](../src/physics/mod.rs)
-- 单个 `World` 中由多个系统共享的唯一状态用 `Resource`，单个系统的跨次运行状态用 `Local<T>`，每个实例独立的状态放在该实体的组件中。普通系统用 `Query`、`Res` 等参数声明依赖，只对需要更新的数据请求可变访问。可用互斥过滤条件、拆分系统或 `ParamSet` 表达查询冲突，复杂计算可提取为普通函数。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力显示缓存](../src/force_debug/mod.rs)
-- 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。建筑与连接、连接与面片的所有权用 `BondOfBuilding` 和 `PatchOfBond` 表达。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
+- 运行时状态优先使用 Bevy 原生类型，按归属和生命周期选择。每个实体独立的状态用 `Component`，同一 `World` 中供多个系统共享的唯一状态用 `Resource`，单个系统私有的跨次运行状态用 `Local<T>`。由资产系统管理并按句柄共享的资产用 `Asset`。资产记录、求解快照、数值中间量等可以使用普通 Rust 类型。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力样本资源](../src/force_samples/mod.rs) · [受力显示缓存](../src/force_debug/mod.rs) · [破坏资产](../src/asset/mod.rs)
+- 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。结构所有权用专用 `Relationship` 表达，建筑与连接使用 `BondOfBuilding`，连接与面片使用 `PatchOfBond`。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
 
 ## 调度、通信与命令
 
+- 每帧或固定步执行的运行逻辑、跨实体交互及共享状态更新，优先用 Bevy `System` 表达，并注册到相应调度。系统用 `Query`、`Res`、`Commands` 等参数声明依赖，只对需要更新的数据请求可变访问。可用互斥过滤条件、拆分系统或 `ParamSet` 管理查询冲突。纯图算法和数值计算可以由系统调用普通函数完成。[承载系统](../src/stress_runtime/mod.rs) · [连通分量](../src/structure/mod.rs)
 - 启动装配放在 `Startup`，逐次应用更新的输入和表现逻辑放在 `Update` 或 `PostUpdate`，固定步模拟使用 `FixedUpdate` 或 `FixedPostUpdate` 并读取 `Time<Fixed>`。每次应用更新可运行零次或多次固定步，物理逻辑使用固定步的实际经过时间。[插件装配](../apps/game/src/lib.rs) · [过载更新](../src/stress_runtime/mod.rs)
 - 同一调度内的依赖通过 `.before()`、`.after()`、`.chain()` 或已配置相对顺序的 `SystemSet` 表达。`.in_set()` 只确定成员归属，插件安装和元组注册顺序不建立系统依赖。跨调度的数据交接按实际调度阶段安排。例如，过载求解先于刚体簇重建，Avian 物理完成后才读取接触冲量并更新断键状态。[过载调度](../src/stress_runtime/mod.rs) · [簇调度](../src/physics/mod.rs) · [撞击调度](../src/projectiles/mod.rs)
 - 常规实体增删及组件结构变更使用 `Commands`，后续系统在延迟命令应用后才能读到它们。Bevy 默认会为有序系统的相关延迟操作安排同步点，自定义调度或同步配置需要单独核对。即刻换属、清理旧接触并重算质量的流程可以使用独占 `&mut World`，在读取后续状态前明确刷新相关变更。[簇重建与质量更新](../src/physics/mod.rs)
