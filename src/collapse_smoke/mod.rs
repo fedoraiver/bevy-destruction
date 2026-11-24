@@ -9,7 +9,10 @@ use crate::{
     debug::FractureEdges,
     diagnostics::RunMetrics,
     physics::Cluster,
-    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RemovedChunk},
+    scene::{
+        BondInstance, BuildingInstance, ChunkInstance, ChunkPrimitive, DemoCamera, RemovedChunk,
+        chunk_primitives,
+    },
     stress_runtime::StressState,
 };
 
@@ -373,6 +376,8 @@ fn drive(
         Option<&StressState>,
     )>,
     mut chunks: Query<&mut ChunkInstance>,
+    children: Query<&Children>,
+    primitive_meshes: Query<(), With<ChunkPrimitive>>,
     ownership: Query<&ColliderOf>,
     mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
@@ -619,13 +624,14 @@ fn drive(
                 .sum();
             for id in &state.removed {
                 let entity = instance.chunks[id];
-                let mut chunk = chunks.get_mut(entity).unwrap();
-                chunk.alive = false;
+                chunks.get_mut(entity).unwrap().alive = false;
                 commands
                     .entity(entity)
                     .insert((RemovedChunk, Visibility::Hidden))
                     .remove::<FractureEdges>();
-                for &primitive in &chunk.primitives {
+                for primitive in chunk_primitives(children.get(entity).ok(), |entity| {
+                    primitive_meshes.contains(entity)
+                }) {
                     commands.entity(primitive).despawn();
                 }
             }

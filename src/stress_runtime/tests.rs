@@ -378,7 +378,6 @@ fn detached_debris_changes_reuse_the_unchanged_anchored_solution() {
                 id: "floating".into(),
             },
             ChunkInstance {
-                primitives: Vec::new(),
                 alive: true,
                 triangles: Vec::new(),
                 transform,
@@ -607,7 +606,6 @@ mod collapse {
                         id: record.id.clone(),
                     },
                     ChunkInstance {
-                        primitives: Vec::new(),
                         alive,
                         triangles: Vec::new(),
                         transform: local,

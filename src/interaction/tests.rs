@@ -75,7 +75,6 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
                     GlobalTransform::from(pose),
                     ColliderOf { body },
                     ChunkInstance {
-                        primitives: Vec::new(),
                         alive: true,
                         triangles: Vec::new(),
                         transform: Transform::IDENTITY,

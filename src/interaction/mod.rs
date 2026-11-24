@@ -8,8 +8,8 @@ use crate::{
     debug::FractureEdges,
     fracture_detail::ContactPatch,
     scene::{
-        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera, PatchInstance,
-        PatchOfBond, RefreshDamageDetails, RemovedChunk,
+        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, ChunkPrimitive, DemoCamera,
+        PatchInstance, PatchOfBond, RefreshDamageDetails, RemovedChunk, chunk_primitives,
     },
     vfx::{BreakBurst, EmissionSurface},
 };
@@ -164,6 +164,8 @@ pub(crate) fn apply_damage(
     poses: Query<(&Position, &Rotation)>,
     mut instances: Query<&mut BuildingInstance>,
     mut chunks: Query<&mut ChunkInstance>,
+    children: Query<&Children>,
+    primitive_meshes: Query<(), With<ChunkPrimitive>>,
     mut bonds: Query<&mut BondInstance>,
     patches: Query<(&PatchInstance, &PatchOfBond)>,
     assets: Res<Assets<DestructibleAsset>>,
@@ -287,13 +289,14 @@ pub(crate) fn apply_damage(
         surfaces.truncate(256);
         for id in &selected {
             let entity = instance.chunks[id];
-            let mut chunk = chunks.get_mut(entity).unwrap();
-            chunk.alive = false;
+            chunks.get_mut(entity).unwrap().alive = false;
             commands
                 .entity(entity)
                 .insert((RemovedChunk, Visibility::Hidden))
                 .remove::<FractureEdges>();
-            for &primitive in &chunk.primitives {
+            for primitive in chunk_primitives(children.get(entity).ok(), |entity| {
+                primitive_meshes.contains(entity)
+            }) {
                 commands.entity(primitive).despawn();
             }
         }

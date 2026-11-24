@@ -370,7 +370,6 @@ fn spawn_dropped_tower_at_height(
             MassProperties3d::ZERO
         };
         app.world_mut().entity_mut(entity).insert(ChunkInstance {
-            primitives: Vec::new(),
             alive,
             triangles: Vec::new(),
             transform: local,
@@ -1089,7 +1088,6 @@ fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
         chunks.insert(
             record.id.clone(),
             ChunkInstance {
-                primitives: Vec::new(),
                 alive: true,
                 triangles: Vec::new(),
                 transform: record.transform(),
@@ -1249,7 +1247,6 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
                     Name::new(record.id.clone()),
                     ChildOf(building),
                     ChunkInstance {
-                        primitives: Vec::new(),
                         alive: true,
                         triangles: Vec::new(),
                         transform: record.transform(),

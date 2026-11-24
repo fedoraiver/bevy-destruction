@@ -76,7 +76,6 @@ impl BuildingBounds {
 
 #[derive(Component)]
 pub struct ChunkInstance {
-    pub primitives: Vec<Entity>,
     pub alive: bool,
     pub triangles: Vec<[Vec3; 3]>,
     pub transform: Transform,
@@ -235,6 +234,20 @@ pub struct ChunkIdentity {
 
 #[derive(Component)]
 pub struct RemovedChunk;
+
+#[derive(Component)]
+pub(crate) struct ChunkPrimitive;
+
+pub(crate) fn chunk_primitives<'a>(
+    children: Option<&'a Children>,
+    mut is_primitive: impl FnMut(Entity) -> bool + 'a,
+) -> impl Iterator<Item = Entity> + 'a {
+    children
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(move |&entity| is_primitive(entity))
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct GeometryCache {
@@ -698,7 +711,6 @@ pub(crate) fn instantiate_pending(
                     edges,
                 ))
                 .id();
-            let mut primitives = Vec::new();
             for (i, primitive) in chunk.primitives.iter().enumerate() {
                 let fracture = primitive.surface_role == crate::asset::SurfaceRole::Fracture;
                 let key = (
@@ -727,14 +739,12 @@ pub(crate) fn instantiate_pending(
                     masks.meshes[&(chunk.record_index, primitive.mesh.id())].clone()
                 };
                 let primitive_name = format!("{} primitive {i}", record.id);
-                let primitive_entity = commands.spawn_scene(bsn! {
+                commands.spawn_scene(bsn! {
                     Name::new(primitive_name) Mesh3d(mesh) MeshMaterial3d::<BuildingMaterial>(material) Transform::IDENTITY
-                }).insert((ChildOf(entity), MeshTag::new(0))).id();
-                primitives.push(primitive_entity);
+                }).insert((ChildOf(entity), ChunkPrimitive, MeshTag::new(0)));
+                primitive_count += 1;
             }
-            primitive_count += primitives.len();
             commands.entity(entity).insert(ChunkInstance {
-                primitives,
                 alive: true,
                 triangles,
                 transform,

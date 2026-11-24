@@ -2,8 +2,8 @@ use super::*;
 use crate::{
     asset::{AnchorRecord, BondRecord, ColliderRecord, Manifest},
     scene::{
-        BuildingBounds, ChunkIdentity, chunk_collider, chunk_mass_properties, spawn_bonds,
-        spawn_patches,
+        BuildingBounds, ChunkIdentity, ChunkPrimitive, chunk_collider, chunk_mass_properties,
+        spawn_bonds, spawn_patches,
     },
 };
 use bevy::time::TimeUpdateStrategy;
@@ -145,7 +145,6 @@ fn spawn_building(app: &mut App, asset: Handle<DestructibleAsset>, pose: Transfo
                     id: record.id.clone(),
                 },
                 ChunkInstance {
-                    primitives: Vec::new(),
                     alive: true,
                     triangles: Vec::new(),
                     transform: local,
@@ -649,12 +648,23 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         Vec3::new(-0.5, 3.0, 0.5),
         Vec3::new(0.5, 3.0, 0.5),
     ];
-    {
+    let (primitive, other_child) = {
         let world = app.world_mut();
         let mut instance = world
             .entity_mut(building)
             .take::<BuildingInstance>()
             .unwrap();
+        let parent = instance.chunks["b"];
+        let primitive = world
+            .spawn((
+                Name::new("Damage fixture primitive"),
+                ChildOf(parent),
+                ChunkPrimitive,
+            ))
+            .id();
+        let other_child = world
+            .spawn((Name::new("Unrelated damage fixture child"), ChildOf(parent)))
+            .id();
         for (index, id) in ["b", "c", "d"].into_iter().enumerate() {
             let bottom = index as f32 + 1.0;
             let [a, b, c, d] = [
@@ -681,7 +691,8 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         spawn_patches(&mut world.commands(), building, &mut instance, patches);
         world.flush();
         world.entity_mut(building).insert(instance);
-    }
+        (primitive, other_child)
+    };
     app.update();
     let local_hit = Vec3::new(0.0, 1.95, 0.5);
     let world_hit = pose.transform_point(local_hit);
@@ -715,6 +726,8 @@ fn damage_targets_moved_chunk_and_transforms_neighbor_faces_and_emission_surface
         "Neighbor face was tested in stale rest coordinates"
     );
     assert!(chunk(app.world(), building, "d").alive);
+    assert!(app.world().get_entity(primitive).is_err());
+    assert!(app.world().get_entity(other_child).is_ok());
     let messages = app.world().resource::<Messages<BreakBurst>>();
     let bursts = cursor.read(messages).collect::<Vec<_>>();
     assert_eq!(bursts.len(), 1);

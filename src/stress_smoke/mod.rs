@@ -14,8 +14,8 @@ use crate::{
         ProjectileShape, RigidProjectile,
     },
     scene::{
-        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
-        RemovedChunk, spawn_bonds, spawn_patches,
+        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance,
+        ChunkPrimitive, DemoCamera, RemovedChunk, spawn_bonds, spawn_patches,
     },
     stress_runtime::{StressSettings, StressState},
 };
@@ -276,17 +276,15 @@ pub(crate) fn spawn_beam(world: &mut World, origin: Vec3) -> Entity {
         let mesh = world
             .resource_mut::<Assets<Mesh>>()
             .add(Cuboid::from_size(size));
-        let primitive = world
-            .spawn((
-                Name::new(format!("{} stress fixture primitive", record.id)),
-                Mesh3d(mesh),
-                MeshMaterial3d(material.clone()),
-                Transform::IDENTITY,
-                ChildOf(chunk),
-            ))
-            .id();
+        world.spawn((
+            Name::new(format!("{} stress fixture primitive", record.id)),
+            Mesh3d(mesh),
+            MeshMaterial3d(material.clone()),
+            Transform::IDENTITY,
+            ChildOf(chunk),
+            ChunkPrimitive,
+        ));
         world.entity_mut(chunk).insert(ChunkInstance {
-            primitives: vec![primitive],
             alive: true,
             triangles: Vec::new(),
             transform: local,

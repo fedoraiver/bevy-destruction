@@ -237,7 +237,6 @@ fn inspector_clears_on_release_focus_loss_removed_target_and_numpad_toggle() {
             GlobalTransform::IDENTITY,
             InheritedVisibility::VISIBLE,
             ChunkInstance {
-                primitives: vec![],
                 alive: true,
                 triangles: vec![[
                     Vec3::new(-1.0, -1.0, 0.0),
@@ -320,7 +319,6 @@ fn dead_or_split_members_cannot_reuse_a_dynamic_force_frame() {
                 Name::new(format!("Force member {id}")),
                 GlobalTransform::IDENTITY,
                 ChunkInstance {
-                    primitives: Vec::new(),
                     alive: true,
                     triangles: Vec::new(),
                     transform: Transform::IDENTITY,

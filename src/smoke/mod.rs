@@ -9,8 +9,8 @@ use crate::{
     dust_material::DustMaterial,
     interaction::{BREAK_LIMIT, DamageRequest, ScriptedClick},
     scene::{
-        BondInstance, BuildingInstance, ChunkInstance, DamageDetail, DemoCamera, DetailStats,
-        PatchInstance, RemovedChunk,
+        BondInstance, BuildingInstance, ChunkInstance, ChunkPrimitive, DamageDetail, DemoCamera,
+        DetailStats, PatchInstance, RemovedChunk, chunk_primitives,
     },
     vfx::{PARTICLE_LIMIT, Particle, VfxStats},
 };
@@ -33,6 +33,7 @@ impl Plugin for SmokePlugin {
 #[derive(Resource, Default)]
 struct SmokeState {
     frames: u32,
+    initial_primitives: usize,
     first_removed: usize,
     errors: Vec<String>,
     peak_particles: usize,
@@ -52,6 +53,8 @@ struct SmokeState {
 struct SmokeResources<'w, 's> {
     options: Res<'w, DemoOptions>,
     chunks: Query<'w, 's, &'static ChunkInstance>,
+    children: Query<'w, 's, &'static Children>,
+    primitive_meshes: Query<'w, 's, (), With<ChunkPrimitive>>,
     bonds: Query<'w, 's, &'static BondInstance>,
     patches: Query<'w, 's, &'static PatchInstance>,
     vfx: Res<'w, VfxStats>,
@@ -110,6 +113,8 @@ fn drive(
     let SmokeResources {
         options,
         chunks,
+        children,
+        primitive_meshes,
         bonds,
         patches,
         vfx,
@@ -201,6 +206,16 @@ fn drive(
     }
     match state.frames {
         1 => {
+            state.initial_primitives = instance
+                .chunks
+                .values()
+                .map(|&entity| {
+                    chunk_primitives(children.get(entity).ok(), |entity| {
+                        primitive_meshes.contains(entity)
+                    })
+                    .count()
+                })
+                .sum();
             std::fs::create_dir_all(directory).expect("Create smoke output");
             if options.capture_replay && !options.profile {
                 std::fs::create_dir_all(directory.join("replay")).expect("Create replay output");
@@ -432,10 +447,11 @@ fn drive(
                 .filter_map(|&entity| chunks.get(entity).ok().map(|chunk| (entity, chunk)))
                 .filter(|(_, chunk)| !chunk.alive)
             {
-                if chunk
-                    .primitives
-                    .iter()
-                    .any(|entity| commands.get_entity(*entity).is_ok())
+                if chunk_primitives(children.get(entity).ok(), |entity| {
+                    primitive_meshes.contains(entity)
+                })
+                .next()
+                .is_some()
                 {
                     state
                         .errors
@@ -633,13 +649,7 @@ fn drive(
                     .errors
                     .push("A new hit lost immediate feedback under saturation".into());
             }
-            let primitives = instance
-                .chunks
-                .values()
-                .filter_map(|&entity| chunks.get(entity).ok())
-                .map(|chunk| chunk.primitives.len())
-                .sum::<usize>();
-            let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": primitives,
+            let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": state.initial_primitives,
                 "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
                 "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time, "last_burst_frame": state.last_burst_frame, "settled_frame": state.settled_frame,

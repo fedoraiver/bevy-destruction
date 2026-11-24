@@ -291,7 +291,6 @@ fn heavy_debris_bounces_and_releases_when_support_moves_or_is_removed() {
                 id: "floor".into(),
             },
             ChunkInstance {
-                primitives: Vec::new(),
                 alive: true,
                 triangles: Vec::new(),
                 transform: floor_transform,

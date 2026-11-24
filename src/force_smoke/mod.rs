@@ -25,8 +25,8 @@ use crate::{
     physics::Cluster,
     projectiles::{ImpactStats, LaunchRequest, LaunchRequests, ProjectileShape},
     scene::{
-        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera,
-        spawn_bonds,
+        BondInstance, BuildingBounds, BuildingInstance, ChunkIdentity, ChunkInstance,
+        ChunkPrimitive, DemoCamera, chunk_primitives, spawn_bonds,
     },
     stress::BondStress,
     stress_runtime::StressState,
@@ -410,6 +410,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 Mesh3d(mesh),
                 MeshMaterial3d(material.clone()),
                 MeshTag::new(0),
+                ChunkPrimitive,
                 Transform::IDENTITY,
                 Visibility::Inherited,
                 ChildOf(entity),
@@ -426,7 +427,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             building: source_surface,
         });
         world.entity_mut(entity).insert(ChunkInstance {
-            primitives: vec![primitive],
             alive: true,
             triangles,
             transform: record.transform(),
@@ -512,9 +512,12 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
     second.bounds = instance.bounds;
     for (id, &original_entity) in &instance.chunks {
         let chunk = world.get::<ChunkInstance>(original_entity).unwrap();
-        let original = chunk.primitives[0];
+        let original = chunk_primitives(world.get::<Children>(original_entity), |entity| {
+            world.get::<ChunkPrimitive>(entity).is_some()
+        })
+        .next()
+        .expect("Force fixture chunk has an original mesh primitive");
         let chunk = ChunkInstance {
-            primitives: Vec::new(),
             alive: true,
             triangles: chunk.triangles.clone(),
             transform: chunk.transform,
@@ -547,6 +550,7 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
                 Mesh3d(mesh),
                 MeshMaterial3d(source.clone()),
                 MeshTag::new(0),
+                ChunkPrimitive,
                 Transform::IDENTITY,
                 Visibility::Inherited,
                 ChildOf(entity),
@@ -557,11 +561,6 @@ fn spawn_visibility_fixture(world: &mut World) -> VisibilityFixture {
             source_id: source,
             building: source_surface,
         });
-        world
-            .get_mut::<ChunkInstance>(entity)
-            .unwrap()
-            .primitives
-            .push(primitive);
         second.chunks.insert(id.clone(), entity);
     }
     world.entity_mut(twin_body).insert(Cluster {

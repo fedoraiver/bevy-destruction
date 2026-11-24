@@ -136,7 +136,6 @@ fn production_geometric_support_path_fails_and_the_bulk_tips_against_a_static_st
             ))
             .id();
         app.world_mut().entity_mut(entity).insert(ChunkInstance {
-            primitives: Vec::new(),
             alive: true,
             triangles: Vec::new(),
             transform: local,

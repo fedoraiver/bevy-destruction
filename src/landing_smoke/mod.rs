@@ -8,7 +8,10 @@ use crate::{
     diagnostics::RunMetrics,
     physics::Cluster,
     projectiles::ImpactStats,
-    scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RemovedChunk},
+    scene::{
+        BondInstance, BuildingInstance, ChunkInstance, ChunkPrimitive, DemoCamera, RemovedChunk,
+        chunk_primitives,
+    },
 };
 
 pub struct LandingSmokePlugin;
@@ -66,6 +69,8 @@ fn drive(
     mut state: ResMut<LandingState>,
     mut instances: Query<(Entity, &mut BuildingInstance)>,
     mut chunks: Query<&mut ChunkInstance>,
+    children: Query<&Children>,
+    primitive_meshes: Query<(), With<ChunkPrimitive>>,
     mut bonds: Query<&mut BondInstance>,
     bodies: Query<(
         &Cluster,
@@ -194,13 +199,14 @@ fn drive(
                 .count();
             for (id, &entity) in &instance.chunks {
                 if !state.upper.contains(id) {
-                    let mut chunk = chunks.get_mut(entity).unwrap();
-                    chunk.alive = false;
+                    chunks.get_mut(entity).unwrap().alive = false;
                     commands
                         .entity(entity)
                         .insert((RemovedChunk, Visibility::Hidden))
                         .remove::<FractureEdges>();
-                    for &primitive in &chunk.primitives {
+                    for primitive in chunk_primitives(children.get(entity).ok(), |entity| {
+                        primitive_meshes.contains(entity)
+                    }) {
                         commands.entity(primitive).despawn();
                     }
                 }

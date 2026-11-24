@@ -4,13 +4,16 @@
 
 2026-11-24 采用并实现。补充 [ADR 0001](0001-rigid-cluster-runtime.md) 的刚体簇模型和 [ADR 0021](0021-explicit-ecs-access-and-cluster-ownership.md) 的实体归属。初版提交 `6042b61` 用 `ChildOf` 关联建筑、连接与面片，随后改用专用 Bevy 关系。
 
+2026-11-24 将碎块的源显示网格索引迁移至 Bevy 层级查询。
+
 ## 背景
 
 建筑组件曾持有碎块的运行时数据、连接是否完好的布尔值，以及接触面片集合。碎块已经是碰撞体实体，但读取或修改其业务数据仍需经过建筑组件。连接和面片也没有能独立查询的运行时实体。
 
 ## 决策与实现
 
-- `ChunkInstance` 附在已有的碎块碰撞体实体上，保存运行时存活状态、静止位姿、质量属性和显示索引。`ChunkIdentity` 继续关联所属建筑和清单 ID。点击移除立即写存活状态，使同一帧的后续射线读到变化，再由固定步清除碰撞并应用新的簇归属。[碎块归属](0021-explicit-ecs-access-and-cluster-ownership.md#决策与实现)
+- `ChunkInstance` 附在已有的碎块碰撞体实体上，保存运行时存活状态、静止位姿和质量属性。`ChunkIdentity` 继续关联所属建筑和清单 ID。点击移除立即写存活状态，使同一帧的后续射线读到变化，再由固定步清除碰撞并应用新的簇归属。[碎块归属](0021-explicit-ecs-access-and-cluster-ownership.md#决策与实现)
+- 源显示网格是碎块的直属子实体，以 `ChunkPrimitive` 标记角色。点击移除、受力热力更新和验收通过 `Children` 查找带该标记的网格。边带通过自己的 `DamageDetail` 标记查询。
 - 每条连接通过 `BondOfBuilding` 指向所属建筑，Bevy 在建筑上维护 `BuildingBonds`。`BondInstance` 保存稳定 ID、两个端点实体和是否完好的状态。点击、过载和撞击都更新该组件，并标记所属建筑待重建拓扑。
 - 每个承载面片和显示面片通过 `PatchOfBond` 指向所属连接，Bevy 在连接上维护 `BondPatches`。承载面片通过序号引用清单内的凸面片，供局部撞击按原顺序读取。显示面片引用按资产共享的只读几何。共面合并后，两类面片的数量可以不同。连接断裂后保留实体及面片，供断裂反馈和边带显示使用。
 - 建筑组件索引稳定 ID 到实体，并保留确定的显示面片访问顺序。承载、动态撞击和分簇在需要时从 ECS 读取有效连接，构造供数值和连通性算法消费的有序快照。资产清单、求解公式和 Avian 簇重建的同步提交沿用现有实现。
@@ -22,15 +25,20 @@
 
 初版使用 `ChildOf` 复用内建的层级清理，结构图实体也随之进入变换和显示层级。专用关系把结构所有权与该层级分开，仍由 Bevy 管理反向集合与级联清理。按清单 ID 查询和保持确定顺序的业务索引继续由建筑维护。
 
+源显示网格原来同时出现在 `ChunkInstance.primitives` 和 `Children` 中。由 Bevy 层级维护归属，可直接反映实体增删和换属。源网格和边带需要分别访问，所以两类实体各自保留角色标记。
+
 ## 验证要求与结果
 
 - 工作区测试覆盖首步断裂与反馈、运动中分簇、旧接触换属、局部面片面积与方向、跨建筑隔离，以及建筑销毁后的图实体和共享几何。
 - 专用关系回归检查正向归属及反向集合，确认销毁一栋建筑会清理其连接和两类面片，共用同一资产的另一栋建筑及其结构实体继续有效。
 - 无窗验收覆盖真实键鼠破坏、结构过载、真实接触、受力诊断及正式高楼落地。
+- 网格层级迁移验证碎块移除、边带更新、受力热力和跨实例隔离。
 
 初版提交 `6042b61` 的默认特性和启用 `acceptance-test` 的 Rust 回归分别通过 149 项，格式检查和启用验收特性的 Clippy 检查通过。初版 Windows 无窗验收通过矩形场景的 `gameplay`、`smoke`、`physics`、`stress`、`force` 和 `collapse`，以及 `highrise_slab` 场景的 `landing`。
 
 专用关系版本通过 149 项启用 `acceptance-test` 的工作区 Rust 回归，以及格式和 Clippy 检查。Windows 无窗回归通过矩形场景的 `gameplay` 和 `smoke`、`highrise_slab` 场景的 `landing`。
+
+网格层级版本通过 153 项启用 `acceptance-test` 的工作区 Rust 回归，以及格式和 Clippy 检查。矩形场景 `controls`、`force`、`smoke`、`collapse` 和板式高楼场景 `landing` 无窗验收通过。
 
 ## 后续实现记录
 
@@ -39,3 +47,5 @@
 ## 来源
 
 [实体装配](../../../src/scene/mod.rs) · [点击破坏](../../../src/interaction/mod.rs) · [固定步承载](../../../src/stress_runtime/mod.rs) · [局部撞击](../../../src/projectiles/mod.rs) · [簇重建](../../../src/physics/mod.rs) · [Bevy 0.20.1 `Relationship`](https://docs.rs/bevy_ecs/0.20.1/bevy_ecs/relationship/trait.Relationship.html)
+
+[Bevy 子实体集合](https://docs.rs/bevy/latest/bevy/prelude/struct.Children.html)

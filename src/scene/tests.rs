@@ -208,7 +208,6 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
                 Visibility::Visible,
                 ChildOf(root),
                 ChunkInstance {
-                    primitives: Vec::new(),
                     alive: true,
                     triangles: Vec::new(),
                     transform: Transform::IDENTITY,

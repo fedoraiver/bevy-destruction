@@ -16,7 +16,10 @@ use crate::{
     },
     material::{HEAT_AMBER_TAG, HEAT_RED_TAG},
     physics::Cluster,
-    scene::{BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, DemoCamera},
+    scene::{
+        BondInstance, BuildingInstance, ChunkIdentity, ChunkInstance, ChunkPrimitive, DemoCamera,
+        chunk_primitives,
+    },
     stress::BondStress,
     stress_runtime::{StressSettings, StressState, StructuralLoads},
 };
@@ -317,7 +320,7 @@ fn order_inspection_bonds(bonds: &mut Vec<InspectionBond>) {
 fn update_heat_tags(
     desired: BTreeMap<Entity, u32>,
     painted: &mut BTreeMap<Entity, u32>,
-    tags: &mut Query<&mut MeshTag>,
+    tags: &mut Query<&mut MeshTag, With<ChunkPrimitive>>,
 ) {
     for &entity in painted
         .keys()
@@ -355,9 +358,10 @@ fn draw(
         &GlobalTransform,
     )>,
     chunks: Query<(&ChunkIdentity, &ChunkInstance, Option<&ColliderOf>)>,
+    children: Query<&Children>,
     bonds: Query<&BondInstance>,
     bodies: Query<(&GlobalTransform, &RigidBody, &Cluster, &ChildOf)>,
-    mut tags: Query<&mut MeshTag>,
+    mut tags: Query<&mut MeshTag, With<ChunkPrimitive>>,
     mut painted: Local<BTreeMap<Entity, u32>>,
     mut gizmos: Gizmos<ForceGizmos>,
 ) {
@@ -508,8 +512,10 @@ fn draw(
             }
         }
         for ((id, entity), tag) in heat {
-            let (_, chunk, _) = chunks.get(entity).expect("Heat endpoint is a live chunk");
-            desired.extend(chunk.primitives.iter().map(|&primitive| (primitive, tag)));
+            desired.extend(
+                chunk_primitives(children.get(entity).ok(), |entity| tags.contains(entity))
+                    .map(|primitive| (primitive, tag)),
+            );
             stats.tinted_chunks.insert((building, id.to_owned()), tag);
         }
     }
