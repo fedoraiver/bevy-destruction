@@ -37,6 +37,7 @@ impl Plugin for ProjectilePlugin {
             .init_resource::<ImpactStats>()
             .init_resource::<ImpactState>()
             .add_message::<BreakBurst>()
+            .add_observer(reset)
             .add_systems(Update, fire.after(crate::camera::move_camera))
             .add_systems(FixedUpdate, (spawn_projectiles, retire_projectiles))
             .add_systems(FixedPostUpdate, impact_damage.after(PhysicsSystems::Last));
@@ -121,10 +122,18 @@ struct ImpactState {
     invalidated: u64,
 }
 
-pub(crate) fn reset(world: &mut World) {
-    world.resource_mut::<LaunchRequests>().queue.clear();
-    *world.resource_mut::<ImpactState>() = ImpactState::default();
-    *world.resource_mut::<ImpactStats>() = ImpactStats::default();
+#[derive(Event)]
+pub(crate) struct ResetProjectiles;
+
+fn reset(
+    _: On<ResetProjectiles>,
+    mut requests: ResMut<LaunchRequests>,
+    mut state: ResMut<ImpactState>,
+    mut stats: ResMut<ImpactStats>,
+) {
+    requests.queue.clear();
+    *state = ImpactState::default();
+    *stats = ImpactStats::default();
 }
 
 fn fire(

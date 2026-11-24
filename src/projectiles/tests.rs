@@ -167,6 +167,82 @@ fn firing_uses_the_camera_pose_written_in_the_same_update() {
 }
 
 #[test]
+fn scene_reset_clears_old_state_before_firing_in_the_same_update() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, ProjectilePlugin))
+        .init_resource::<ButtonInput<MouseButton>>()
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<CameraControl>()
+        .init_resource::<DemoOptions>()
+        .add_systems(
+            Update,
+            (|mut commands: Commands| commands.trigger(ResetProjectiles)).before(fire),
+        );
+    let world = app.world_mut();
+    world.spawn((
+        Name::new("Scene reset input window"),
+        Window {
+            focused: true,
+            ..default()
+        },
+    ));
+    world.spawn((
+        Name::new("Scene reset camera"),
+        Transform::IDENTITY,
+        DemoCamera,
+    ));
+    let building = world.spawn(Name::new("Old building")).id();
+    let collider = world.spawn(Name::new("Old collider")).id();
+    world
+        .resource_mut::<LaunchRequests>()
+        .queue
+        .push_back(LaunchRequest {
+            origin: Vec3::X,
+            direction: Dir3::X,
+            shape: ProjectileShape::Sphere,
+        });
+    world.insert_resource(ImpactState {
+        touching: BTreeSet::from([(collider, building)]),
+        pending: BTreeMap::from([((building, "old bond".into()), 2.0)]),
+        shocks: VecDeque::from([ClusterImpact {
+            building,
+            chunks: vec!["old chunk".into()],
+            loads: BTreeMap::new(),
+            prepared: None,
+        }]),
+        released: 1,
+        rebound_fresh: 1,
+        invalidated: 1,
+    });
+    world.insert_resource(ImpactStats {
+        launched: 3,
+        contacts: 2,
+        broken_bonds: 1,
+        ..default()
+    });
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::KeyR);
+
+    world.run_schedule(Update);
+
+    let state = world.resource::<ImpactState>();
+    assert!(state.touching.is_empty() && state.pending.is_empty() && state.shocks.is_empty());
+    assert_eq!(
+        (state.released, state.rebound_fresh, state.invalidated),
+        (0, 0, 0)
+    );
+    let stats = world.resource::<ImpactStats>();
+    assert_eq!(
+        (stats.launched, stats.contacts, stats.broken_bonds),
+        (0, 0, 0)
+    );
+    let requests = &world.resource::<LaunchRequests>().queue;
+    assert_eq!(requests.len(), 1);
+    assert!(matches!(requests[0].shape, ProjectileShape::Cube));
+}
+
+#[test]
 fn sphere_and_cube_real_contacts_break_bonds_and_preserve_the_rigid_impactor() {
     for shape in [ProjectileShape::Sphere, ProjectileShape::Cube] {
         let mut app = app();

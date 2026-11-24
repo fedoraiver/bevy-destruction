@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    DemoOptions, camera::FreeCamera, projectiles::RigidProjectile, scene::BuildingInstance,
+    DemoOptions,
+    camera::FreeCamera,
+    projectiles::{ResetProjectiles, RigidProjectile},
+    scene::BuildingInstance,
 };
 
 pub const SCENES: [(&str, &str); 6] = [
@@ -56,7 +59,7 @@ fn switch_scene(
     for mut particle in &mut particles {
         particle.age = particle.lifetime;
     }
-    commands.queue(crate::projectiles::reset);
+    commands.trigger(ResetProjectiles);
     for mut camera in &mut cameras {
         *camera = FreeCamera::default();
     }
