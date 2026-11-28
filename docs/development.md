@@ -5,24 +5,25 @@
 ## ECS 数据与实体关系
 
 - 用 `Entity` 标识运行时实体，以组件组合表达状态和能力。无数据的角色可以用标记组件表示，例如 `RemovedChunk`。项目代码创建的运行时实体及子实体在创建时提供可辨认的 `Name`，系统通过组件、关系和查询过滤条件选择实体。[场景与碎块组件](../src/scene/mod.rs)
-- 按数据职责、访问方式和生命周期组织组件。组件可提供构造、校验和本地计算方法。由系统读取其他实体、执行交互和写回结果。同一业务状态保留明确的数据来源，区分建筑初始位姿、Avian 当前物理位姿和用于显示的变换。[建筑实例](../src/scene/mod.rs) · [刚体簇重建](../src/physics/mod.rs)
-- 运行时状态优先使用 Bevy 原生类型，按归属和生命周期选择。每个实体独立的状态用 `Component`，同一 `World` 中供多个系统共享的唯一状态用 `Resource`，单个系统私有的跨次运行状态用 `Local<T>`。由资产系统管理并按句柄共享的资产用 `Asset`。资产记录、求解快照、数值中间量等可以使用普通 Rust 类型。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力样本资源](../src/force_samples/mod.rs) · [受力显示缓存](../src/force_debug/mod.rs) · [破坏资产](../src/asset/mod.rs)
-- 优先复用工作区锁定版本中 Bevy 和 Avian 提供的组件、关系、查询、系统参数和几何类型。核对 API 的输入语义、执行阶段和结果可见时点。例如，传播前用 `TransformHelper` 读取当前层级位姿，通过 `ChildOf` 换属后由 Avian 更新 `ColliderOf`。[撞击物发射](../src/projectiles/mod.rs) · [刚体簇重建](../src/physics/mod.rs) · [拾取包围盒](../src/force_visibility/mod.rs)
-- 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。结构所有权用专用 `Relationship` 表达，建筑与连接使用 `BondOfBuilding`，连接与面片使用 `PatchOfBond`。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/mod.rs) · [场景切换](../src/catalog/mod.rs)
+- 按数据职责、访问方式和生命周期组织组件。组件可提供构造、校验和本地计算方法。由系统读取其他实体、执行交互和写回结果。同一业务状态保留明确的数据来源，区分建筑初始位姿、Avian 当前物理位姿和用于显示的变换。[建筑实例](../src/scene/mod.rs) · [刚体簇重建](../src/physics/rebuild.rs)
+- 运行时状态优先使用 Bevy 原生类型，按归属和生命周期选择。每个实体独立的状态用 `Component`，同一 `World` 中供多个系统共享的唯一状态用 `Resource`，单个系统私有的跨次运行状态用 `Local<T>`。由资产系统管理并按句柄共享的资产用 `Asset`。资产记录、求解快照、数值中间量等可以使用普通 Rust 类型。[建筑应力状态](../src/stress_runtime/mod.rs) · [受力样本资源](../src/force_samples/mod.rs) · [受力显示缓存](../src/force_debug/picking.rs) · [破坏资产](../src/asset/mod.rs)
+- 优先复用工作区锁定版本中 Bevy 和 Avian 提供的组件、关系、查询、系统参数和几何类型。核对 API 的输入语义、执行阶段和结果可见时点。例如，传播前用 `TransformHelper` 读取当前层级位姿，通过 `ChildOf` 换属后由 Avian 更新 `ColliderOf`。[撞击物发射](../src/projectiles/launch.rs) · [刚体簇重建](../src/physics/rebuild.rs) · [拾取包围盒](../src/force_visibility/geometry.rs)
+- 用 `ChildOf` 表达变换和显示层级，用 `ColliderOf` 表达 Avian 碰撞体的刚体归属。结构所有权用专用 `Relationship` 表达，建筑与连接使用 `BondOfBuilding`，连接与面片使用 `PatchOfBond`。Bevy 自动维护反向集合 `BuildingBonds` 和 `BondPatches`，两者都启用 `linked_spawn`。按清单查找或保持稳定遍历顺序时，业务索引应区分清单 ID 和当前 `World` 内的 `Entity`。显式维护索引的代码需要一并处理端点移除、重新归属和场景切换。[结构实体](../src/scene/mod.rs) · [碰撞体换属](../src/physics/rebuild.rs) · [场景切换](../src/menu/reload.rs)
 
 ## 调度、通信与命令
 
-- 每帧或固定步执行的运行逻辑、跨实体交互及共享状态更新，优先用 Bevy `System` 表达，并注册到相应调度。系统用 `Query`、`Res`、`Commands` 等参数声明依赖，只对需要更新的数据请求可变访问。可用互斥过滤条件、拆分系统或 `ParamSet` 管理查询冲突。纯图算法和数值计算可以由系统调用普通函数完成。[承载系统](../src/stress_runtime/mod.rs) · [连通分量](../src/structure/mod.rs)
-- 启动装配放在 `Startup`，逐次应用更新的输入和表现逻辑放在 `Update` 或 `PostUpdate`，固定步模拟使用 `FixedUpdate` 或 `FixedPostUpdate` 并读取 `Time<Fixed>`。每次应用更新可运行零次或多次固定步，物理逻辑使用固定步的实际经过时间。[插件装配](../apps/game/src/lib.rs) · [过载更新](../src/stress_runtime/mod.rs)
+- 每帧或固定步执行的运行逻辑、跨实体交互及共享状态更新，优先用 Bevy `System` 表达，并注册到相应调度。系统用 `Query`、`Res`、`Commands` 等参数声明依赖，只对需要更新的数据请求可变访问。可用互斥过滤条件、拆分系统或 `ParamSet` 管理查询冲突。纯图算法和数值计算可以由系统调用普通函数完成。[承载系统](../src/stress_runtime/overload.rs) · [连通分量](../src/structure/mod.rs)
+- 启动装配放在 `Startup`，逐次应用更新的输入和表现逻辑放在 `Update` 或 `PostUpdate`，固定步模拟使用 `FixedUpdate` 或 `FixedPostUpdate` 并读取 `Time<Fixed>`。每次应用更新可运行零次或多次固定步，物理逻辑使用固定步的实际经过时间。[插件装配](../apps/game/src/lib.rs) · [过载更新](../src/stress_runtime/overload.rs)
 - 同一调度内的依赖通过 `.before()`、`.after()`、`.chain()` 或已配置相对顺序的 `SystemSet` 表达。`.in_set()` 只确定成员归属，插件安装和元组注册顺序不建立系统依赖。跨调度的数据交接按实际调度阶段安排。例如，过载求解先于刚体簇重建，Avian 物理完成后才读取接触冲量并更新断键状态。[过载调度](../src/stress_runtime/mod.rs) · [簇调度](../src/physics/mod.rs) · [撞击调度](../src/projectiles/mod.rs)
-- 常规实体增删及组件结构变更使用 `Commands`，后续系统在延迟命令应用后才能读到它们。Bevy 默认会为有序系统的相关延迟操作安排同步点，自定义调度或同步配置需要单独核对。即刻换属、清理旧接触并重算质量的流程可以使用独占 `&mut World`，在读取后续状态前明确刷新相关变更。[簇重建与质量更新](../src/physics/mod.rs)
-- 用注册的 `Message` 进行缓冲通信，例如破坏逻辑发布 `BreakBurst`，特效系统用 `MessageReader` 读取。需要触发式响应时使用 `Event` 或 `EntityEvent` 与 Observer。`World::trigger` 立即触发，`Commands::trigger` 随命令一起应用。必须跨系统停用期保留的请求使用组件、资源或明确管理的队列。[点击破坏](../src/interaction/mod.rs) · [破坏特效](../src/vfx/mod.rs)
+- 常规实体增删及组件结构变更使用 `Commands`，后续系统在延迟命令应用后才能读到它们。Bevy 默认会为有序系统的相关延迟操作安排同步点，自定义调度或同步配置需要单独核对。即刻换属、清理旧接触并重算质量的流程可以使用独占 `&mut World`，在读取后续状态前明确刷新相关变更。[簇重建与质量更新](../src/physics/rebuild.rs)
+- 用注册的 `Message` 进行缓冲通信，例如破坏逻辑发布 `BreakBurst`，特效系统用 `MessageReader` 读取。需要触发式响应时使用 `Event` 或 `EntityEvent` 与 Observer。`World::trigger` 立即触发，`Commands::trigger` 随命令一起应用。必须跨系统停用期保留的请求使用组件、资源或明确管理的队列。[点击破坏](../src/interaction/damage.rs) · [破坏特效](../src/vfx/emission.rs)
 
 ## 场景装配与模块
 
-- 用 `bsn!` 和 `spawn_scene` 声明适合组合的场景、UI、初始组件及子实体。运行时交互和逐帧更新放在系统或 Observer 中，动态计算的实体可用 `Commands` 或在必要时用 `World` 创建。[演示场景](../src/scene/mod.rs) · [撞击物生成](../src/projectiles/mod.rs)
+- 用 `bsn!` 和 `spawn_scene` 声明适合组合的场景、UI、初始组件及子实体。运行时交互和逐帧更新放在系统或 Observer 中，动态计算的实体可用 `Commands` 或在必要时用 `World` 创建。[演示场景](../src/scene/setup.rs) · [撞击物生成](../src/projectiles/launch.rs)
 - 按功能模块保持类型和系统的归属，需要初始化 ECS 数据或注册系统的功能通过 Plugin 封装装配。游戏库的 `build_app()` 直接安装各功能插件，供桌面入口和架构导出调用。无窗入口独立安装同一组功能插件，并配置运行器、逻辑窗口与离屏渲染。[桌面装配](../apps/game/src/lib.rs) · [无窗入口](../apps/acceptance/src/main.rs)
-- 有独立业务含义的常量保留在负责该语义的模块，名称或注释注明单位与容差。注释解释调度、数值条件及生命周期等不易从代码读出的约束。优化缓存或存储前先测量，使用变更检测或条件运行时保留对连续模拟的覆盖。[撞击参数](../src/projectiles/mod.rs) · [应力缓存](../src/stress_runtime/mod.rs)
+- 功能目录的 `mod.rs` 集中声明子模块、装配插件与导出接口。实现按职责平铺在同一目录，子模块默认私有。用直接重导出保留共享入口，移动系统时保留同一个函数和调度关系。受 BRP 或资产系统使用的反射类型保留原来的类型路径。小而集中的功能可保留单文件。[暂停菜单入口](../src/menu/mod.rs) · [目录决策](notes/implemented/0027-src-module-responsibilities.md)
+- 有独立业务含义的常量保留在负责该语义的模块，名称或注释注明单位与容差。注释解释调度、数值条件及生命周期等不易从代码读出的约束。优化缓存或存储前先测量，使用变更检测或条件运行时保留对连续模拟的覆盖。[撞击参数](../src/projectiles/mod.rs) · [应力缓存](../src/stress_runtime/overload.rs)
 
 ## 检查与验证
 

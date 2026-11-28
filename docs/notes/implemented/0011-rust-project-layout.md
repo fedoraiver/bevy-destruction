@@ -2,7 +2,7 @@
 
 ## 状态与日期
 
-2026-11-17 采用并实现，目录迁移对应提交 `1ec85cb`。二进制入口的初始布局随后由 [ADR 0016](0016-shared-schedule-export.md) 调整，现行 workspace 与应用入口见 [ADR 0019](0019-workspace-app-entrypoints.md)。模块和测试的目录规则继续沿用。
+2026-11-17 采用并实现，目录迁移对应提交 `1ec85cb`。二进制入口的初始布局随后由 [ADR 0016](0016-shared-schedule-export.md) 调整，现行 workspace 与应用入口见 [ADR 0019](0019-workspace-app-entrypoints.md)。模块和测试的目录规则继续沿用，功能目录内的实现拆分约定见 [ADR 0027](0027-src-module-responsibilities.md)。
 
 ## 背景
 
