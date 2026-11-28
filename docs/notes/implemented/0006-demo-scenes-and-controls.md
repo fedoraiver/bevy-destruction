@@ -38,7 +38,7 @@
 | F5 | `courtyard` | 有庭院的两层楼 |
 | F6 | `l_shape` | L 形三层楼 |
 
-Bevy 原生 `SettingsPlugin` 在 `DestructionPlugin` 初始化前从系统偏好目录读取 `settings.toml` 的 `[demo_settings]`，填充 `DemoSettings`。当前使用 `scene` 路径及暂停菜单重载场景。架构导出使用内置设置，Python 验收暂时替换默认设置文件。[场景与暂停菜单](0024-scene-settings-and-pause-menu.md) · [无窗验收](0025-python-driven-acceptance.md)
+桌面和无窗入口通过 Bevy 原生 `SettingsPlugin` 从系统偏好目录读取 `settings.toml` 的 `[demo_settings]`，在运行前应用 `DemoSettings`。当前使用 `scene` 路径及暂停菜单重载场景。架构导出使用内置设置，Python 验收暂时替换默认设置文件。[场景与暂停菜单](0024-scene-settings-and-pause-menu.md) · [无窗验收](0025-python-driven-acceptance.md)
 
 
 切换场景时，目录系统在销毁旧建筑和撞击物之后、生成新建筑之前，用 `Commands::trigger` 排入 `ResetProjectiles`。撞击物插件的 Observer 清空上一场景的发射请求、接触工况和计数。延迟命令在建筑实例化和相机更新前应用，同帧的新发射输入随后进入队列。
@@ -66,7 +66,7 @@ Bevy 原生 `SettingsPlugin` 在 `DestructionPlugin` 初始化前从系统偏好
 - 邻面距离回归通过，覆盖边中部、有限边端点、面内容差以及倾斜面的命中轴深度。矩形场景 `smoke` 无窗验收通过。
 - 最终正式矩形在引擎中通过点击、重复实例化及偏侧支撑倾倒。细长代理修复提交 `dfd8205` 的六场景 Collider 构造回归通过，正式 L 形通过关闭 VFX 的交互回放。该次默认 VFX 的 L 形回放通过加载及首击，粒子回收检查失败。
 - 初次迁移桌面设置时，矩形楼的旧版 `smoke` 验收在四个开关关闭时通过。报告确认四项均为 `false`，首击粒子数和边带三角形数均为零。
-- 设置回归通过，覆盖隔离 TOML 中的资产与四个开关、缺失文件、部分字段和探针参数隔离。无窗验收的设置加载与产物验证见 [ADR 0022](0022-script-driven-acceptance-scenarios.md#验证要求与结果)。
+- 初次迁移时，设置回归通过，覆盖隔离 TOML 中的资产与四个开关、缺失文件、部分字段和探针参数隔离。该次无窗验收的设置加载与产物验证见 [ADR 0022](0022-script-driven-acceptance-scenarios.md#验证要求与结果)。
 - 当前相机为固定默认速度与灵敏度的无碰撞自由飞行。行走或相机碰撞需单独设计与验证。
 
 ## 来源

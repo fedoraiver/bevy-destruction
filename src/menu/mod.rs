@@ -4,20 +4,20 @@ use bevy::{
     core_pipeline::prepass::DepthPrepass,
     picking::{events::PointerClick, pointer::PointerButton},
     prelude::*,
+    settings::SettingsPlugin,
     time::Virtual,
 };
 
 use crate::{
     DemoSettings, SETTINGS_APP_NAME,
     camera::{self, CameraControl, FreeCamera},
-    load_demo_settings,
     projectiles::{ResetProjectiles, RigidProjectile},
     scene::{self, BuildingInstance, DemoCamera, DemoRoot},
     stress_runtime::StressSettings,
     vfx::{Particle, VfxSettings},
 };
 
-pub(crate) struct PauseMenuPlugin;
+pub struct PauseMenuPlugin;
 
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
@@ -159,7 +159,9 @@ fn read_reload_settings() -> Result<DemoSettings, String> {
     }
 
     let mut reader = App::new();
-    load_demo_settings(&mut reader, SETTINGS_APP_NAME);
+    reader
+        .register_type::<DemoSettings>()
+        .add_plugins(SettingsPlugin::new(SETTINGS_APP_NAME));
     Ok(reader
         .world_mut()
         .remove_resource::<DemoSettings>()
