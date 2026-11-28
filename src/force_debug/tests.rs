@@ -29,7 +29,7 @@ fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_
         physics::DestructionPhysicsPlugin,
         stress::NodeLoad,
         stress_runtime::StressRuntimePlugin,
-        stress_smoke::{BEAM, RIGHT_BOND, spawn_beam},
+        test_fixtures::{BEAM, RIGHT_BOND, spawn_beam},
     };
     use bevy::{gizmos::GizmoAsset, time::TimeUpdateStrategy};
 
@@ -43,10 +43,6 @@ fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_
         .init_resource::<Aim>()
         .init_resource::<ForceSamples>()
         .init_resource::<ForceViewStats>()
-        .insert_resource(ProbeOptions {
-            force_smoke_output: Some(default()),
-            ..default()
-        })
         .insert_resource(ForceCapture { enabled: true })
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .insert_resource(TimeUpdateStrategy::ManualDuration(step))
@@ -58,20 +54,38 @@ fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_
     app.update();
     let building = spawn_beam(app.world_mut(), Vec3::ZERO);
     let other = spawn_beam(app.world_mut(), Vec3::X * 8.0);
+    let asset = app
+        .world()
+        .get::<BuildingInstance>(building)
+        .unwrap()
+        .asset
+        .clone();
+    app.world_mut()
+        .get_mut::<BuildingInstance>(other)
+        .unwrap()
+        .asset = asset;
+    let [first_bond, other_bond] = [building, other]
+        .map(|entity| app.world().get::<BuildingInstance>(entity).unwrap().bonds[RIGHT_BOND]);
+    assert_ne!(first_bond, other_bond);
+    app.world_mut()
+        .get_mut::<BondInstance>(first_bond)
+        .unwrap()
+        .active = false;
+    assert!(app.world().get::<BondInstance>(other_bond).unwrap().active);
+    app.world_mut()
+        .get_mut::<BondInstance>(first_bond)
+        .unwrap()
+        .active = true;
     for _ in 0..5 {
         app.update();
     }
 
-    let visible_bonds = |app: &App| {
+    let view = |app: &App| {
         let stats = app.world().resource::<ForceViewStats>();
-        [building, other].map(|building| {
-            stats
-                .valid_bonds
-                .iter()
-                .filter(|(owner, _)| *owner == building)
-                .count()
-        })
+        (stats.static_bonds, stats.max_force_n)
     };
+    let (visible_bonds, unloaded_force) = view(&app);
+    assert_eq!(visible_bonds, 4);
     let force = |app: &App| {
         app.world().get::<StressState>(building).unwrap().bonds[RIGHT_BOND]
             .stress
@@ -83,14 +97,13 @@ fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
         app.update();
         assert_eq!(app.world().resource::<Time<Fixed>>().elapsed(), now);
-        assert_eq!(visible_bonds(app), [0, 2]);
+        assert_eq!(view(app), (2, unloaded_force));
     };
     let resume_fixed_step = |app: &mut App| {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(step));
         app.update();
-        assert_eq!(visible_bonds(app), [2, 2]);
+        assert_eq!(view(app).0, 4);
     };
-    assert_eq!(visible_bonds(&app), [2, 2]);
     let original_force = force(&app);
     let other_solves = app
         .world()
@@ -183,10 +196,8 @@ fn inspector_tracks_input_target_lifetime_and_asset_changes() {
     use bevy::camera::{CameraProjection, RenderTargetInfo};
 
     let mut app = App::new();
-    app.init_resource::<ProbeOptions>()
-        .init_resource::<CameraControl>()
+    app.init_resource::<CameraControl>()
         .init_resource::<ButtonInput<KeyCode>>()
-        .init_resource::<ScriptedForceInspection>()
         .init_resource::<Aim>()
         .add_message::<AssetEvent<DestructibleAsset>>()
         .insert_resource(ForceCapture { enabled: true })

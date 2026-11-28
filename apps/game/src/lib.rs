@@ -1,6 +1,3 @@
-#[cfg(feature = "acceptance-test")]
-#[path = "../../../src/acceptance/mod.rs"]
-pub mod acceptance;
 #[path = "../../../src/asset/mod.rs"]
 mod asset;
 #[path = "../../../src/camera/mod.rs"]
@@ -8,70 +5,38 @@ mod camera;
 #[cfg(test)]
 #[path = "../../../src/catalog/mod.rs"]
 mod catalog;
-#[cfg(any(test, feature = "acceptance-test"))]
-#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
-#[path = "../../../src/collapse_smoke/mod.rs"]
-mod collapse_smoke;
 #[path = "../../../src/contact_mask/mod.rs"]
 mod contact_mask;
-#[cfg(any(test, feature = "acceptance-test"))]
-#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
-#[path = "../../../src/contact_smoke/mod.rs"]
-mod contact_smoke;
 #[path = "../../../src/debug/mod.rs"]
 mod debug;
-#[cfg(any(test, feature = "acceptance-test"))]
-#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
-#[path = "../../../src/diagnostics/mod.rs"]
-mod diagnostics;
 #[path = "../../../src/dust_material/mod.rs"]
 mod dust_material;
 #[path = "../../../src/force_debug/mod.rs"]
 mod force_debug;
 #[path = "../../../src/force_samples/mod.rs"]
 mod force_samples;
-#[cfg(any(test, feature = "acceptance-test"))]
-#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
-#[path = "../../../src/force_smoke/mod.rs"]
-mod force_smoke;
 #[path = "../../../src/force_visibility/mod.rs"]
 mod force_visibility;
 #[path = "../../../src/fracture_detail/mod.rs"]
 mod fracture_detail;
 #[path = "../../../src/interaction/mod.rs"]
 mod interaction;
-#[cfg(feature = "acceptance-test")]
-#[path = "../../../src/landing_smoke/mod.rs"]
-mod landing_smoke;
 #[path = "../../../src/material/mod.rs"]
 mod material;
-#[cfg(feature = "acceptance-test")]
-#[path = "../../../src/material_smoke/mod.rs"]
-mod material_smoke;
 #[path = "../../../src/menu/mod.rs"]
 mod menu;
 #[path = "../../../src/physics/mod.rs"]
 mod physics;
-#[cfg(feature = "acceptance-test")]
-#[path = "../../../src/physics_smoke/mod.rs"]
-mod physics_smoke;
 #[path = "../../../src/projectiles/mod.rs"]
 mod projectiles;
 #[path = "../../../src/rim_profile/mod.rs"]
 mod rim_profile;
 #[path = "../../../src/scene/mod.rs"]
 mod scene;
-#[cfg(feature = "acceptance-test")]
-#[path = "../../../src/smoke/mod.rs"]
-mod smoke;
 #[path = "../../../src/stress/mod.rs"]
 mod stress;
 #[path = "../../../src/stress_runtime/mod.rs"]
 mod stress_runtime;
-#[cfg(any(test, feature = "acceptance-test"))]
-#[cfg_attr(all(test, not(feature = "acceptance-test")), allow(dead_code))]
-#[path = "../../../src/stress_smoke/mod.rs"]
-mod stress_smoke;
 #[path = "../../../src/structure/mod.rs"]
 mod structure;
 #[path = "../../../src/vfx/mod.rs"]
@@ -86,7 +51,13 @@ use bevy::{
 };
 
 #[cfg(test)]
+#[path = "../../../src/test_fixtures.rs"]
+mod test_fixtures;
+#[cfg(test)]
 mod tests;
+
+#[cfg(feature = "acceptance-test")]
+pub use scene::DemoCamera;
 
 pub const SETTINGS_APP_NAME: &str = "io.github.fedoraiver.bevy-destruction";
 
@@ -128,68 +99,6 @@ impl DemoSettings {
             return Err("Scene must be a .destruction.json path relative to assets/.");
         }
         Ok(&self.scene)
-    }
-}
-
-#[derive(Default, Resource)]
-struct ProbeOptions {
-    #[cfg(any(test, feature = "acceptance-test"))]
-    smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    physics_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    stress_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    material_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    contact_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    force_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    landing_smoke_output: Option<PathBuf>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    collapse_smoke_output: Option<PathBuf>,
-    #[cfg(feature = "acceptance-test")]
-    capture_replay: bool,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    smoke_target: Option<Handle<Image>>,
-    #[cfg(any(test, feature = "acceptance-test"))]
-    profile: bool,
-}
-
-impl ProbeOptions {
-    pub fn scripted(&self) -> bool {
-        #[cfg(any(test, feature = "acceptance-test"))]
-        {
-            self.smoke_output.is_some()
-                || self.physics_smoke_output.is_some()
-                || self.stress_smoke_output.is_some()
-                || self.material_smoke_output.is_some()
-                || self.contact_smoke_output.is_some()
-                || self.force_smoke_output.is_some()
-                || self.landing_smoke_output.is_some()
-                || self.collapse_smoke_output.is_some()
-        }
-        #[cfg(not(any(test, feature = "acceptance-test")))]
-        false
-    }
-
-    fn force_probe(&self) -> bool {
-        #[cfg(any(test, feature = "acceptance-test"))]
-        {
-            self.force_smoke_output.is_some()
-        }
-        #[cfg(not(any(test, feature = "acceptance-test")))]
-        false
-    }
-
-    #[cfg(any(test, feature = "acceptance-test"))]
-    fn smoke_screenshot(&self) -> bevy::render::view::screenshot::Screenshot {
-        bevy::render::view::screenshot::Screenshot::image(
-            self.smoke_target
-                .clone()
-                .expect("Smoke probe requires an offscreen target"),
-        )
     }
 }
 
@@ -248,8 +157,7 @@ pub struct DestructionPlugin;
 
 impl Plugin for DestructionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DemoSettings>()
-            .init_resource::<ProbeOptions>();
+        app.init_resource::<DemoSettings>();
         let settings = app.world().resource::<DemoSettings>();
         let vfx_settings = vfx::VfxSettings {
             enabled: settings.vfx,

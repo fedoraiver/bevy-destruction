@@ -7,7 +7,6 @@ use bevy::{
 };
 
 use crate::{
-    ProbeOptions,
     asset::DestructibleAsset,
     camera::CameraControl,
     force_samples::{DynamicForceSample, ForceCapture, ForceSamples, bond_signature},
@@ -36,37 +35,32 @@ enum ForceHud {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct ScriptedForceInspection {
-    pub held: bool,
-}
-
-#[derive(Resource, Default)]
 struct Aim {
     hit: Option<SurfaceHit>,
     arrow_length: f32,
     queried: bool,
 }
 
-#[derive(Resource, Default, Clone, Debug)]
+#[derive(Resource, Default, Reflect)]
+#[reflect(Resource)]
 pub struct ForceViewStats {
     pub static_bonds: usize,
     pub dynamic_bonds: usize,
     pub max_force_n: f64,
-    pub tinted_chunks: BTreeMap<ChunkKey, u32>,
+    pub tinted_chunks: usize,
     pub inspected: Option<ForceInspection>,
     pub force_arrows: usize,
     pub pick_queries: usize,
-    pub(crate) valid_bonds: Vec<ChunkKey>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Reflect)]
 pub struct ForceInspection {
     pub chunk: ChunkKey,
     pub bonds: Vec<ForceBondReadout>,
     pub impulse_ns: Option<f64>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Reflect)]
 pub struct ForceBondReadout {
     pub id: String,
     pub force_n: f64,
@@ -82,7 +76,6 @@ impl Plugin for ForceDebugPlugin {
         app.init_resource::<ForceCapture>()
             .init_resource::<ForceSamples>()
             .init_resource::<ForceViewStats>()
-            .init_resource::<ScriptedForceInspection>()
             .init_resource::<Aim>()
             .init_gizmo_group::<ForceGizmos>()
             .add_systems(Startup, setup)
@@ -157,10 +150,8 @@ fn toggle(keys: Res<ButtonInput<KeyCode>>, mut capture: ResMut<ForceCapture>) {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn pick_target(
     capture: Res<ForceCapture>,
-    probe_options: Res<ProbeOptions>,
     control: Res<CameraControl>,
     keys: Res<ButtonInput<KeyCode>>,
-    scripted: Res<ScriptedForceInspection>,
     window: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &Projection, &GlobalTransform), With<DemoCamera>>,
     instances: Query<(Entity, &BuildingInstance)>,
@@ -183,13 +174,9 @@ fn pick_target(
     if !capture.enabled {
         return;
     }
-    let held = if probe_options.scripted() {
-        scripted.held
-    } else {
-        control.captured
-            && window.single().is_ok_and(|window| window.focused)
-            && (keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight))
-    };
+    let held = control.captured
+        && window.single().is_ok_and(|window| window.focused)
+        && (keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight));
     if !held {
         return;
     }
@@ -339,7 +326,6 @@ fn update_heat_tags(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn draw(
     capture: Res<ForceCapture>,
-    probe_options: Res<ProbeOptions>,
     aim: Res<Aim>,
     mut samples: ResMut<ForceSamples>,
     mut stats: ResMut<ForceViewStats>,
@@ -429,7 +415,7 @@ fn draw(
                     root.compute_transform().rotation.conjugate() * gravity.0,
                 )
         });
-        let mut heat = BTreeMap::<(&str, Entity), u32>::new();
+        let mut heat = BTreeMap::<Entity, u32>::new();
         for &entity in instance.bonds.values() {
             let Ok(bond) = bonds.get(entity) else {
                 continue;
@@ -480,13 +466,10 @@ fn draw(
                 stats.static_bonds += 1;
             }
             stats.max_force_n = stats.max_force_n.max(force_n);
-            if probe_options.force_probe() {
-                stats.valid_bonds.push((building, bond.id.clone()));
-            }
 
             let tag = heat_tag(stress.utilization);
             if tag != 0 {
-                for endpoint in [(a_id, bond.endpoints[0]), (b_id, bond.endpoints[1])] {
+                for endpoint in bond.endpoints {
                     heat.entry(endpoint)
                         .and_modify(|old| *old = (*old).max(tag))
                         .or_insert(tag);
@@ -507,12 +490,12 @@ fn draw(
                 });
             }
         }
-        for ((id, entity), tag) in heat {
+        stats.tinted_chunks += heat.len();
+        for (entity, tag) in heat {
             desired.extend(
                 chunk_primitives(children.get(entity).ok(), |entity| tags.contains(entity))
                     .map(|primitive| (primitive, tag)),
             );
-            stats.tinted_chunks.insert((building, id.to_owned()), tag);
         }
     }
     update_heat_tags(desired, &mut painted, &mut tags);

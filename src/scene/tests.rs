@@ -218,7 +218,7 @@ fn spawn_instance(world: &mut World, patches: Arc<Vec<ContactPatch>>) -> Entity 
             .id();
         instance.chunks.insert(id.into(), entity);
     }
-    let template = crate::stress_smoke::beam_manifest().bonds.remove(0);
+    let template = crate::test_fixtures::beam_manifest().bonds.remove(0);
     let bonds = patches
         .iter()
         .map(|patch| BondRecord {

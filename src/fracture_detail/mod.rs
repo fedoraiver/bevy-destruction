@@ -53,7 +53,8 @@ impl ContactPatch {
 }
 
 #[cfg(any(test, feature = "acceptance-test"))]
-pub fn contact_surface_mesh(patches: &[ContactPatch], chunk: &str) -> Option<Mesh> {
+#[cfg(test)]
+pub(crate) fn contact_surface_mesh(patches: &[ContactPatch], chunk: &str) -> Option<Mesh> {
     let vertex_count = patches
         .iter()
         .filter(|patch| patch.a == chunk || patch.b == chunk)

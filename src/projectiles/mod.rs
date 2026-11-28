@@ -9,7 +9,6 @@ use bevy::{
 };
 
 use crate::{
-    ProbeOptions,
     asset::{BondPatchRecord, DestructibleAsset, Manifest, PhysicalMaterial},
     camera::CameraControl,
     force_samples::{
@@ -53,6 +52,7 @@ const IMPACT_BREAK_LIMIT: usize = 8;
 const DYNAMIC_IMPACT_BREAK_LIMIT: usize = IMPACT_BREAK_LIMIT / 2;
 
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 pub enum ProjectileShape {
     Sphere,
     Cube,
@@ -70,11 +70,15 @@ pub struct LaunchRequests {
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct RigidProjectile {
     age: f32,
+    #[cfg(feature = "acceptance-test")]
+    shape: ProjectileShape,
 }
 
 #[derive(Resource, Default, Clone)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
 pub struct ImpactStats {
     pub launched: u64,
     pub contacts: u64,
@@ -139,17 +143,12 @@ fn reset(
 fn fire(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    probe_options: Res<ProbeOptions>,
     control: Res<CameraControl>,
     windows: Query<&Window>,
     camera: (Query<Entity, With<DemoCamera>>, TransformHelper),
     mut requests: ResMut<LaunchRequests>,
 ) {
-    if probe_options.scripted()
-        || !control.captured
-        || control.suppress_click
-        || !windows.iter().any(|window| window.focused)
-    {
+    if !control.captured || control.suppress_click || !windows.iter().any(|window| window.focused) {
         return;
     }
     let shape = if buttons.just_pressed(MouseButton::Right) {
@@ -195,7 +194,11 @@ fn spawn_projectiles(
         commands
             .spawn((
                 Name::new("Unbreakable rigid impactor"),
-                RigidProjectile { age: 0.0 },
+                RigidProjectile {
+                    age: 0.0,
+                    #[cfg(feature = "acceptance-test")]
+                    shape: request.shape,
+                },
                 RigidBody::Dynamic,
                 collider,
                 density,

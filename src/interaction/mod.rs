@@ -2,7 +2,6 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::{
-    ProbeOptions,
     asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
     debug::FractureEdges,
@@ -24,19 +23,14 @@ pub struct InteractionPlugin;
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DamageRequest>()
-            .init_resource::<ScriptedClick>()
             .add_systems(Update, (cursor_damage, apply_damage).chain());
     }
 }
 
 #[derive(Message)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Message))]
 pub(crate) struct DamageRequest {
     pub ray: Ray3d,
-}
-
-#[derive(Resource, Default)]
-pub struct ScriptedClick {
-    pub cursor: Option<Vec2>,
 }
 
 pub(crate) fn build_bond_feedback<'a>(
@@ -88,8 +82,6 @@ pub(crate) fn cursor_damage(
     cameras: Query<(Entity, &Camera), With<DemoCamera>>,
     transforms: TransformHelper,
     mut requests: MessageWriter<DamageRequest>,
-    probe_options: Res<ProbeOptions>,
-    mut scripted: ResMut<ScriptedClick>,
     control: Res<CameraControl>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
@@ -98,20 +90,13 @@ pub(crate) fn cursor_damage(
     let (Ok(window), Ok((entity, camera))) = (windows.single(), cameras.single()) else {
         return;
     };
-    let cursor = if probe_options.scripted() {
-        scripted.cursor.take()
-    } else {
-        if !control.captured || control.suppress_click || !window.focused {
-            return;
-        }
-        Some(window.size() * 0.5)
-    };
+    if !control.captured || control.suppress_click || !window.focused {
+        return;
+    }
     let Ok(transform) = transforms.compute_global_transform(entity) else {
         return;
     };
-    if let Some(cursor) = cursor
-        && let Ok(ray) = camera.viewport_to_world(&transform, cursor)
-    {
+    if let Ok(ray) = camera.viewport_to_world(&transform, window.size() * 0.5) {
         requests.write(DamageRequest { ray });
     }
 }

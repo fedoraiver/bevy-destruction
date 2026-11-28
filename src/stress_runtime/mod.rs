@@ -33,6 +33,7 @@ impl Plugin for StressRuntimePlugin {
 }
 
 #[derive(Resource)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
 pub struct StressSettings {
     pub enabled: bool,
     pub damage_seconds: f64,
@@ -55,10 +56,12 @@ impl Default for StressSettings {
 
 /// Applied loads on this building, in building coordinates and about the authored structural nodes.
 #[derive(Component, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct StructuralLoads {
     pub by_chunk: BTreeMap<String, NodeLoad>,
 }
 
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 pub struct BondLoadState {
     pub stress: BondStress,
     pub damage: f64,
@@ -66,7 +69,8 @@ pub struct BondLoadState {
 }
 
 #[derive(Clone)]
-#[cfg_attr(not(any(test, feature = "acceptance-test")), expect(dead_code))]
+#[cfg_attr(not(feature = "acceptance-test"), expect(dead_code))]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 pub struct StressComponentReport {
     pub chunks: usize,
     pub valid: bool,
@@ -79,6 +83,7 @@ pub struct StressComponentReport {
 }
 
 #[derive(Component, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct StressState {
     pub bonds: BTreeMap<String, BondLoadState>,
     pub reports: Vec<StressComponentReport>,
@@ -92,17 +97,20 @@ pub struct StressState {
     pub skipped_dynamic: usize,
     cache: Option<StressCache>,
     requires_damage_update: bool,
-    static_components: BTreeMap<Vec<String>, StaticComponentCache>,
+    static_components: BTreeMap<String, StaticComponentCache>,
 }
 
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 struct StaticComponentCache {
     key: u64,
+    chunks: Vec<String>,
     report: StressComponentReport,
     bonds: Vec<String>,
     max_utilization: f64,
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 struct StressCache {
     key: u64,
     source_tick: u32,
@@ -292,16 +300,18 @@ pub(crate) fn update_stress(
                     }
                 }
                 let component_key = component_hash.finish();
-                if let Some(cached) = previous_components
-                    .remove(&component.chunks)
-                    .filter(|cached| cached.key == component_key)
-                {
+                // Connected components are sorted and disjoint. The first ID is a
+                // stable index, while the full list detects membership changes.
+                let first_chunk = &component.chunks[0];
+                if let Some(cached) = previous_components.remove(first_chunk).filter(|cached| {
+                    cached.key == component_key && cached.chunks == component.chunks
+                }) {
                     for id in &cached.bonds {
                         state.bonds.get_mut(id).unwrap().valid = true;
                     }
                     state.reports.push(cached.report.clone());
                     state.max_utilization = state.max_utilization.max(cached.max_utilization);
-                    state.static_components.insert(component.chunks, cached);
+                    state.static_components.insert(first_chunk.clone(), cached);
                     continue;
                 }
                 state.numerical_solves += 1;
@@ -366,8 +376,10 @@ pub(crate) fn update_stress(
                             moment_balance_error: moment.length(),
                             max_displacement,
                         };
+                        let cache_index = first_chunk.clone();
                         let cached = StaticComponentCache {
                             key: component_key,
+                            chunks: component.chunks,
                             report: report.clone(),
                             bonds: solution.bonds.keys().cloned().collect(),
                             max_utilization: solution
@@ -376,7 +388,7 @@ pub(crate) fn update_stress(
                                 .map(|bond| bond.utilization)
                                 .fold(0.0_f64, f64::max),
                         };
-                        state.static_components.insert(component.chunks, cached);
+                        state.static_components.insert(cache_index, cached);
                         state.reports.push(report);
                         for (id, stress) in solution.bonds {
                             state.max_utilization = state.max_utilization.max(stress.utilization);

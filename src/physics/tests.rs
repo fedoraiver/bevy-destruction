@@ -37,7 +37,7 @@ fn box_proxy(center: Vec3, size: Vec3) -> ColliderRecord {
 }
 
 fn manifest() -> Manifest {
-    let mut manifest = crate::stress_smoke::beam_manifest();
+    let mut manifest = crate::test_fixtures::beam_manifest();
     let physical = manifest.materials["concrete"].clone();
     manifest.materials = (2..=5)
         .map(|mass| {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     physics::{Cluster, DestructionPhysicsPlugin, NeedsClusterRebuild},
-    stress_smoke::{BEAM, RIGHT_BOND, beam_manifest, remove_left_support, spawn_beam},
+    test_fixtures::{BEAM, RIGHT_BOND, beam_manifest, remove_left_support, spawn_beam},
 };
 use bevy::time::TimeUpdateStrategy;
 

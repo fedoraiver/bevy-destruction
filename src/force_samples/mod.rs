@@ -12,11 +12,13 @@ pub const IMPULSE_SAMPLE_SECONDS: f64 = 1.0;
 const MAX_FORCE_SAMPLES: usize = 8;
 pub const MAX_IMPULSE_SAMPLES: usize = 128;
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
+#[reflect(Resource)]
 pub struct ForceCapture {
     pub enabled: bool,
 }
 
+#[derive(Reflect)]
 pub struct DynamicForceSample {
     pub building: Entity,
     pub body: Entity,
@@ -26,6 +28,7 @@ pub struct DynamicForceSample {
     pub captured_at: f64,
 }
 
+#[derive(Reflect)]
 pub struct ImpulseSample {
     pub building: Entity,
     pub chunk: String,
@@ -34,7 +37,8 @@ pub struct ImpulseSample {
     pub captured_at: f64,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect)]
+#[reflect(Resource)]
 pub struct ForceSamples {
     pub dynamic: VecDeque<DynamicForceSample>,
     pub impulses: VecDeque<ImpulseSample>,

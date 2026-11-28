@@ -1,4 +1,237 @@
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use avian3d::{collision::contact_types::ContactGraph, prelude::*};
+use bevy::prelude::*;
+
+use crate::{
+    asset::{DestructibleAsset, Manifest},
+    physics::{Cluster, NeedsClusterRebuild},
+    scene::{BondInstance, BuildingInstance, ChunkInstance},
+    stress_runtime::StressState,
+};
+
+fn contacted_static_support<'a>(
+    bulk: Entity,
+    supports: &[(&'a str, Entity, Entity)],
+    contacts: impl IntoIterator<Item = ([Option<Entity>; 2], [Entity; 2], f32)>,
+) -> Option<&'a str> {
+    contacts
+        .into_iter()
+        .filter(|(_, _, impulse)| *impulse > 0.0)
+        .find_map(|(bodies, colliders, _)| {
+            if !bodies.contains(&Some(bulk)) {
+                return None;
+            }
+            supports.iter().find_map(|&(id, collider, body)| {
+                (bodies.contains(&Some(body)) && colliders.contains(&collider)).then_some(id)
+            })
+        })
+}
+
+pub(crate) struct CollapseSelection {
+    pub removed: Vec<String>,
+    pub support_path: Vec<String>,
+    pub static_stub: String,
+    pub upper_floor_y: f32,
+}
+
+pub(crate) fn select_collapse_support(
+    manifest: &Manifest,
+    mass: impl Fn(&str) -> f32,
+) -> Result<CollapseSelection, String> {
+    let records = manifest
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect::<BTreeMap<_, _>>();
+    let bounds = manifest
+        .chunks
+        .iter()
+        .map(|chunk| {
+            let transform = chunk.transform();
+            let mut min = Vec3::splat(f32::INFINITY);
+            let mut max = Vec3::splat(f32::NEG_INFINITY);
+            for point in chunk.colliders.iter().flat_map(|proxy| &proxy.vertices) {
+                let point = transform.transform_point((*point).into());
+                min = min.min(point);
+                max = max.max(point);
+            }
+            (chunk.id.as_str(), (min, max))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let bottom = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.kind == "floor")
+        .map(|chunk| bounds[chunk.id.as_str()].0.y)
+        .min_by(f32::total_cmp)
+        .ok_or("No foundation floor geometry")?;
+    let foundation = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && (bounds[chunk.id.as_str()].0.y - bottom).abs() < 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let foundation_top = foundation
+        .iter()
+        .map(|id| bounds[id].1.y)
+        .max_by(f32::total_cmp)
+        .unwrap();
+    let upper_floor_y = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && bounds[chunk.id.as_str()].0.y > foundation_top + 1e-4
+        })
+        .map(|chunk| bounds[chunk.id.as_str()].0.y)
+        .min_by(f32::total_cmp)
+        .ok_or("No upper storey floor geometry")?;
+    let supports = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            let (min, max) = bounds[chunk.id.as_str()];
+            chunk.kind != "floor"
+                && chunk.kind != "roof"
+                && min.y < upper_floor_y - 1e-4
+                && max.y > foundation_top + 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let upper_floor = manifest
+        .chunks
+        .iter()
+        .filter(|chunk| {
+            chunk.kind == "floor" && (bounds[chunk.id.as_str()].0.y - upper_floor_y).abs() < 1e-4
+        })
+        .map(|chunk| chunk.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut adjacent = records
+        .keys()
+        .map(|&id| (id, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for bond in &manifest.bonds {
+        adjacent
+            .get_mut(bond.a.as_str())
+            .unwrap()
+            .insert(bond.b.as_str());
+        adjacent
+            .get_mut(bond.b.as_str())
+            .unwrap()
+            .insert(bond.a.as_str());
+    }
+    let mut grounded = manifest
+        .anchors
+        .iter()
+        .filter(|anchor| anchor.kind == "fixed" && foundation.contains(anchor.chunk.as_str()))
+        .map(|anchor| anchor.chunk.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut pending = grounded.iter().copied().collect::<Vec<_>>();
+    while let Some(id) = pending.pop() {
+        for &neighbor in adjacent[id].intersection(&foundation) {
+            if grounded.insert(neighbor) {
+                pending.push(neighbor);
+            }
+        }
+    }
+    let starts = supports
+        .iter()
+        .copied()
+        .filter(|id| {
+            adjacent[id]
+                .iter()
+                .any(|neighbor| grounded.contains(neighbor))
+                && !adjacent[id]
+                    .iter()
+                    .any(|neighbor| upper_floor.contains(neighbor))
+        })
+        .collect::<Vec<_>>();
+    let ends = supports
+        .iter()
+        .copied()
+        .filter(|id| {
+            adjacent[id]
+                .iter()
+                .any(|neighbor| upper_floor.contains(neighbor))
+        })
+        .collect::<BTreeSet<_>>();
+    let mut low = Vec3::splat(f32::INFINITY);
+    let mut high = Vec3::splat(f32::NEG_INFINITY);
+    for &(min, max) in bounds.values() {
+        low = low.min(min);
+        high = high.max(max);
+    }
+    let target = (low + high) * 0.5 - Vec3::Z * 0.5;
+    let mut candidates = Vec::new();
+    for start in starts {
+        let mut remaining = supports.clone();
+        let mut costs = BTreeMap::from([(start, f64::from(mass(start)))]);
+        let mut previous = BTreeMap::new();
+        while let Some(id) = remaining
+            .iter()
+            .copied()
+            .filter(|id| costs.contains_key(id))
+            .min_by(|a, b| costs[a].total_cmp(&costs[b]).then(a.cmp(b)))
+        {
+            remaining.remove(id);
+            if ends.contains(id) {
+                let mut path = vec![id.to_owned()];
+                let mut cursor = id;
+                while cursor != start {
+                    cursor = previous[cursor];
+                    path.push(cursor.to_owned());
+                }
+                path.reverse();
+                if path.len() >= 2 {
+                    let (min, max) = bounds[start];
+                    let interior = min.x > low.x + 1e-4
+                        && max.x < high.x - 1e-4
+                        && min.z > low.z + 1e-4
+                        && max.z < high.z - 1e-4;
+                    let center = records[start]
+                        .transform()
+                        .transform_point(records[start].center_of_mass.into());
+                    let distance = (center.x - target.x).powi(2) + (center.z - target.z).powi(2);
+                    candidates.push((!interior, distance, costs[id], path));
+                }
+                break;
+            }
+            for &neighbor in adjacent[id].intersection(&remaining) {
+                let cost = costs[id] + f64::from(mass(neighbor));
+                if costs.get(neighbor).is_none_or(|old| cost < *old) {
+                    costs.insert(neighbor, cost);
+                    previous.insert(neighbor, id);
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    let (_, _, _, support_path) = candidates
+        .into_iter()
+        .next()
+        .ok_or("No multi-piece foundation-to-upperfloor support path")?;
+    let retained = support_path
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    Ok(CollapseSelection {
+        removed: supports
+            .into_iter()
+            .filter(|id| !retained.contains(id))
+            .map(str::to_owned)
+            .collect(),
+        static_stub: support_path[0].clone(),
+        support_path,
+        upper_floor_y,
+    })
+}
 
 #[test]
 fn upper_static_support_contact_is_detected_when_the_lower_member_has_no_impulse() {
@@ -77,6 +310,8 @@ fn production_support_selection_uses_geometry_and_is_independent_of_record_order
     manifest.anchors.reverse();
     let repeated = select_collapse_support(&manifest, |id| masses[id]).unwrap();
     assert_eq!(selected.support_path, repeated.support_path);
+    assert_eq!(selected.static_stub, repeated.static_stub);
+    assert!(selected.support_path.contains(&selected.static_stub));
     assert_eq!(selected.removed, repeated.removed);
 }
 

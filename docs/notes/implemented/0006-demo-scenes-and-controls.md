@@ -24,12 +24,12 @@
 
 - 用 Bevy 的 Rust `bsn!` 宏组合相机、灯光和碎块显示实体。读取 v2 清单及指定 GLB，待校验和依赖就绪后按 Chunk ID 建立实例；同一资产可在加载完成后继续实例化。资产契约见 [ADR 0005](0005-v2-asset-contract.md)。
 - 相机采用 60° 竖直视场的透视投影，裁剪距离为 0.05 至 500 m，切换场景后按建筑包围盒取景一次。WASD 沿相机方向移动，Space/Ctrl 沿世界竖直方向升降，输入归一化后以 6 m/s 移动。鼠标相对位移按 0.002 rad/px 更新，俯仰限制为 ±89°。Tab 切换鼠标捕获，失焦后暂停控制，恢复捕获的点击仅恢复控制。
-- 主键盘及数字小键盘的 `0` 切换橙色预破碎边线。线条取自焊接重复顶点后的真实折角与边界，跳过共面三角化对角线，保留深度遮挡。绘制系统通过 `run_if` 读取开关，在变换传播后绘制。`9` 切换受力热力，按住 `Alt` 详查准星目标，见 [ADR 0009](0009-structural-diagnostics.md)。`Esc` 退出。
+- 主键盘及数字小键盘的 `0` 切换橙色预破碎边线。线条取自焊接重复顶点后的真实折角与边界，跳过共面三角化对角线，保留深度遮挡。绘制系统通过 `run_if` 读取开关，在变换传播后绘制。`9` 切换受力热力，按住 `Alt` 详查准星目标，见 [ADR 0009](0009-structural-diagnostics.md)。最初由 `Esc` 退出，现改为打开暂停菜单。
 - 左键通过中央准星查询最近的存活建筑 Collider；命中块必删，扩展范围仅限该块的直接连接邻块。半径 0.4 m、深度带 0.08 m、法线点积至少 0.7，每次最多删除 6 块。立即更新显示、存活状态和相邻连接，Collider 换属由 [ADR 0001](0001-rigid-cluster-runtime.md) 的固定步统一处理。表面和碎屑分别见 [ADR 0007](0007-fracture-surface-rendering.md)、[ADR 0008](0008-destruction-effects-and-rims.md)。
 - 右键发射刚性球，`R` 发射刚性方块。发射输入在相机移动后用 Bevy 的 `TransformHelper` 计算当前层级位姿，以该位姿确定发射起点和方向。撞击物的刚体参数及真实接触破坏见 [ADR 0003](0003-collision-driven-fracture.md)。
 - `DamageRequest` 携带一条点击破坏射线。玩家输入先发送消息，`apply_damage` 在同一次 `Update` 依序读取。冒烟探针在消费系统运行后发送的批量射线由下一次 `Update` 读取。
 
-| 按键 | 场景 | 内容 |
+| 原场景快捷键 | 场景 | 内容 |
 | --- | --- | --- |
 | F1 | `rectangle` | 矩形两层楼 |
 | F2 | `highrise_slab` | 十层板式高楼 |
@@ -38,9 +38,8 @@
 | F5 | `courtyard` | 有庭院的两层楼 |
 | F6 | `l_shape` | L 形三层楼 |
 
-Bevy 原生 `SettingsPlugin` 在 `DestructionPlugin` 初始化前读取 `settings.toml` 的 `[demo_settings]`，填充 `DemoSettings`。桌面入口使用系统偏好目录下的 `io.github.fedoraiver.bevy-destruction/`，无窗验收使用用例的输出目录。`asset` 指定相对资产目录的 v2 清单，默认加载矩形楼。`stress`、`vfx`、`detail` 和 `soft_particles` 均为默认启用的布尔开关。架构导出使用默认值，验收专用参数存放在独立的 `ProbeOptions` 资源中。[桌面设置](../../../README.md#桌面设置) · [架构导出](0020-game-architecture-export.md) · [无窗验收](0022-script-driven-acceptance-scenarios.md)
+Bevy 原生 `SettingsPlugin` 在 `DestructionPlugin` 初始化前从系统偏好目录读取 `settings.toml` 的 `[demo_settings]`，填充 `DemoSettings`。当前使用 `scene` 路径及暂停菜单重载场景。架构导出使用内置设置，Python 验收暂时替换默认设置文件。[场景与暂停菜单](0024-scene-settings-and-pause-menu.md) · [无窗验收](0025-python-driven-acceptance.md)
 
-交互场景切换只影响当前运行，会清除上一场景的实例、撞击物、待处理冲量、外加载荷和粒子状态，重置取景。制作参数及每个正式资产 ID 见 [ADR 0004](0004-blender-asset-pipeline.md)。
 
 切换场景时，目录系统在销毁旧建筑和撞击物之后、生成新建筑之前，用 `Commands::trigger` 排入 `ResetProjectiles`。撞击物插件的 Observer 清空上一场景的发射请求、接触工况和计数。延迟命令在建筑实例化和相机更新前应用，同帧的新发射输入随后进入队列。
 

@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use bevy::{math::DVec3, prelude::Vec3};
+use bevy::{
+    math::DVec3,
+    prelude::{Reflect, Vec3},
+};
 
 use crate::asset::{ChunkRecord, Manifest, PhysicalMaterial};
 
@@ -13,6 +16,7 @@ type M3 = [[f64; 3]; 3];
 type M6 = [[f64; 6]; 6];
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 pub struct SolverSettings {
     pub relative_tolerance: f64,
     pub max_iterations: usize,
@@ -28,6 +32,7 @@ impl Default for SolverSettings {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
 pub struct NodeLoad {
     pub force: V3,
     pub moment: V3,
@@ -51,7 +56,7 @@ pub(crate) fn node_center(record: &ChunkRecord) -> DVec3 {
         .as_dvec3()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Reflect)]
 pub struct BondStress {
     /// Force and couple acting on endpoint a at the interface center.
     pub force: V3,

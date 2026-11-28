@@ -168,6 +168,54 @@ fn rest_rotation_and_b_side_use_the_same_finite_contact_records() {
 }
 
 #[test]
+fn rigid_motion_preserves_contact_shading_on_the_original_depth_surface() {
+    let source = surface_coordinates(source_quad(), Transform::IDENTITY);
+    let mut builder = ContactMaskBuilder::default();
+    let masked = builder
+        .mask_mesh(source.clone(), &[partial()], "a")
+        .unwrap();
+    let header = headers(&masked)[0];
+    let contact_point = Vec3::new(0.4, 0.0, 0.0);
+    let neighboring_grid = Vec3::new(-0.4, 0.0, 0.0);
+    assert!(contains(builder.data(), header, contact_point));
+    assert!(!contains(builder.data(), header, neighboring_grid));
+
+    let mut source = source;
+    source.duplicate_vertices();
+    for pose in [
+        Transform::IDENTITY,
+        Transform::from_xyz(12.0, -7.0, 9.0)
+            .with_rotation(Quat::from_rotation_y(0.8) * Quat::from_rotation_z(-0.3)),
+    ] {
+        let source = source.clone().transformed_by(pose);
+        let masked = masked.clone().transformed_by(pose);
+        assert_eq!(
+            source
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .get_bytes(),
+            masked
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .get_bytes()
+        );
+        assert_eq!(headers(&masked), [header, header]);
+        let toward_viewer = pose.rotation * Vec3::Z;
+        let front_occluder = pose.transform_point(contact_point + Vec3::Z * 0.0001);
+        let Some(VertexAttributeValues::Float32x3(vertices)) =
+            masked.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("expected float3 vertices")
+        };
+        assert!(
+            vertices.iter().all(|point| {
+                (front_occluder - Vec3::from_array(*point)).dot(toward_viewer) > 0.0
+            })
+        );
+    }
+}
+
+#[test]
 fn disconnected_and_holed_triangle_unions_never_become_a_filled_convex_hull() {
     let outer = [
         Vec3::new(-0.9, -0.9, 0.0),

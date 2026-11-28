@@ -1,14 +1,12 @@
 use std::time::Duration;
 
 use bevy::{
-    app::ScheduleRunnerPlugin, prelude::*, render::RenderPlugin, ui::IsDefaultUiCamera,
+    app::ScheduleRunnerPlugin, prelude::*, settings::SettingsPlugin, ui::IsDefaultUiCamera,
     winit::WinitPlugin,
 };
-use bevy_acceptance_test::{AcceptanceCamera, AcceptancePlugin, OFFSCREEN_IMAGE};
+use bevy_acceptance_test::{AcceptanceCamera, AcceptancePlugin};
 use bevy_destruction::{
-    DEFAULT_VIEWPORT,
-    acceptance::{AcceptanceScenario, DemoCamera},
-    asset_plugin,
+    DEFAULT_VIEWPORT, DemoCamera, DemoSettings, DestructionPlugin, SETTINGS_APP_NAME,
 };
 
 fn main() -> AppExit {
@@ -19,37 +17,29 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    let scenario = match AcceptanceScenario::from_env(OFFSCREEN_IMAGE) {
-        Ok(scenario) => scenario,
-        Err(error) => {
-            eprintln!("{error}");
-            return AppExit::error();
-        }
-    };
-
     let window = acceptance.input_window_plugin();
-    let runner = if scenario.profile() {
+    let runner = if std::env::var("BEVY_DESTRUCTION_ACCEPTANCE_UNCAPPED").as_deref() == Ok("1") {
         ScheduleRunnerPlugin::run_loop(Duration::ZERO)
     } else {
         acceptance.runner_plugin()
     };
+
     let mut app = App::new();
-    app.register_required_components_with::<DemoCamera, AcceptanceCamera>(|| AcceptanceCamera)
-        .register_required_components::<DemoCamera, IsDefaultUiCamera>()
-        .add_plugins(acceptance)
+    app.add_plugins((acceptance, runner))
         .add_plugins(
             DefaultPlugins
                 .build()
                 .disable::<WinitPlugin>()
-                .set(asset_plugin())
-                .set(window)
-                .set(RenderPlugin {
-                    // Fixed-frame captures need pipelines ready on the frame they request.
-                    synchronous_pipeline_compilation: scenario.synchronous_pipelines(),
+                .set(AssetPlugin {
+                    file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").into(),
                     ..default()
-                }),
+                })
+                .set(window),
         )
-        .add_plugins(runner);
-    scenario.install(&mut app);
+        .register_required_components_with::<DemoCamera, AcceptanceCamera>(|| AcceptanceCamera)
+        .register_required_components::<DemoCamera, IsDefaultUiCamera>()
+        .register_type::<DemoSettings>()
+        .add_plugins(SettingsPlugin::new(SETTINGS_APP_NAME))
+        .add_plugins(DestructionPlugin);
     app.run()
 }
