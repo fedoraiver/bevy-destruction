@@ -19,10 +19,10 @@
 | 独立脚本 | 主要覆盖 |
 | --- | --- |
 | [controls.py](../scripts/acceptance/controls.py)、[gameplay.py](../scripts/acceptance/gameplay.py) | 原生键鼠消息、飞行瞄准、点击破坏和发射撞击物。BRP 可用于布置初始相机，行为由实际输入触发。 |
-| [smoke.py](../scripts/acceptance/smoke.py) | 场景实例化、点击破坏、边带与粒子预算、烟尘回收及可选回放。 |
+| [smoke.py](../scripts/acceptance/smoke.py) | 场景实例化、点击破坏、边带与粒子预算、烟尘回收及可选阶段回放。 |
 | [physics.py](../scripts/acceptance/physics.py)、[stress.py](../scripts/acceptance/stress.py) | 失支撑、运动拆簇、质量与速度继承、休眠、自重和渐进断裂、刚球与方块。 |
 | [landing.py](../scripts/acceptance/landing.py)、[collapse.py](../scripts/acceptance/collapse.py) | 大块落地后的内部断裂、成组残骸、质量守恒及力和力矩平衡，以及偏侧残余支撑引起的自然倾倒。 |
 | [material.py](../scripts/acceptance/material.py)、[contact.py](../scripts/acceptance/contact.py)、[force.py](../scripts/acceptance/force.py) | 材质随刚体运动、断面遮罩和深度遮挡，以及受力热力、详查和实际冲量。 |
-| [profile.py](../scripts/acceptance/profile.py) | 离屏墙钟帧耗时和热路径采样。 |
+| [profile.py](../scripts/acceptance/profile.py) | 连续离屏运行中的帧耗时采样。 |
 
-各脚本使用同一个无窗可执行文件。Python 为每个用例写入 `settings.toml`，用例启动时由 Bevy 原生设置插件读取资产和开关。探针类型、输出目录、回放和性能采样参数通过子进程环境传递。探针在 Bevy 内消费固定步及渲染结果，按程序状态、数值或图像判据给出结果。可从 `summary.json` 跟踪到各用例的设置文件、报告、日志和截图。[汇总入口](../scripts/acceptance/run.py)
+各脚本使用同一个无窗可执行文件。Python 为每个用例准备默认 `settings.toml`，运行后恢复原文件。脚本通过 BRP 读写生产 ECS、驱动输入并在状态满足条件时截图。物理调度内部的精确取证放在 Rust 模块回归中。可从 `summary.json` 跟踪到各用例的报告、日志和截图。[汇总入口](../scripts/acceptance/run.py) · [设置恢复](../scripts/acceptance/settings_file.py)

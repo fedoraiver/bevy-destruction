@@ -6,6 +6,8 @@
 
 2026-11-28 随[演示设置迁移](0006-demo-scenes-and-controls.md)采用原生 TOML 设置文件，供各用例加载并作为验收产物保存。
 
+后续由 [ADR 0025](0025-python-driven-acceptance.md) 更新用例职责和设置恢复方式。此记录保留迁移前实现和验证。
+
 ## 背景
 
 验收二进制先前直接解析场景、资产、探针、输出路径和性能参数。不同用例需要不同的输入、断言和报告，同时可共用一个无窗 Bevy 应用入口。
@@ -34,4 +36,4 @@ TOML 迁移后，`controls`、`smoke` 和 `landing` 验收均通过。核对了�
 
 ## 来源
 
-独立脚本的组织参考 `D:/demo` 的 `6425fd3`。[无窗入口](../../../apps/acceptance/src/main.rs) · [探针装配](../../../src/acceptance/mod.rs) · [Python 驱动](../../../scripts/acceptance/run.py)
+独立脚本的组织参考 `D:/demo` 的 `6425fd3`。[无窗入口](../../../apps/acceptance/src/main.rs) · [探针装配](https://github.com/fedoraiver/bevy-destruction/blob/3d535f2020d40f4243a7ce5d4ee5943e85bbf1e9/src/acceptance/mod.rs) · [Python 驱动](../../../scripts/acceptance/run.py)

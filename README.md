@@ -93,7 +93,7 @@ $acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```
 
-macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。验收程序统一无参数启动。Python 脚本定义各用例的资产和功能开关，将其写入用例输出目录的 `settings.toml`，由 Bevy 原生设置插件读取。`run.py` 默认运行原生输入 `controls`、交互 `gameplay` 以及 17 个固定帧用例。`output/acceptance/run-*/` 保存汇总、用例设置、报告、日志和阶段截图。任一用例失败时命令返回非零退出码。
+macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。Python 在每个用例启动前把资产和开关写入系统偏好目录的默认 `settings.toml`，退出验收游戏后恢复原文件。验收脚本通过 BRP 读取 ECS、发送输入、截图并保存结果。`run.py` 默认运行 `controls`、`gameplay` 和 17 个场景组合，汇总、报告、日志和截图位于 `output/acceptance/run-*/`。
 
 ```powershell
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/gameplay.py --exe $acceptanceExe
@@ -102,6 +102,6 @@ macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/profile.py --exe $acceptanceExe
 ```
 
-`run.py baseline` 单独运行固定帧矩阵。单个套件使用脚本定义的场景配置，例如 `landing.py` 加载板式高楼，`smoke.py` 加载矩形楼。可在 `Scenario` 中设置单个用例的开关，例如 `Scenario("smoke", "rectangle", vfx=False)`。[用例定义](scripts/acceptance/run.py)
+`run.py baseline` 单独运行场景矩阵。单个套件使用脚本定义的场景配置，例如 `landing.py` 加载板式高楼，`smoke.py` 加载矩形楼。可在 `Scenario` 中设置单个用例的开关，例如 `Scenario("smoke", "rectangle", vfx=False)`。[用例定义](scripts/acceptance/run.py)
 
-`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。
+`--capture-replay` 额外保存冒烟用例的完整、破坏后和稳定后三个阶段截图。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。

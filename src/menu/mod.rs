@@ -1,3 +1,5 @@
+use std::{fs, io::ErrorKind};
+
 use bevy::{
     core_pipeline::prepass::DepthPrepass,
     picking::{events::PointerClick, pointer::PointerButton},
@@ -140,6 +142,30 @@ fn resume(
     mouse.clear_just_pressed(MouseButton::Left);
 }
 
+fn read_reload_settings() -> Result<DemoSettings, String> {
+    if let Some(directory) = bevy::platform::dirs::preferences_dir() {
+        let path = directory.join(SETTINGS_APP_NAME).join("settings.toml");
+        match fs::read_to_string(path) {
+            Ok(source) => {
+                // SettingsPlugin uses defaults on a parse error. Keep the
+                // running scene when the user's edited file is invalid.
+                source
+                    .parse::<toml::Table>()
+                    .map_err(|error| format!("Invalid settings.toml: {error}"))?;
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not read settings.toml: {error}")),
+        }
+    }
+
+    let mut reader = App::new();
+    load_demo_settings(&mut reader, SETTINGS_APP_NAME);
+    Ok(reader
+        .world_mut()
+        .remove_resource::<DemoSettings>()
+        .unwrap_or_default())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn read_menu_input(
     mut commands: Commands,
@@ -178,14 +204,13 @@ fn read_menu_input(
     match action {
         Some(MenuAction::Resume) => resume(&mut menu, &mut time, &mut control, &mut mouse),
         Some(MenuAction::Reload) => {
-            // SettingsPlugin reads synchronously when built. Use a fresh registry
-            // so the loaded settings stay separate until the candidate is ready.
-            let mut reader = App::new();
-            load_demo_settings(&mut reader, SETTINGS_APP_NAME);
-            let settings = reader
-                .world_mut()
-                .remove_resource::<DemoSettings>()
-                .unwrap_or_default();
+            let settings = match read_reload_settings() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    menu.status = error;
+                    return;
+                }
+            };
             let path = match settings.scene_path() {
                 Ok(path) => path,
                 Err(error) => {

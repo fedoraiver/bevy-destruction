@@ -4,8 +4,14 @@ use super::*;
 fn material_keeps_gltf_double_sided_and_uses_material_class_for_fracture() {
     let source = GltfMaterial {
         double_sided: true,
+        cull_mode: None,
         ..default()
     };
+    for fracture in [false, true] {
+        let material = building_material(Some(&source), fracture, "concrete");
+        assert!(material.base.double_sided);
+        assert!(material.base.cull_mode.is_none());
+    }
     let steel = building_material(Some(&source), true, "steel");
     let concrete = building_material(Some(&source), true, "concrete");
     assert!(steel.base.double_sided);
@@ -136,6 +142,16 @@ fn rim_rest_coordinates_survive_local_conversion_and_independent_rigid_motion() 
             let world = motion.transform_point(chunk.transform_point(Vec3::from_array(*vertex)));
             assert!(world.distance(motion.transform_point(*expected)) < 1e-5);
             assert_eq!(coordinate, *expected);
+        }
+        if motion != Transform::IDENTITY {
+            let world = Transform::from_matrix(motion.to_matrix() * chunk.to_matrix());
+            let world_locked = surface_coordinates(mesh.clone(), world);
+            assert!(
+                coordinates(&world_locked)
+                    .iter()
+                    .zip(&expected)
+                    .all(|(world_phase, rest_phase)| world_phase.distance(*rest_phase) > 1.0)
+            );
         }
     }
 }

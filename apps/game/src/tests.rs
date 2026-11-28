@@ -19,7 +19,6 @@ fn demo_settings_load_from_toml() {
     // test directory so the loader never reads the user's settings.
     let load = || {
         let mut app = App::new();
-        app.init_resource::<ProbeOptions>();
         load_demo_settings(&mut app, directory.to_str().unwrap());
         app
     };
@@ -41,8 +40,6 @@ stress = false
 vfx = false
 detail = false
 soft_particles = false
-smoke_output = "output"
-profile = true
 "#,
     )
     .unwrap();
@@ -61,8 +58,6 @@ profile = true
     let settings = configured.world().resource::<DemoSettings>();
     assert_eq!(settings.scene, "buildings/highrise_slab.destruction.json");
     assert!(!settings.stress && !settings.vfx && !settings.detail && !settings.soft_particles);
-    let probe = configured.world().resource::<ProbeOptions>();
-    assert!(!probe.scripted() && !probe.profile);
 }
 
 #[test]

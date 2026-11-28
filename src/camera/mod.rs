@@ -5,7 +5,6 @@ use bevy::{
 };
 
 use crate::{
-    ProbeOptions,
     menu::PauseMenu,
     scene::{BuildingBounds, BuildingInstance, DemoCamera},
 };
@@ -19,38 +18,31 @@ pub struct FreeCameraPlugin;
 
 impl Plugin for FreeCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CameraControl>()
-            .init_resource::<ScriptedFlight>()
-            .add_systems(
-                Update,
-                (
-                    initialize_camera.after(crate::scene::instantiate_pending),
-                    move_camera,
-                )
-                    .chain()
-                    .before(crate::interaction::cursor_damage),
-            );
+        app.init_resource::<CameraControl>().add_systems(
+            Update,
+            (
+                initialize_camera.after(crate::scene::instantiate_pending),
+                move_camera,
+            )
+                .chain()
+                .before(crate::interaction::cursor_damage),
+        );
     }
 }
 
 #[derive(Component, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct FreeCamera {
     initialized: bool,
     yaw: f32,
     pitch: f32,
 }
 
-#[cfg(feature = "acceptance-test")]
-impl FreeCamera {
-    pub(crate) fn is_initialized(&self) -> bool {
-        self.initialized
-    }
-}
-
 #[derive(Component)]
 pub struct Crosshair;
 
 #[derive(Resource)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
 pub struct CameraControl {
     pub captured: bool,
     pub suppress_click: bool,
@@ -69,11 +61,6 @@ impl Default for CameraControl {
 pub struct FlightInput {
     pub movement: Vec3,
     pub mouse: Vec2,
-}
-
-#[derive(Resource, Default)]
-pub struct ScriptedFlight {
-    pub input: Option<FlightInput>,
 }
 
 fn initial_position(bounds: BuildingBounds, aspect: f32) -> Vec3 {
@@ -130,13 +117,11 @@ fn apply_flight(transform: &mut Transform, camera: &mut FreeCamera, input: Fligh
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn move_camera(
     time: Res<Time>,
-    probe_options: Res<ProbeOptions>,
     menu: Option<Res<PauseMenu>>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mouse: Res<AccumulatedMouseMotion>,
     mut control: ResMut<CameraControl>,
-    mut scripted: ResMut<ScriptedFlight>,
     mut windows: Query<(&Window, &mut CursorOptions)>,
     mut cameras: Query<(&mut Transform, &mut FreeCamera), With<DemoCamera>>,
     mut crosshairs: Query<&mut Visibility, With<Crosshair>>,
@@ -145,27 +130,24 @@ pub(crate) fn move_camera(
         return;
     };
     control.suppress_click = false;
-    let smoke = probe_options.scripted();
     if menu.is_some_and(|menu| menu.open) {
         control.captured = false;
         control.suppress_click = true;
-    } else if !smoke {
-        if !window.focused {
-            control.captured = false;
-        } else if keys.just_pressed(KeyCode::Tab) {
-            control.captured = !control.captured;
-            control.suppress_click = true;
-        } else if !control.captured && buttons.just_pressed(MouseButton::Left) {
-            control.captured = true;
-            control.suppress_click = true;
-        }
+    } else if !window.focused {
+        control.captured = false;
+    } else if keys.just_pressed(KeyCode::Tab) {
+        control.captured = !control.captured;
+        control.suppress_click = true;
+    } else if !control.captured && buttons.just_pressed(MouseButton::Left) {
+        control.captured = true;
+        control.suppress_click = true;
     }
-    cursor.grab_mode = if control.captured && !smoke {
+    cursor.grab_mode = if control.captured {
         CursorGrabMode::Locked
     } else {
         CursorGrabMode::None
     };
-    cursor.visible = !control.captured || smoke;
+    cursor.visible = !control.captured;
     for mut visibility in &mut crosshairs {
         *visibility = if control.captured {
             Visibility::Visible
@@ -176,13 +158,9 @@ pub(crate) fn move_camera(
     if !control.captured || control.suppress_click {
         return;
     }
-    let input = if smoke {
-        scripted.input.take().unwrap_or_default()
-    } else {
-        FlightInput {
-            movement: keyboard_movement(&keys),
-            mouse: mouse.delta,
-        }
+    let input = FlightInput {
+        movement: keyboard_movement(&keys),
+        mouse: mouse.delta,
     };
     for (mut transform, mut camera) in &mut cameras {
         if camera.initialized {

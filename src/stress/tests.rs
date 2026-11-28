@@ -54,7 +54,7 @@ fn assemble(
 }
 
 fn fixture(positions: &[V3], edges: &[(usize, usize)], anchors: &[usize]) -> Manifest {
-    let mut manifest = crate::stress_smoke::beam_manifest();
+    let mut manifest = crate::test_fixtures::beam_manifest();
     let template = manifest.chunks[0].clone();
     manifest.chunks = positions
         .iter()

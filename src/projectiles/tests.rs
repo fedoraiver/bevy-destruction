@@ -3,7 +3,7 @@ use crate::{
     camera::CameraControl,
     physics::{Cluster, DestructionPhysicsPlugin, building_clusters},
     scene::spawn_bonds,
-    stress_smoke::{BEAM, LEFT_BOND, RIGHT_BOND, spawn_beam},
+    test_fixtures::{BEAM, LEFT_BOND, RIGHT_BOND, spawn_beam},
 };
 use bevy::{
     ecs::system::{InMut, InRef, RunSystemOnce},
@@ -66,10 +66,6 @@ fn app() -> App {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .insert_resource(ProbeOptions {
-            smoke_output: Some("output/projectile-unit".into()),
-            ..default()
-        })
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .insert_resource(TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_secs_f64(1.0 / 60.0),
@@ -113,7 +109,6 @@ fn firing_uses_the_camera_pose_written_in_the_same_update() {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .init_resource::<ProbeOptions>()
         .init_resource::<LaunchRequests>()
         .add_systems(
             Update,
@@ -172,7 +167,6 @@ fn scene_reset_clears_old_state_before_firing_in_the_same_update() {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .init_resource::<ProbeOptions>()
         .add_systems(
             Update,
             (|mut commands: Commands| commands.trigger(ResetProjectiles)).before(fire),
@@ -1124,7 +1118,7 @@ fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
         shocks: VecDeque::from([ClusterImpact {
             building,
             chunks: original,
-            loads: [BEAM, crate::stress_smoke::RIGHT_SUPPORT]
+            loads: [BEAM, crate::test_fixtures::RIGHT_SUPPORT]
                 .map(|id| {
                     (
                         id.into(),
@@ -1147,7 +1141,7 @@ fn fresh_hit_with_sources_on_both_sides_of_a_split_is_released() {
 }
 
 fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
-    let mut manifest = crate::stress_smoke::beam_manifest();
+    let mut manifest = crate::test_fixtures::beam_manifest();
     let mut chunks = BTreeMap::new();
     for (index, record) in manifest.chunks.iter_mut().enumerate() {
         let rotation = Quat::from_euler(EulerRot::XYZ, 0.2, -0.4, 0.3 * index as f32);
@@ -1181,7 +1175,7 @@ fn offset_impact_fixture() -> (Manifest, BTreeMap<String, ChunkInstance>) {
 
 #[test]
 fn inertial_impact_loads_balance_and_do_not_depend_on_a_numerical_gauge() {
-    use crate::stress_smoke::{LEFT_SUPPORT, RIGHT_SUPPORT};
+    use crate::test_fixtures::{LEFT_SUPPORT, RIGHT_SUPPORT};
     let (manifest, chunk_states) = offset_impact_fixture();
     let chunks = manifest
         .chunks
@@ -1306,7 +1300,7 @@ fn local_impacts_use_facet_directions_and_are_invariant_to_planar_subdivision() 
                 .collect(),
         }
     };
-    let mut planar = crate::stress_smoke::beam_manifest();
+    let mut planar = crate::test_fixtures::beam_manifest();
     for bond in &mut planar.bonds {
         let patch = rectangle(Vec3::X, Vec3::from_array(bond.center), 0.05);
         bond.normal = patch.normal;

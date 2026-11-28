@@ -76,6 +76,7 @@ impl Default for VfxSettings {
 }
 
 #[derive(Resource, Default, Debug)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
 pub struct VfxStats {
     pub active: [usize; 4],
     pub scheduled: [usize; 4],

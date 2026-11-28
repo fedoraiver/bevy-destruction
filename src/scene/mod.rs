@@ -80,6 +80,7 @@ impl BuildingBounds {
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct ChunkInstance {
     pub alive: bool,
     pub triangles: Vec<[Vec3; 3]>,
@@ -129,6 +130,7 @@ impl BuildingInstance {
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct BondInstance {
     pub id: String,
     pub endpoints: [Entity; 2],
@@ -230,12 +232,14 @@ pub(crate) fn spawn_patches(
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct ChunkIdentity {
     pub building: Entity,
     pub id: String,
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct RemovedChunk;
 
 #[derive(Component)]
@@ -335,6 +339,7 @@ struct DetailMeshCache {
 }
 
 #[derive(Component)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
 pub struct DamageDetail {
     pub patch_ids: Vec<String>,
     #[cfg(feature = "acceptance-test")]
@@ -348,6 +353,7 @@ pub(crate) struct RefreshDamageDetails;
 pub(crate) struct UpdateDamageDetails;
 
 #[derive(Resource, Default)]
+#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
 pub struct DetailStats {
     pub patches: usize,
     pub active_meshes: usize,

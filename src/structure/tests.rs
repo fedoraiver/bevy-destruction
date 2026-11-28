@@ -2,7 +2,7 @@ use super::*;
 use crate::asset::{AnchorRecord, BondRecord, ChunkRecord};
 
 fn fixture() -> Manifest {
-    crate::stress_smoke::beam_manifest()
+    crate::test_fixtures::beam_manifest()
 }
 
 fn chunk(id: &str, mass: f32, position: Vec3) -> ChunkRecord {

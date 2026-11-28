@@ -52,5 +52,6 @@
 | [0022](implemented/0022-script-driven-acceptance-scenarios.md) | 由独立脚本驱动无窗验收场景 |
 | [0024](implemented/0024-rust-analyzer-background-work.md) | 限制 Rust Analyzer 保存检查并行度和 VFS 扫描范围 |
 | [0024](implemented/0024-scene-settings-and-pause-menu.md) | 场景设置和暂停菜单 |
+| [0025](implemented/0025-python-driven-acceptance.md) | Python 驱动无窗验收 |
 
-两个目录共用连续编号，下一个编号为 0025。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+两个目录共用连续编号，下一个编号为 0026。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

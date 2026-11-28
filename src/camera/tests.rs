@@ -7,8 +7,6 @@ fn controller_app() -> (App, Entity, Entity, Entity) {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<AccumulatedMouseMotion>()
         .init_resource::<CameraControl>()
-        .init_resource::<ScriptedFlight>()
-        .init_resource::<ProbeOptions>()
         .add_systems(Update, move_camera);
     app.world_mut()
         .resource_mut::<Time>()

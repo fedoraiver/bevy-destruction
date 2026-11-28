@@ -2,22 +2,25 @@
 
 import argparse
 from dataclasses import dataclass
+from importlib import import_module
 import json
 import math
 import os
 from pathlib import Path
-import struct
 from subprocess import TimeoutExpired
 import tempfile
 
 from bevy_acceptance import Game, assert_that, run_suite
-from bevy_acceptance.brp import BrpError, PORT
+from bevy_acceptance.brp import PORT
+
+from runtime import TYPES, VIEWPORT, resource
+from settings_file import SettingsFixture, settings_path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = "bevy-destruction-acceptance.exe" if os.name == "nt" else "bevy-destruction-acceptance"
 SCENES = ("rectangle", "highrise_slab", "highrise_l", "bridge", "courtyard", "l_shape")
-PROBE_SCENES = {
+BASELINE_SCENES = {
     "smoke": ("rectangle", "l_shape", "courtyard"),
     "physics": ("rectangle", "l_shape", "courtyard"),
     "stress": SCENES,
@@ -27,32 +30,36 @@ PROBE_SCENES = {
     "landing": ("highrise_slab",),
     "collapse": ("rectangle",),
 }
-SCREENSHOT_COUNTS = {
-    "smoke": 12,
-    "physics": 3,
-    "stress": 7,
-    "material": 4,
-    "contact": 40,
-    "force": 11,
-    "landing": 4,
-    "collapse": 4,
-}
-SCREENSHOT_SIZES = {"material": (512, 256), "contact": (512, 512)}
-VIEWPORT = (1920, 1080)
-SCENARIO_ENV = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO"
-METRICS = "bevy_destruction::diagnostics::RunMetrics"
-MIN_PROFILE_SAMPLES = 30
-NATIVE_CAMERA = "bevy_destruction::scene::DemoCamera"
-NATIVE_TIMEOUT = 180
-PROBE_TIMEOUT = 600
+DEFAULT_TIMEOUT = 180
 
 
 class AcceptanceGame(Game):
+    def __init__(self, scenario, args, report, *, port):
+        environment = {"BEVY_DESTRUCTION_ACCEPTANCE_UNCAPPED": "1" if scenario.suite == "profile" else "0"}
+        super().__init__(scenario.suite, args, report, cwd=ROOT, port=port, env=environment,
+                         camera_component=TYPES["demo_camera"])
+        self.scenario = scenario
+        self.settings = None
+
+    def prepare_settings(self):
+        self.settings = SettingsFixture(settings_path())
+        self.report["settings_file"] = str(self.settings.path)
+        self.settings.write(self.scenario.settings())
+
+    def check_startup(self):
+        expected = self.scenario.settings()
+        actual = resource(self, "demo_settings")
+        assert_that(actual == expected, f"Game loaded settings {actual!r}, expected {expected!r}")
+
+    def restart(self):
+        self.close()
+        self.start()
+
     def close(self):
         try:
             return super().close()
         except (ConnectionResetError, ConnectionAbortedError) as error:
-            # Closing the logical window can terminate the child before its HTTP reply arrives.
+            # The window may close before Bevy can send the HTTP acknowledgement.
             try:
                 exit_code = self.process.wait(timeout=1)
             except TimeoutExpired:
@@ -60,6 +67,17 @@ class AcceptanceGame(Game):
             if exit_code != 0:
                 raise
             return super().close()
+
+    def cleanup(self):
+        errors = super().cleanup()
+        if self.settings is not None:
+            try:
+                if self.process is not None and self.process.poll() is None:
+                    raise RuntimeError("Game is still running")
+                self.settings.restore()
+            except (Exception, KeyboardInterrupt) as error:
+                errors.append(f"Restoring settings: {type(error).__name__}: {error}")
+        return errors
 
 
 @dataclass(frozen=True)
@@ -74,172 +92,57 @@ class Scenario:
 
     @property
     def name(self):
-        return self.scene if self.scene is not None else "custom-asset"
+        return self.scene if self.asset is None else "custom-asset"
 
-    def write_settings(self, output):
-        settings = {
-            "scene": self.asset if self.asset is not None else f"buildings/{self.scene or 'rectangle'}.destruction.json",
+    @property
+    def asset_path(self):
+        return self.asset if self.asset is not None else f"buildings/{self.scene}.destruction.json"
+
+    def settings(self):
+        return {
+            "scene": self.asset_path,
             "stress": self.stress,
             "vfx": self.vfx,
             "detail": self.detail,
             "soft_particles": self.soft_particles,
         }
-        lines = ["[demo_settings]"]
-        for key, value in settings.items():
-            # JSON strings and booleans also work in TOML when DEL is escaped.
-            literal = json.dumps(value, ensure_ascii=False).replace("\x7f", r"\u007f")
-            lines.append(f"{key} = {literal}")
-        (output / "settings.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def launch_environment(self, options, output):
-        profile = self.suite == "profile"
-        probe = "smoke" if profile else self.suite
-        config = {
-            "probe": None if self.suite in ("controls", "gameplay") else probe,
-            "output": str(output.resolve()),
-            "capture_replay": options.capture_replay,
-            "profile": profile,
-        }
-        return {SCENARIO_ENV: json.dumps(config)}
+
+def baseline_scenario(suite, scene):
+    return Scenario(suite, scene, vfx=suite not in ("material", "contact"))
 
 
 def scenarios(options):
     if options.suite in ("all", "baseline"):
-        probes = [
-            Scenario(suite, scene) for suite, scenes in PROBE_SCENES.items() for scene in scenes
+        baseline = [
+            baseline_scenario(suite, scene) for suite, scenes in BASELINE_SCENES.items() for scene in scenes
         ]
         if options.suite == "all":
-            return [Scenario("controls", "rectangle"), Scenario("gameplay", "rectangle"), *probes]
-        return probes
-    scene = PROBE_SCENES.get(options.suite, ("rectangle",))[0]
-    return [Scenario(options.suite, scene)]
-
-
-def read_profile(game, timeout):
-    def sample():
-        if game.process.poll() is not None:
-            return {"exited": True}
-        try:
-            metrics = game.resource(METRICS)
-        except (BrpError, OSError):
-            if game.process.poll() is not None:
-                return {"exited": True}
-            raise
-        return metrics if metrics["wall_frame"]["count"] >= MIN_PROFILE_SAMPLES else None
-
-    return game.wait(sample, f"{MIN_PROFILE_SAMPLES} wall-clock timing samples over BRP", timeout=timeout)
-
-
-def check_screenshots(directory, suite, evidence):
-    screenshots = sorted(
-        path for path in directory.glob("*.png") if not path.name.startswith("rejected-")
-    )
-    evidence["screenshots"] = [path.name for path in screenshots]
-    assert_that(len(screenshots) == SCREENSHOT_COUNTS[suite],
-                f"Expected {SCREENSHOT_COUNTS[suite]} screenshots, found {len(screenshots)}")
-    expected_size = SCREENSHOT_SIZES.get(suite, VIEWPORT)
-    for path in screenshots:
-        with path.open("rb") as png:
-            header = png.read(24)
-        assert_that(
-            len(header) == 24 and header[:8] == b"\x89PNG\r\n\x1a\n" and header[12:16] == b"IHDR",
-            f"Missing PNG header in {path.name}",
-        )
-        width, height = struct.unpack(">II", header[16:24])
-        assert_that((width, height) == expected_size,
-                    f"{path.name} is {width}×{height}, expected {expected_size[0]}×{expected_size[1]}")
-
-
-def read_probe_report(directory, evidence):
-    path = directory / "report.json"
-    if not path.is_file():
-        return None
-    evidence["probe_report"] = path.name
-    report = json.loads(path.read_text(encoding="utf-8"))
-    evidence["errors"] = report.get("errors")
-    return report
-
-
-def exercise_probe(game, suite, capture_replay, timeout):
-    with game.case(suite) as evidence:
-        profile = read_profile(game, timeout) if suite == "profile" else None
-        game.wait(lambda: game.process.poll() is not None, "Rust probe completion", timeout=timeout)
-        exit_code = game.process.returncode
-        evidence["exit_code"] = exit_code
-        report = read_probe_report(game.output, evidence)
-        assert_that(exit_code == 0, f"Rust probe exited with code {exit_code}")
-        assert_that(report is not None, "Rust probe did not write report.json")
-        assert_that(report.get("errors") == [], f"Rust probe reported errors {report.get('errors')!r}")
-
-        if profile is not None:
-            assert_that(not profile.get("exited"), "Probe exited before supplying timing samples over BRP")
-            evidence["brp_sample"] = profile
-            observed = profile["wall_frame"]
-            total_ms = observed["total_ms"]
-            assert_that(math.isfinite(total_ms) and total_ms > 0,
-                        "BRP must report positive wall-clock time")
-            wall = report["metrics"]["wall_frame"]
-            average_ms = wall["average_ms"]
-            assert_that(wall["samples"] >= observed["count"],
-                        "Final profile report contains fewer samples than the BRP snapshot")
-            assert_that(math.isfinite(average_ms) and average_ms > 0,
-                        "Profile must report a positive wall-clock frame duration")
-            evidence.update(
-                brp_fps=observed["count"] * 1000 / total_ms,
-                offscreen_fps=1000 / average_ms,
-                wall_frame=wall,
-            )
-            return
-
-        check_screenshots(game.output, suite, evidence)
-        if suite == "collapse":
-            assert_that((game.output / "damage.json").is_file(), "Missing collapse damage.json")
-            evidence["damage"] = "damage.json"
-        if capture_replay:
-            frames = sum(1 for _ in (game.output / "replay").glob("frame-*.png"))
-            assert_that(frames > 0 and frames == report["replay_frames"], "Incomplete smoke replay")
-            evidence["replay_frames"] = frames
+            return [Scenario("controls", "rectangle"), Scenario("gameplay", "rectangle"), *baseline]
+        return baseline
+    scene = BASELINE_SCENES.get(options.suite, ("rectangle",))[0]
+    return [baseline_scenario(options.suite, scene)]
 
 
 def run_scenario(scenario, options, output):
-    suite = scenario.suite
-    native_input = suite in ("controls", "gameplay")
-    if native_input:
-        from gameplay import CONTROL_CASES, GAMEPLAY_CASES, exercise_controls, exercise_gameplay
-
-        cases, run_checks = {
-            "controls": (CONTROL_CASES, exercise_controls),
-            "gameplay": (GAMEPLAY_CASES, exercise_gameplay),
-        }[suite]
-    else:
-        cases = {suite: "The Rust probe completes and writes its report and expected artifacts."}
-
-        def run_checks(game):
-            exercise_probe(game, suite, options.capture_replay, options.timeout or PROBE_TIMEOUT)
+    suite = import_module(scenario.suite)
 
     def exercise(game):
         window = game.session["viewport"]
-        actual = (window["physical_width"], window["physical_height"])
+        actual = [window["physical_width"], window["physical_height"]]
         assert_that(actual == VIEWPORT, f"Acceptance window has size {actual}, expected {VIEWPORT}")
-        run_checks(game)
+        suite.exercise(game, scenario, options)
 
-    report = {"checks": {
-        name: {"expected": expected, "status": "not_run", "evidence": {}}
-        for name, expected in cases.items()
-    }}
-    args = argparse.Namespace(exe=options.exe, output=output, timeout=options.timeout or NATIVE_TIMEOUT)
-    game = AcceptanceGame(suite, args, report, cwd=ROOT, port=options.port,
-                          env=scenario.launch_environment(options, output), camera_component=NATIVE_CAMERA)
-    run_suite(game, exercise, prepare=lambda: scenario.write_settings(game.output))
-    if not native_input and report["checks"][suite]["status"] == "not_run" and not report["passed"]:
-        evidence = report["checks"][suite]["evidence"]
-        try:
-            read_probe_report(output, evidence)
-        except (OSError, ValueError) as error:
-            evidence["probe_report_error"] = str(error)
-        if evidence:
-            result = output / f"{suite}-acceptance.json"
-            result.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report = {
+        "settings": scenario.settings(),
+        "checks": {
+            name: {"expected": expected, "status": "not_run", "evidence": {}}
+            for name, expected in suite.CASES.items()
+        },
+    }
+    args = argparse.Namespace(exe=options.exe, output=output, timeout=options.timeout or DEFAULT_TIMEOUT)
+    game = AcceptanceGame(scenario, args, report, port=options.port)
+    run_suite(game, exercise, prepare=game.prepare_settings)
     return report
 
 
@@ -248,7 +151,7 @@ def parse_args(suite=None, argv=None):
     if suite is None:
         parser.add_argument(
             "suite", nargs="?", default="all",
-            choices=("all", "baseline", *PROBE_SCENES, "controls", "gameplay", "profile"),
+            choices=("all", "baseline", *BASELINE_SCENES, "controls", "gameplay", "profile"),
             help="all runs the baseline matrix plus controls and gameplay. Run profile separately.",
         )
     else:
@@ -256,10 +159,7 @@ def parse_args(suite=None, argv=None):
     parser.add_argument("--exe", type=Path, default=ROOT / "target" / "debug" / BINARY)
     parser.add_argument("--output", type=Path, default=ROOT / "output" / "acceptance")
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument(
-        "--timeout", type=float,
-        help=f"Timeout per wait in seconds, defaults to {NATIVE_TIMEOUT} for startup/native input and {PROBE_TIMEOUT} for scripted probes",
-    )
+    parser.add_argument("--timeout", type=float, help=f"Timeout per wait in seconds (default {DEFAULT_TIMEOUT})")
     parser.add_argument("--capture-replay", action="store_true")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -281,7 +181,7 @@ def main(suite=None):
     selected = scenarios(options)
     for scenario in selected:
         relative_output = Path(scenario.suite) / scenario.name
-        print(f"Running {scenario.suite} on {scenario.scene or scenario.asset}", flush=True)
+        print(f"Running {scenario.suite} on {scenario.asset_path}", flush=True)
         report = run_scenario(scenario, options, run_dir / relative_output)
         result = {
             "suite": scenario.suite,

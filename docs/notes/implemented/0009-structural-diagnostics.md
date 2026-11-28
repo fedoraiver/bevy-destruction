@@ -67,7 +67,7 @@
 
 ## 来源
 
-- [受力样本](../../../src/force_samples/mod.rs)、[视图与标记](../../../src/force_debug/mod.rs)、[图形验证](../../../src/force_smoke/mod.rs)和用户确认的交互。
+- [受力样本](../../../src/force_samples/mod.rs)、[视图与标记](../../../src/force_debug/mod.rs)、[图形验证](../../../scripts/acceptance/force.py)和用户确认的交互。
 - [受力拾取](../../../src/force_visibility/mod.rs) · [Avian 包围盒](https://docs.rs/avian3d/latest/avian3d/collision/collider/struct.ColliderAabb.html)
 - [Avian 三角网格预处理标志](https://docs.rs/avian3d/latest/avian3d/collision/collider/struct.TrimeshFlags.html#associatedconstant.MERGE_DUPLICATE_VERTICES)
 - [拾取系统](../../../src/force_debug/mod.rs) · [Bevy 系统本地状态](https://docs.rs/bevy/latest/bevy/ecs/system/struct.Local.html)

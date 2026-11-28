@@ -46,7 +46,7 @@ fn fracture_feedback_uses_each_moving_cluster_pose() {
     use crate::fracture_detail::ContactPatch;
     use crate::scene::{spawn_bonds, spawn_patches};
     let mut world = World::new();
-    let mut manifest = crate::stress_smoke::beam_manifest();
+    let mut manifest = crate::test_fixtures::beam_manifest();
     let template = manifest.bonds[0].clone();
     manifest.bonds = [("ab", "a", "b"), ("cd", "c", "d")]
         .map(|(id, a, b)| crate::asset::BondRecord {
