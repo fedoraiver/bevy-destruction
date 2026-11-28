@@ -34,6 +34,7 @@
 | [0007](implemented/0007-fracture-surface-rendering.md) | 源网格、随物体移动的材质与断面着色 |
 | [0008](implemented/0008-destruction-effects-and-rims.md) | 分层破坏特效、共享烟尘与暴露边带 |
 | [0009](implemented/0009-structural-diagnostics.md) | 受力样本、热力总览与局部详查 |
+| [0025](implemented/0025-scene-settings-and-pause-menu.md) | 场景设置和暂停菜单 |
 
 ### 性能与工程布局
 
@@ -51,7 +52,6 @@
 | [0020](implemented/0020-game-architecture-export.md) | 从桌面游戏包导出 ECS 架构 |
 | [0022](implemented/0022-script-driven-acceptance-scenarios.md) | 由独立脚本驱动无窗验收场景 |
 | [0024](implemented/0024-rust-analyzer-background-work.md) | 限制 Rust Analyzer 保存检查并行度和 VFS 扫描范围 |
-| [0024](implemented/0024-scene-settings-and-pause-menu.md) | 场景设置和暂停菜单 |
-| [0025](implemented/0025-python-driven-acceptance.md) | Python 驱动无窗验收 |
+| [0026](implemented/0026-python-driven-acceptance.md) | Python 驱动无窗验收 |
 
-两个目录共用连续编号，下一个编号为 0026。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。
+两个目录共用连续编号，下一个编号为 0027。整理前的编号、已被替代的方案和阶段性证据可在提交 `d462e4d` 中查阅。

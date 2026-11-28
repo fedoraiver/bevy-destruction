@@ -6,7 +6,7 @@
 
 2026-11-28 随[演示设置迁移](0006-demo-scenes-and-controls.md)采用原生 TOML 设置文件，供各用例加载并作为验收产物保存。
 
-后续由 [ADR 0025](0025-python-driven-acceptance.md) 更新用例职责和设置恢复方式。此记录保留迁移前实现和验证。
+后续由 [ADR 0026](0026-python-driven-acceptance.md) 更新用例职责和设置恢复方式。此记录保留迁移前实现和验证。
 
 ## 背景
 
