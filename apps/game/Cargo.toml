@@ -10,7 +10,7 @@ app-factory = "build_app"
 acceptance-test = []
 
 [dependencies]
-bevy = { workspace = true, features = ["bevy_settings"] }
+bevy = { workspace = true, features = ["bevy_settings", "ui_picking"] }
 avian3d.workspace = true
 serde.workspace = true
 serde_json.workspace = true

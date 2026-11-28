@@ -368,7 +368,7 @@ fn drive(
     };
     if let Some(error) = &building.error {
         state.errors.push(format!("Building load failed: {error}"));
-        finish(&state, &demo_settings.asset, directory, &mut exit);
+        finish(&state, &demo_settings.scene, directory, &mut exit);
         return;
     }
     let Some(stress) = stress.filter(|stress| stress.solves > 0) else {
@@ -376,7 +376,7 @@ fn drive(
             state
                 .errors
                 .push("Initial selfweight solve did not complete".into());
-            finish(&state, &demo_settings.asset, directory, &mut exit);
+            finish(&state, &demo_settings.scene, directory, &mut exit);
         }
         return;
     };
@@ -391,7 +391,7 @@ fn drive(
         state
             .errors
             .push("Intact shipped building was unstable or its stress solve failed".into());
-        finish(&state, &demo_settings.asset, directory, &mut exit);
+        finish(&state, &demo_settings.scene, directory, &mut exit);
         return;
     }
     let probe = state.probe.and_then(|root| probes.get(root).ok());
@@ -642,7 +642,7 @@ fn drive(
                         .push(format!("Missing stress screenshot {name}"));
                 }
             }
-            finish(&state, &demo_settings.asset, directory, &mut exit);
+            finish(&state, &demo_settings.scene, directory, &mut exit);
         }
         _ => {}
     }

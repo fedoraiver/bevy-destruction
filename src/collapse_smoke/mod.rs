@@ -413,13 +413,13 @@ fn drive(
         std::fs::create_dir_all(directory).expect("Create collapse output");
         state.initialized = true;
         state.finite = true;
-        if settings.asset != RECTANGLE {
+        if settings.scene != RECTANGLE {
             state
                 .errors
                 .push("Collapse validation requires the rectangle asset".into());
             finish(
                 &mut state,
-                &settings.asset,
+                &settings.scene,
                 &probe_options,
                 &metrics,
                 &mut exit,
@@ -434,7 +434,7 @@ fn drive(
             .push("Rectangle or initial static solution did not finish loading".into());
         finish(
             &mut state,
-            &settings.asset,
+            &settings.scene,
             &probe_options,
             &metrics,
             &mut exit,
@@ -449,7 +449,7 @@ fn drive(
         state.errors.push(format!("Rectangle load failed: {error}"));
         finish(
             &mut state,
-            &settings.asset,
+            &settings.scene,
             &probe_options,
             &metrics,
             &mut exit,
@@ -613,7 +613,7 @@ fn drive(
                     state.errors.push(error);
                     finish(
                         &mut state,
-                        &settings.asset,
+                        &settings.scene,
                         &probe_options,
                         &metrics,
                         &mut exit,
@@ -674,7 +674,7 @@ fn drive(
             }
             commands.entity(building).insert(NeedsClusterRebuild);
             let damage = serde_json::json!({
-                "asset":settings.asset,"frame_after_warmup":state.frame,
+                "asset":settings.scene,"frame_after_warmup":state.frame,
                 "predicate":"foundation-adjacent interior start, minimum-mass multi-piece support path to the next floor",
                 "retained_support_path":state.support_path,"static_stub_candidate":state.static_stub,
                 "removed_ids":state.removed,"retained_chunks":instance.chunks.len()-state.removed.len(),
@@ -732,7 +732,7 @@ fn drive(
             }
             finish(
                 &mut state,
-                &settings.asset,
+                &settings.scene,
                 &probe_options,
                 &metrics,
                 &mut exit,

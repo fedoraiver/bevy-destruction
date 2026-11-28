@@ -5,6 +5,7 @@ pub mod acceptance;
 mod asset;
 #[path = "../../../src/camera/mod.rs"]
 mod camera;
+#[cfg(test)]
 #[path = "../../../src/catalog/mod.rs"]
 mod catalog;
 #[cfg(any(test, feature = "acceptance-test"))]
@@ -47,6 +48,8 @@ mod material;
 #[cfg(feature = "acceptance-test")]
 #[path = "../../../src/material_smoke/mod.rs"]
 mod material_smoke;
+#[path = "../../../src/menu/mod.rs"]
+mod menu;
 #[path = "../../../src/physics/mod.rs"]
 mod physics;
 #[cfg(feature = "acceptance-test")]
@@ -85,15 +88,15 @@ use bevy::{
 #[cfg(test)]
 mod tests;
 
-const DESKTOP_SETTINGS_APP_NAME: &str = "io.github.fedoraiver.bevy-destruction";
+pub const SETTINGS_APP_NAME: &str = "io.github.fedoraiver.bevy-destruction";
 
 pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
-#[derive(Reflect, Resource, SettingsGroup)]
+#[derive(Clone, Reflect, Resource, SettingsGroup)]
 #[reflect(Resource, Default, SettingsGroup)]
 #[settings_group(group = "demo_settings")]
 pub struct DemoSettings {
-    asset: String,
+    scene: String,
     stress: bool,
     vfx: bool,
     detail: bool,
@@ -103,12 +106,28 @@ pub struct DemoSettings {
 impl Default for DemoSettings {
     fn default() -> Self {
         Self {
-            asset: "buildings/rectangle.destruction.json".into(),
+            scene: "buildings/rectangle.destruction.json".into(),
             stress: true,
             vfx: true,
             detail: true,
             soft_particles: true,
         }
+    }
+}
+
+impl DemoSettings {
+    fn scene_path(&self) -> Result<&str, &'static str> {
+        use std::path::Component;
+
+        if !self.scene.ends_with(".destruction.json")
+            || self.scene.contains([':', '#'])
+            || !Path::new(&self.scene)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err("Scene must be a .destruction.json path relative to assets/.");
+        }
+        Ok(&self.scene)
     }
 }
 
@@ -207,7 +226,7 @@ pub fn build_app() -> App {
 
 /// 从用户设置文件加载演示选项并运行桌面应用。
 pub fn run() -> AppExit {
-    prepare_app(Some(DESKTOP_SETTINGS_APP_NAME)).run()
+    prepare_app(Some(SETTINGS_APP_NAME)).run()
 }
 
 fn prepare_app(settings_app_name: Option<&str>) -> App {
@@ -258,14 +277,7 @@ impl Plugin for DestructionPlugin {
                 vfx::VfxPlugin,
                 stress_runtime::StressRuntimePlugin,
                 projectiles::ProjectilePlugin,
-                catalog::CatalogPlugin,
-            ))
-            .add_systems(Update, close_on_escape);
-    }
-}
-
-fn close_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
+                menu::PauseMenuPlugin,
+            ));
     }
 }

@@ -36,7 +36,7 @@ vfx = false
     fs::write(
         &settings_file,
         r#"[demo_settings]
-asset = "buildings/highrise_slab.destruction.json"
+scene = "buildings/highrise_slab.destruction.json"
 stress = false
 vfx = false
 detail = false
@@ -51,16 +51,39 @@ profile = true
     fs::remove_dir(directory).unwrap();
 
     let settings = missing.world().resource::<DemoSettings>();
-    assert_eq!(settings.asset, "buildings/rectangle.destruction.json");
+    assert_eq!(settings.scene, "buildings/rectangle.destruction.json");
     assert!(settings.stress && settings.vfx && settings.detail && settings.soft_particles);
 
     let settings = partial.world().resource::<DemoSettings>();
-    assert_eq!(settings.asset, "buildings/rectangle.destruction.json");
+    assert_eq!(settings.scene, "buildings/rectangle.destruction.json");
     assert!(settings.stress && !settings.vfx && settings.detail && settings.soft_particles);
 
     let settings = configured.world().resource::<DemoSettings>();
-    assert_eq!(settings.asset, "buildings/highrise_slab.destruction.json");
+    assert_eq!(settings.scene, "buildings/highrise_slab.destruction.json");
     assert!(!settings.stress && !settings.vfx && !settings.detail && !settings.soft_particles);
     let probe = configured.world().resource::<ProbeOptions>();
     assert!(!probe.scripted() && !probe.profile);
+}
+
+#[test]
+fn scene_paths_must_name_an_asset_relative_manifest() {
+    for scene in [
+        "rectangle",
+        "../buildings/rectangle.destruction.json",
+        "/buildings/rectangle.destruction.json",
+        "C:/buildings/rectangle.destruction.json",
+        "buildings/rectangle.glb",
+        "source://buildings/rectangle.destruction.json",
+    ] {
+        let settings = DemoSettings {
+            scene: scene.into(),
+            ..default()
+        };
+        assert!(settings.scene_path().is_err(), "accepted {scene}");
+    }
+    let settings = DemoSettings::default();
+    assert_eq!(
+        settings.scene_path(),
+        Ok("buildings/rectangle.destruction.json")
+    );
 }

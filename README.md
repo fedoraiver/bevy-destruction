@@ -12,20 +12,11 @@ Bevy Destruction 是基于 Bevy 0.20.1 和 Avian 0.8.0 的建筑破坏插件。�
 cargo run --locked
 ```
 
-默认打开 `rectangle`。可通过[桌面设置](#桌面设置)指定启动场景，或在运行中使用场景快捷键。
-
-| 按键 | 场景 | 内容 |
-| --- | --- | --- |
-| F1 | `rectangle` | 两层矩形楼 |
-| F2 | `highrise_slab` | 十层板式高楼 |
-| F3 | `highrise_l` | 八层 L 形高楼 |
-| F4 | `bridge` | 双钢主梁、六桥墩 |
-| F5 | `courtyard` | 两层庭院楼 |
-| F6 | `l_shape` | 三层 L 形楼 |
+默认打开两层矩形楼。六个内置场景的清单都在 [assets/buildings/](assets/buildings/)。
 
 ### 桌面设置
 
-在系统偏好目录下创建 `settings.toml`。桌面演示启动时读取此文件，场景快捷键只影响当前运行。
+在系统偏好目录下创建 `settings.toml`。桌面演示启动时读取此文件。编辑设置后，按 `Esc` 打开暂停菜单，选择 **Reload** 应用设置并重置场景。
 
 | 平台 | 设置文件 |
 | --- | --- |
@@ -37,14 +28,14 @@ cargo run --locked
 
 ```toml
 [demo_settings]
-asset = "buildings/highrise_slab.destruction.json"
+scene = "buildings/highrise_slab.destruction.json"
 stress = true
 vfx = true
 detail = true
 soft_particles = false
 ```
 
-缺少文件或字段时使用默认值。`asset` 是相对 `assets/` 的清单路径，默认值为 `buildings/rectangle.destruction.json`。四个布尔开关默认均为 `true`，设为 `false` 可关闭对应功能。
+缺少文件或字段时使用默认值。`scene` 填写相对 `assets/` 的 `.destruction.json` 清单路径，默认值为 `buildings/rectangle.destruction.json`。四个布尔开关默认均为 `true`，设为 `false` 可关闭对应功能。
 
 | 设置项 | 控制功能 |
 | --- | --- |
@@ -62,7 +53,8 @@ soft_particles = false
 | 左键、右键、`R` | 删除准星处的碎块、发射刚球、发射刚性方块 |
 | `0` | 切换预破碎边界 |
 | `9`、`Alt` | 切换承载率热力。开启后按住 `Alt` 查看准星处的连接载荷和接触冲量 |
-| `Tab`、`Esc` | 释放或锁定鼠标、退出 |
+| `Tab` | 释放或锁定鼠标 |
+| `Esc` | 暂停或返回游戏。菜单提供 **Resume**、**Reload** 和 **Quit** |
 
 窗口失焦会释放鼠标。重新点击窗口时，首次点击用于恢复控制。
 
@@ -70,7 +62,7 @@ soft_particles = false
 
 ## 导入自己的建筑
 
-使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_settings]` 中添加 `asset = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
+使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_settings]` 中添加 `scene = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
 
 ## 开发文档
 

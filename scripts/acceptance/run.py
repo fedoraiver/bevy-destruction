@@ -78,7 +78,7 @@ class Scenario:
 
     def write_settings(self, output):
         settings = {
-            "asset": self.asset if self.asset is not None else f"buildings/{self.scene or 'rectangle'}.destruction.json",
+            "scene": self.asset if self.asset is not None else f"buildings/{self.scene or 'rectangle'}.destruction.json",
             "stress": self.stress,
             "vfx": self.vfx,
             "detail": self.detail,
