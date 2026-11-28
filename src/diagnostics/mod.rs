@@ -6,7 +6,7 @@ use bevy::{
     prelude::*,
 };
 
-use crate::DemoOptions;
+use crate::ProbeOptions;
 
 pub struct MetricsPlugin;
 
@@ -53,7 +53,7 @@ impl RunMetrics {
 }
 
 fn collect_metrics(
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     diagnostics: Option<Res<DiagnosticsStore>>,
     mut metrics: ResMut<RunMetrics>,
     mut last_frame: Local<Option<Instant>>,
@@ -61,7 +61,7 @@ fn collect_metrics(
 ) {
     let now = Instant::now();
     let previous = last_frame.replace(now);
-    if !options.profile || metrics.phase < 80 {
+    if !probe_options.profile || metrics.phase < 80 {
         return;
     }
     if let Some(previous) = previous {

@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub use crate::scene::DemoCamera;
 
 use crate::{
-    DemoOptions, DestructionPlugin,
+    DemoOptions, DestructionPlugin, ProbeOptions,
     camera::FreeCamera,
     diagnostics,
     physics::Cluster,
@@ -40,18 +40,23 @@ struct ProbeRun {
     capture_replay: bool,
     #[serde(default)]
     profile: bool,
-    #[serde(default)]
-    no_stress: bool,
-    #[serde(default)]
-    no_vfx: bool,
-    #[serde(default)]
-    no_detail: bool,
-    #[serde(default)]
-    no_soft_particles: bool,
+    #[serde(default = "enabled_by_default")]
+    stress: bool,
+    #[serde(default = "enabled_by_default")]
+    vfx: bool,
+    #[serde(default = "enabled_by_default")]
+    detail: bool,
+    #[serde(default = "enabled_by_default")]
+    soft_particles: bool,
+}
+
+const fn enabled_by_default() -> bool {
+    true
 }
 
 pub struct AcceptanceScenario {
     options: DemoOptions,
+    probe_options: ProbeOptions,
     probe: Option<Probe>,
 }
 
@@ -62,6 +67,7 @@ impl AcceptanceScenario {
             Err(env::VarError::NotPresent) => {
                 return Ok(Self {
                     options: DemoOptions::default(),
+                    probe_options: ProbeOptions::default(),
                     probe: None,
                 });
             }
@@ -76,12 +82,14 @@ impl AcceptanceScenario {
             return Err("Replay capture and profiling are mutually exclusive".into());
         }
 
-        let mut options = DemoOptions {
+        let options = DemoOptions {
             asset: run.asset,
-            no_stress: run.no_stress,
-            no_vfx: run.no_vfx,
-            no_detail: run.no_detail,
-            no_soft_particles: run.no_soft_particles,
+            stress: run.stress,
+            vfx: run.vfx,
+            detail: run.detail,
+            soft_particles: run.soft_particles,
+        };
+        let mut probe_options = ProbeOptions {
             capture_replay: run.capture_replay,
             smoke_target: Some(smoke_target),
             profile: run.profile,
@@ -89,23 +97,24 @@ impl AcceptanceScenario {
         };
         let output = Some(run.output);
         match run.probe {
-            Probe::Smoke => options.smoke_output = output,
-            Probe::Physics => options.physics_smoke_output = output,
-            Probe::Stress => options.stress_smoke_output = output,
-            Probe::Material => options.material_smoke_output = output,
-            Probe::Contact => options.contact_smoke_output = output,
-            Probe::Force => options.force_smoke_output = output,
-            Probe::Landing => options.landing_smoke_output = output,
-            Probe::Collapse => options.collapse_smoke_output = output,
+            Probe::Smoke => probe_options.smoke_output = output,
+            Probe::Physics => probe_options.physics_smoke_output = output,
+            Probe::Stress => probe_options.stress_smoke_output = output,
+            Probe::Material => probe_options.material_smoke_output = output,
+            Probe::Contact => probe_options.contact_smoke_output = output,
+            Probe::Force => probe_options.force_smoke_output = output,
+            Probe::Landing => probe_options.landing_smoke_output = output,
+            Probe::Collapse => probe_options.collapse_smoke_output = output,
         }
         Ok(Self {
             options,
+            probe_options,
             probe: Some(run.probe),
         })
     }
 
     pub fn profile(&self) -> bool {
-        self.options.profile
+        self.probe_options.profile
     }
 
     pub fn synchronous_pipelines(&self) -> bool {
@@ -115,6 +124,7 @@ impl AcceptanceScenario {
     pub fn install(self, app: &mut App) {
         let profile = self.profile();
         app.insert_resource(self.options)
+            .insert_resource(self.probe_options)
             .add_plugins(DestructionPlugin);
         let Some(probe) = self.probe else {
             app.init_resource::<GameplayState>()

@@ -365,7 +365,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
         Transform::from_xyz(0.0, 3.0, 30.0)
         AmbientLight { brightness: 280.0 }
     }).insert((DemoCamera, FreeCamera::default(), Msaa::Off, ChildOf(root))).id();
-    if !options.no_soft_particles {
+    if options.soft_particles {
         commands.entity(camera).insert(DepthPrepass);
     }
     commands.spawn_scene(bsn! {
@@ -410,7 +410,7 @@ fn warm_rim_pipeline(
     mut materials: ResMut<Assets<BuildingMaterial>>,
     mut rim_materials: ResMut<RimMaterials>,
 ) {
-    if options.no_detail {
+    if !options.detail {
         return;
     }
     // Match the real rim vertex layout, including attached surface coordinates and its prepass.
@@ -691,7 +691,7 @@ pub(crate) fn instantiate_pending(
         let mut primitive_count = 0;
         for (chunk, collider, density, mass_properties, edges) in prepared {
             let record = &asset.manifest.chunks[chunk.record_index];
-            if !options.no_detail {
+            if options.detail {
                 rim_materials.get_or_create(&record.material, &mut materials);
             }
             let transform = record.transform();
@@ -837,7 +837,7 @@ fn update_details(
     mut detail_cache: ResMut<DetailMeshCache>,
     mut stats: ResMut<DetailStats>,
 ) {
-    if options.no_detail || dirty.is_empty() {
+    if !options.detail || dirty.is_empty() {
         return;
     }
     for building in &dirty {

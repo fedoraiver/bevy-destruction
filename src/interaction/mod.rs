@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     asset::{DestructibleAsset, Manifest},
     camera::CameraControl,
     debug::FractureEdges,
@@ -88,7 +88,7 @@ pub(crate) fn cursor_damage(
     cameras: Query<(Entity, &Camera), With<DemoCamera>>,
     transforms: TransformHelper,
     mut requests: MessageWriter<DamageRequest>,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     mut scripted: ResMut<ScriptedClick>,
     control: Res<CameraControl>,
 ) {
@@ -98,7 +98,7 @@ pub(crate) fn cursor_damage(
     let (Ok(window), Ok((entity, camera))) = (windows.single(), cameras.single()) else {
         return;
     };
-    let cursor = if options.scripted() {
+    let cursor = if probe_options.scripted() {
         scripted.cursor.take()
     } else {
         if !control.captured || control.suppress_click || !window.focused {

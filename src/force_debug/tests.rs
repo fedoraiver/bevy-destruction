@@ -43,7 +43,7 @@ fn building_load_changes_hide_only_its_stale_force_results_until_the_next_fixed_
         .init_resource::<Aim>()
         .init_resource::<ForceSamples>()
         .init_resource::<ForceViewStats>()
-        .insert_resource(DemoOptions {
+        .insert_resource(ProbeOptions {
             force_smoke_output: Some(default()),
             ..default()
         })
@@ -183,7 +183,7 @@ fn inspector_tracks_input_target_lifetime_and_asset_changes() {
     use bevy::camera::{CameraProjection, RenderTargetInfo};
 
     let mut app = App::new();
-    app.init_resource::<DemoOptions>()
+    app.init_resource::<ProbeOptions>()
         .init_resource::<CameraControl>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ScriptedForceInspection>()

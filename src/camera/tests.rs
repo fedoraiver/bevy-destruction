@@ -8,11 +8,7 @@ fn controller_app() -> (App, Entity, Entity, Entity) {
         .init_resource::<AccumulatedMouseMotion>()
         .init_resource::<CameraControl>()
         .init_resource::<ScriptedFlight>()
-        .insert_resource(DemoOptions {
-            asset: "buildings/rectangle.destruction.json".into(),
-            smoke_output: None,
-            ..default()
-        })
+        .init_resource::<ProbeOptions>()
         .add_systems(Update, move_camera);
     app.world_mut()
         .resource_mut::<Time>()

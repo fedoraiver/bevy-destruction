@@ -8,7 +8,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     material::{BuildingMaterial, building_material, rim_material, surface_coordinates},
 };
 
@@ -74,13 +74,13 @@ fn motion(phase: usize) -> Transform {
 
 fn setup(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     mut state: ResMut<ProbeState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let Some(directory) = &options.material_smoke_output else {
+    let Some(directory) = &probe_options.material_smoke_output else {
         return;
     };
     std::fs::create_dir_all(directory).expect("Create material probe directory");
@@ -185,7 +185,7 @@ fn compare(reference: &[u8], actual: &[u8]) -> (f64, f64) {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     mut state: ResMut<ProbeState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut pieces: Query<(&mut Transform, &mut Mesh3d), (Without<ProbeCamera>, Without<ProbeLight>)>,
@@ -193,7 +193,7 @@ fn drive(
     mut lights: Query<&mut Transform, (With<ProbeLight>, Without<ProbeCamera>)>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(directory) = &options.material_smoke_output else {
+    let Some(directory) = &probe_options.material_smoke_output else {
         return;
     };
     if state.finished {

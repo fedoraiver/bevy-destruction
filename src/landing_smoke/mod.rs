@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     asset::DestructibleAsset,
     debug::FractureEdges,
     diagnostics::RunMetrics,
@@ -48,15 +48,19 @@ struct LandingState {
     errors: Vec<String>,
 }
 
-fn capture(commands: &mut Commands, options: &DemoOptions, name: &str) {
-    if !options.profile {
+fn capture(commands: &mut Commands, probe_options: &ProbeOptions, name: &str) {
+    if !probe_options.profile {
         commands
             .spawn((
                 Name::new("Landing smoke screenshot"),
-                options.smoke_screenshot(),
+                probe_options.smoke_screenshot(),
             ))
             .observe(save_to_disk(
-                options.landing_smoke_output.as_ref().unwrap().join(name),
+                probe_options
+                    .landing_smoke_output
+                    .as_ref()
+                    .unwrap()
+                    .join(name),
             ));
     }
 }
@@ -65,6 +69,7 @@ fn capture(commands: &mut Commands, options: &DemoOptions, name: &str) {
 fn drive(
     mut commands: Commands,
     options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<LandingState>,
     instances: Query<(Entity, &BuildingInstance)>,
@@ -86,7 +91,7 @@ fn drive(
     mut metrics: ResMut<RunMetrics>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(directory) = &options.landing_smoke_output else {
+    let Some(directory) = &probe_options.landing_smoke_output else {
         return;
     };
     state.waiting += 1;
@@ -148,7 +153,7 @@ fn drive(
         state.finite &= finite;
         if state.first_impact.is_none() && impacts.structural_solves > 0 {
             state.first_impact = Some(state.frame);
-            capture(&mut commands, &options, "03-ground-impact.png");
+            capture(&mut commands, &probe_options, "03-ground-impact.png");
         }
     }
     match state.frame {
@@ -156,7 +161,7 @@ fn drive(
             std::fs::create_dir_all(directory).expect("Create landing output");
             state.finite = true;
         }
-        10 => capture(&mut commands, &options, "01-intact-tower.png"),
+        10 => capture(&mut commands, &probe_options, "01-intact-tower.png"),
         20 => {
             state.cut = (bounds.min.y + bounds.max.y) * 0.5;
             state.upper = asset
@@ -225,7 +230,7 @@ fn drive(
                     .errors
                     .push("Unsupported tower fractured before contact".into());
             }
-            capture(&mut commands, &options, "02-free-fall.png");
+            capture(&mut commands, &probe_options, "02-free-fall.png");
         }
         500 => {
             state.final_impacts = Some((*impacts).clone());
@@ -334,7 +339,7 @@ fn drive(
                     "Dynamic impact loads or numerical gauge failed equilibrium checks".into(),
                 );
             }
-            capture(&mut commands, &options, "04-impact-fracture.png");
+            capture(&mut commands, &probe_options, "04-impact-fracture.png");
         }
         530 => {
             for name in [
@@ -343,7 +348,7 @@ fn drive(
                 "03-ground-impact.png",
                 "04-impact-fracture.png",
             ] {
-                if !options.profile && !directory.join(name).is_file() {
+                if !probe_options.profile && !directory.join(name).is_file() {
                     state.errors.push(format!("Missing screenshot {name}"));
                 }
             }

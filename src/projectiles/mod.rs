@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     asset::{BondPatchRecord, DestructibleAsset, Manifest, PhysicalMaterial},
     camera::CameraControl,
     force_samples::{
@@ -139,13 +139,13 @@ fn reset(
 fn fire(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     control: Res<CameraControl>,
     windows: Query<&Window>,
     camera: (Query<Entity, With<DemoCamera>>, TransformHelper),
     mut requests: ResMut<LaunchRequests>,
 ) {
-    if options.scripted()
+    if probe_options.scripted()
         || !control.captured
         || control.suppress_click
         || !windows.iter().any(|window| window.focused)

@@ -66,7 +66,7 @@ fn app() -> App {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .insert_resource(DemoOptions {
+        .insert_resource(ProbeOptions {
             smoke_output: Some("output/projectile-unit".into()),
             ..default()
         })
@@ -113,7 +113,7 @@ fn firing_uses_the_camera_pose_written_in_the_same_update() {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .init_resource::<DemoOptions>()
+        .init_resource::<ProbeOptions>()
         .init_resource::<LaunchRequests>()
         .add_systems(
             Update,
@@ -172,7 +172,7 @@ fn scene_reset_clears_old_state_before_firing_in_the_same_update() {
         .init_resource::<ButtonInput<MouseButton>>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<CameraControl>()
-        .init_resource::<DemoOptions>()
+        .init_resource::<ProbeOptions>()
         .add_systems(
             Update,
             (|mut commands: Commands| commands.trigger(ResetProjectiles)).before(fire),

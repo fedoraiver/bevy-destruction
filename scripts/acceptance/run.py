@@ -39,7 +39,7 @@ SCREENSHOT_COUNTS = {
 }
 SCREENSHOT_SIZES = {"material": (512, 256), "contact": (512, 512)}
 VIEWPORT = (1920, 1080)
-FLAGS = ("no_stress", "no_vfx", "no_detail", "no_soft_particles")
+FEATURE_FLAGS = ("stress", "vfx", "detail", "soft_particles")
 SCENARIO_ENV = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO"
 METRICS = "bevy_destruction::diagnostics::RunMetrics"
 MIN_PROFILE_SAMPLES = 30
@@ -84,7 +84,7 @@ class Scenario:
             "output": str(output.resolve()),
             "capture_replay": options.capture_replay,
             "profile": profile,
-            **{flag: getattr(options, flag) for flag in FLAGS},
+            **{flag: getattr(options, flag) for flag in FEATURE_FLAGS},
         }
         return {SCENARIO_ENV: json.dumps(config)}
 
@@ -252,8 +252,8 @@ def parse_args(suite=None, argv=None):
         help=f"Timeout per wait in seconds, defaults to {NATIVE_TIMEOUT} for startup/native input and {PROBE_TIMEOUT} for scripted probes",
     )
     parser.add_argument("--capture-replay", action="store_true")
-    for flag in FLAGS:
-        parser.add_argument("--" + flag.replace("_", "-"), action="store_true")
+    for flag in FEATURE_FLAGS:
+        parser.add_argument("--no-" + flag.replace("_", "-"), dest=flag, action="store_false")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
@@ -262,7 +262,11 @@ def parse_args(suite=None, argv=None):
     if args.capture_replay and args.suite != "smoke":
         parser.error("--capture-replay requires the smoke suite")
     if args.suite not in (*PROBE_SCENES, "profile"):
-        if args.scene is not None or args.asset is not None or any(getattr(args, flag) for flag in FLAGS):
+        if (
+            args.scene is not None
+            or args.asset is not None
+            or not all(getattr(args, flag) for flag in FEATURE_FLAGS)
+        ):
             parser.error("scene, asset and --no-* overrides require a single Rust probe or profile")
     args.exe = args.exe.resolve()
     args.output = args.output.resolve()

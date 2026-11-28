@@ -2,7 +2,7 @@ use avian3d::prelude::Collider;
 use bevy::{ecs::system::SystemParam, prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     camera::{FlightInput, LOOK_SENSITIVITY, ScriptedFlight},
     debug::{DebugOverlay, FractureEdges},
     diagnostics::RunMetrics,
@@ -52,6 +52,7 @@ struct SmokeState {
 #[derive(SystemParam)]
 struct SmokeResources<'w, 's> {
     options: Res<'w, DemoOptions>,
+    probe_options: Res<'w, ProbeOptions>,
     chunks: Query<'w, 's, &'static ChunkInstance>,
     children: Query<'w, 's, &'static Children>,
     primitive_meshes: Query<'w, 's, (), With<ChunkPrimitive>>,
@@ -72,18 +73,18 @@ struct LoadedAssetProbe;
 fn capture(
     commands: &mut Commands,
     pending: &mut Option<Entity>,
-    options: &DemoOptions,
+    probe_options: &ProbeOptions,
     directory: &std::path::Path,
     name: &str,
 ) {
-    if options.profile {
+    if probe_options.profile {
         return;
     }
     let entity = *pending.get_or_insert_with(|| {
         commands
             .spawn((
                 Name::new("Destruction smoke screenshot"),
-                options.smoke_screenshot(),
+                probe_options.smoke_screenshot(),
             ))
             .id()
     });
@@ -112,6 +113,7 @@ fn drive(
 ) {
     let SmokeResources {
         options,
+        probe_options,
         chunks,
         children,
         primitive_meshes,
@@ -125,7 +127,7 @@ fn drive(
         meshes,
         adapter,
     } = resources;
-    let Some(directory) = &options.smoke_output else {
+    let Some(directory) = &probe_options.smoke_output else {
         return;
     };
     let Some(instance) = instances.iter().next() else {
@@ -155,7 +157,7 @@ fn drive(
         }
     }
     let mut pending_capture = None;
-    if options.capture_replay
+    if probe_options.capture_replay
         && (150..=390).contains(&state.frames)
         && state.frames.is_multiple_of(2)
     {
@@ -163,7 +165,7 @@ fn drive(
         capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             &name,
         );
@@ -217,7 +219,7 @@ fn drive(
                 })
                 .sum();
             std::fs::create_dir_all(directory).expect("Create smoke output");
-            if options.capture_replay && !options.profile {
+            if probe_options.capture_replay && !probe_options.profile {
                 std::fs::create_dir_all(directory.join("replay")).expect("Create replay output");
             }
         }
@@ -306,7 +308,7 @@ fn drive(
             capture(
                 &mut commands,
                 &mut pending_capture,
-                &options,
+                &probe_options,
                 directory,
                 "01-grid.png",
             );
@@ -331,7 +333,7 @@ fn drive(
         130 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "02-fracture-edges.png",
         ),
@@ -389,19 +391,19 @@ fn drive(
                 time.elapsed_secs(),
                 state.first_particles
             );
-            let expected = if options.no_vfx { 0 } else { 64 };
+            let expected = if options.vfx { 64 } else { 0 };
             if state.first_particles != expected {
                 let count = state.first_particles;
                 state.errors.push(format!(
                     "Expected {expected} scheduled particles from one click, got {count}"
                 ));
             }
-            if !options.no_vfx && (vfx.active[0] == 0 || vfx.scheduled[2] == 0) {
+            if options.vfx && (vfx.active[0] == 0 || vfx.scheduled[2] == 0) {
                 state
                     .errors
                     .push("Impact and delayed smoke stages were not separated".into());
             }
-            if !options.no_detail && details.is_empty() {
+            if options.detail && details.is_empty() {
                 state
                     .errors
                     .push("Exposed break has no geometric rim detail".into());
@@ -483,49 +485,49 @@ fn drive(
         153 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "06-impact-005s.png",
         ),
         159 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "07-debris-015s.png",
         ),
         174 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "08-dust-040s.png",
         ),
         180 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "03-damage-and-dust.png",
         ),
         210 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "09-dust-100s.png",
         ),
         330 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "10-fallout-300s.png",
         ),
         390 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "11-rim-without-dust.png",
         ),
@@ -545,7 +547,7 @@ fn drive(
         460 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "12-rim-closeup.png",
         ),
@@ -570,7 +572,7 @@ fn drive(
         490 => capture(
             &mut commands,
             &mut pending_capture,
-            &options,
+            &probe_options,
             directory,
             "04-budget-stress.png",
         ),
@@ -592,7 +594,7 @@ fn drive(
             capture(
                 &mut commands,
                 &mut pending_capture,
-                &options,
+                &probe_options,
                 directory,
                 "05-settled.png",
             );
@@ -622,11 +624,11 @@ fn drive(
                 "11-rim-without-dust.png",
                 "12-rim-closeup.png",
             ] {
-                if !options.profile && !directory.join(name).is_file() {
+                if !probe_options.profile && !directory.join(name).is_file() {
                     state.errors.push(format!("Missing screenshot {name}"));
                 }
             }
-            if options.capture_replay && !options.profile {
+            if probe_options.capture_replay && !probe_options.profile {
                 for frame in 0..state.replay_frames {
                     if !directory
                         .join(format!("replay/frame-{frame:04}.png"))
@@ -644,7 +646,7 @@ fn drive(
                     .errors
                     .push("Rim geometry count disagrees with instance state".into());
             }
-            if !options.no_vfx && vfx.feedback_bursts != vfx.received {
+            if options.vfx && vfx.feedback_bursts != vfx.received {
                 state
                     .errors
                     .push("A new hit lost immediate feedback under saturation".into());
@@ -657,7 +659,7 @@ fn drive(
                 "vfx": {"spawned_by_layer":vfx.spawned,"dropped_by_layer":vfx.dropped,"retired":vfx.retired,"received":vfx.received,"feedback_bursts":vfx.feedback_bursts,"collision_queries":vfx.collision_queries,"collisions":vfx.collisions,"max_update_cpu_ms":vfx.max_update_cpu_ms,"max_emit_cpu_ms":vfx.max_emit_cpu_ms,"estimated_coverage":vfx.estimated_coverage,"peak_estimated_coverage":vfx.peak_estimated_coverage},
                 "detail":{"cached_patches":detail.patches,"cached_meshes":detail.cached_meshes,"cached_triangles":detail.cached_triangles,"active_meshes":detail.active_meshes,"triangles":detail.triangles,"cache_build_ms":detail.cache_build_ms,"max_update_ms":detail.max_update_ms},
                 "asset_counts":{"dust_materials":dust_materials.len(),"meshes":meshes.len()},
-                "metrics":metrics.json(),"replay_frames":state.replay_frames,"no_vfx":options.no_vfx,"no_detail":options.no_detail,"no_soft_particles":options.no_soft_particles,"profile":options.profile,"errors": state.errors });
+                "metrics":metrics.json(),"replay_frames":state.replay_frames,"settings":{"vfx":options.vfx,"stress":options.stress,"detail":options.detail,"soft_particles":options.soft_particles},"profile":probe_options.profile,"errors": state.errors });
             std::fs::write(
                 directory.join("report.json"),
                 serde_json::to_string_pretty(&report).unwrap(),

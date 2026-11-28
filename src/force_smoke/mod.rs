@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     asset::{BondPatchRecord, ColliderRecord, DestructibleAsset},
     force_debug::{ForceViewStats, ScriptedForceInspection},
     force_samples::{
@@ -737,7 +737,7 @@ fn source_id_pixels(capture: &Capture, index: usize) -> usize {
 }
 
 fn drive(world: &mut World) {
-    let Some(directory) = world.resource::<DemoOptions>().force_smoke_output.clone() else {
+    let Some(directory) = world.resource::<ProbeOptions>().force_smoke_output.clone() else {
         return;
     };
     let mut state = world.remove_resource::<ForceSmokeState>().unwrap();
@@ -989,7 +989,7 @@ fn tick(world: &mut World, state: &mut ForceSmokeState, directory: &std::path::P
     let retry_hold = wait.saturating_sub(10);
     let screenshot = (
         Name::new("Force smoke screenshot"),
-        world.resource::<DemoOptions>().smoke_screenshot(),
+        world.resource::<ProbeOptions>().smoke_screenshot(),
     );
     world.spawn(screenshot).observe(
         move |capture: On<ScreenshotCaptured>, mut state: ResMut<ForceSmokeState>| {

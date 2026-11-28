@@ -4,7 +4,7 @@ use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     asset::{DestructibleAsset, Manifest},
     debug::FractureEdges,
     diagnostics::RunMetrics,
@@ -298,28 +298,33 @@ struct CollapseState {
     errors: Vec<String>,
 }
 
-fn capture(commands: &mut Commands, options: &DemoOptions, name: &str) {
-    if !options.profile {
+fn capture(commands: &mut Commands, probe_options: &ProbeOptions, name: &str) {
+    if !probe_options.profile {
         commands
             .spawn((
                 Name::new("Collapse smoke screenshot"),
-                options.smoke_screenshot(),
+                probe_options.smoke_screenshot(),
             ))
             .observe(save_to_disk(
-                options.collapse_smoke_output.as_ref().unwrap().join(name),
+                probe_options
+                    .collapse_smoke_output
+                    .as_ref()
+                    .unwrap()
+                    .join(name),
             ));
     }
 }
 
 fn finish(
     state: &mut CollapseState,
-    options: &DemoOptions,
+    asset: &str,
+    probe_options: &ProbeOptions,
     metrics: &RunMetrics,
     exit: &mut MessageWriter<AppExit>,
 ) {
-    let directory = options.collapse_smoke_output.as_ref().unwrap();
+    let directory = probe_options.collapse_smoke_output.as_ref().unwrap();
     let report = serde_json::json!({
-        "asset":options.asset,
+        "asset":asset,
         "scenario":"Eccentric support: remove other first-storey supports while retaining a geometry-selected multi-piece load path",
         "selected_support_path":state.support_path,
         "removed_chunks":state.removed.len(),
@@ -344,7 +349,7 @@ fn finish(
         "residual_support_chunk":state.static_stub,
         "tipping_sample":state.tipping_sample,
         "simulated_frames_after_warmup":state.frame,
-        "profile":options.profile,
+        "profile":probe_options.profile,
         "metrics":metrics.json(),
         "errors":state.errors,
     });
@@ -367,6 +372,7 @@ fn finish(
 fn drive(
     mut commands: Commands,
     options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<CollapseState>,
     instances: Query<(
@@ -397,7 +403,7 @@ fn drive(
     contacts: Res<ContactGraph>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(directory) = &options.collapse_smoke_output else {
+    let Some(directory) = &probe_options.collapse_smoke_output else {
         return;
     };
     if state.finished {
@@ -411,7 +417,13 @@ fn drive(
             state
                 .errors
                 .push("Collapse validation requires --scene rectangle".into());
-            finish(&mut state, &options, &metrics, &mut exit);
+            finish(
+                &mut state,
+                &options.asset,
+                &probe_options,
+                &metrics,
+                &mut exit,
+            );
             return;
         }
     }
@@ -420,7 +432,13 @@ fn drive(
         state
             .errors
             .push("Rectangle or initial static solution did not finish loading".into());
-        finish(&mut state, &options, &metrics, &mut exit);
+        finish(
+            &mut state,
+            &options.asset,
+            &probe_options,
+            &metrics,
+            &mut exit,
+        );
         return;
     }
     let Some((building, instance, root_global, stress, rebuild_pending)) = instances.iter().next()
@@ -429,7 +447,13 @@ fn drive(
     };
     if let Some(error) = &instance.error {
         state.errors.push(format!("Rectangle load failed: {error}"));
-        finish(&mut state, &options, &metrics, &mut exit);
+        finish(
+            &mut state,
+            &options.asset,
+            &probe_options,
+            &metrics,
+            &mut exit,
+        );
         return;
     }
     let (Some(bounds), Some(stress)) = (instance.bounds, stress) else {
@@ -559,7 +583,7 @@ fn drive(
                     "upper_center":center.to_array(),"drop_m":drop,"tilt_rad":tilt,
                     "linear_velocity":linear.0.to_array(),"angular_velocity":angular.0.to_array(),
                 }));
-                capture(&mut commands, &options, CAPTURES[2]);
+                capture(&mut commands, &probe_options, CAPTURES[2]);
             }
         }
         state.final_mass = total_mass;
@@ -574,7 +598,7 @@ fn drive(
                     .errors
                     .push("Intact rectangle was unstable before scripted removal".into());
             }
-            capture(&mut commands, &options, CAPTURES[0]);
+            capture(&mut commands, &probe_options, CAPTURES[0]);
         }
         20 => {
             let selection = match select_collapse_support(&asset.manifest, |id| {
@@ -587,7 +611,13 @@ fn drive(
                 Ok(selection) => selection,
                 Err(error) => {
                     state.errors.push(error);
-                    finish(&mut state, &options, &metrics, &mut exit);
+                    finish(
+                        &mut state,
+                        &options.asset,
+                        &probe_options,
+                        &metrics,
+                        &mut exit,
+                    );
                     return;
                 }
             };
@@ -655,12 +685,12 @@ fn drive(
                 serde_json::to_string_pretty(&damage).unwrap(),
             )
             .expect("Write collapse damage replay");
-            capture(&mut commands, &options, CAPTURES[1]);
+            capture(&mut commands, &probe_options, CAPTURES[1]);
         }
         330 if state.first_tipping.is_none() => {
-            capture(&mut commands, &options, CAPTURES[2]);
+            capture(&mut commands, &probe_options, CAPTURES[2]);
         }
-        360 => capture(&mut commands, &options, CAPTURES[3]),
+        360 => capture(&mut commands, &probe_options, CAPTURES[3]),
         390 => {
             if state.strength_breaks == 0 {
                 state
@@ -696,11 +726,17 @@ fn drive(
                     .push("Collapse changed total surviving rigid-body mass".into());
             }
             for name in CAPTURES {
-                if !options.profile && !directory.join(name).is_file() {
+                if !probe_options.profile && !directory.join(name).is_file() {
                     state.errors.push(format!("Missing screenshot {name}"));
                 }
             }
-            finish(&mut state, &options, &metrics, &mut exit);
+            finish(
+                &mut state,
+                &options.asset,
+                &probe_options,
+                &metrics,
+                &mut exit,
+            );
         }
         _ => {}
     }
