@@ -5,7 +5,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     scene::{BuildingBounds, BuildingInstance, DemoCamera},
 };
 
@@ -129,7 +129,7 @@ fn apply_flight(transform: &mut Transform, camera: &mut FreeCamera, input: Fligh
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn move_camera(
     time: Res<Time>,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mouse: Res<AccumulatedMouseMotion>,
@@ -143,7 +143,7 @@ pub(crate) fn move_camera(
         return;
     };
     control.suppress_click = false;
-    let smoke = options.scripted();
+    let smoke = probe_options.scripted();
     if !smoke {
         if !window.focused {
             control.captured = false;

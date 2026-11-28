@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     asset::DestructibleAsset,
     camera::CameraControl,
     force_samples::{DynamicForceSample, ForceCapture, ForceSamples, bond_signature},
@@ -157,7 +157,7 @@ fn toggle(keys: Res<ButtonInput<KeyCode>>, mut capture: ResMut<ForceCapture>) {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn pick_target(
     capture: Res<ForceCapture>,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     control: Res<CameraControl>,
     keys: Res<ButtonInput<KeyCode>>,
     scripted: Res<ScriptedForceInspection>,
@@ -183,7 +183,7 @@ fn pick_target(
     if !capture.enabled {
         return;
     }
-    let held = if options.scripted() {
+    let held = if probe_options.scripted() {
         scripted.held
     } else {
         control.captured
@@ -339,7 +339,7 @@ fn update_heat_tags(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn draw(
     capture: Res<ForceCapture>,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     aim: Res<Aim>,
     mut samples: ResMut<ForceSamples>,
     mut stats: ResMut<ForceViewStats>,
@@ -480,7 +480,7 @@ fn draw(
                 stats.static_bonds += 1;
             }
             stats.max_force_n = stats.max_force_n.max(force_n);
-            if options.force_probe() {
+            if probe_options.force_probe() {
                 stats.valid_bonds.push((building, bond.id.clone()));
             }
 

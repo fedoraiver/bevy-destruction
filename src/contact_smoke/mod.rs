@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    ProbeOptions,
     contact_mask::ContactMaskBuilder,
     fracture_detail::{ContactPatch, contact_surface_mesh},
     material::{BuildingMaterial, building_material, surface_coordinates},
@@ -256,7 +256,7 @@ fn patch() -> ContactPatch {
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     mut state: ResMut<ContactState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
@@ -264,7 +264,7 @@ fn setup(
     mut images: ResMut<Assets<Image>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    let Some(directory) = &options.contact_smoke_output else {
+    let Some(directory) = &probe_options.contact_smoke_output else {
         return;
     };
     std::fs::create_dir_all(directory).expect("Create contact smoke output");
@@ -490,7 +490,11 @@ fn failed(metric: &PixelDifference) -> bool {
 }
 
 fn drive(world: &mut World) {
-    let Some(directory) = world.resource::<DemoOptions>().contact_smoke_output.clone() else {
+    let Some(directory) = world
+        .resource::<ProbeOptions>()
+        .contact_smoke_output
+        .clone()
+    else {
         return;
     };
     let mut state = world.remove_resource::<ContactState>().unwrap();

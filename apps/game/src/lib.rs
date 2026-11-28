@@ -77,33 +77,59 @@ mod vfx;
 use std::path::{Path, PathBuf};
 
 use avian3d::prelude::*;
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    settings::{ReflectSettingsGroup, SettingsGroup, SettingsPlugin},
+};
+
+#[cfg(test)]
+mod tests;
+
+const DESKTOP_SETTINGS_APP_NAME: &str = "io.github.fedoraiver.bevy-destruction";
 
 pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
-#[derive(Resource)]
+#[derive(Reflect, Resource, SettingsGroup)]
+#[reflect(Resource, Default, SettingsGroup)]
+#[settings_group(group = "demo_options")]
 pub struct DemoOptions {
     asset: String,
+    stress: bool,
+    vfx: bool,
+    detail: bool,
+    soft_particles: bool,
+}
+
+impl Default for DemoOptions {
+    fn default() -> Self {
+        Self {
+            asset: "buildings/rectangle.destruction.json".into(),
+            stress: true,
+            vfx: true,
+            detail: true,
+            soft_particles: true,
+        }
+    }
+}
+
+#[derive(Default, Resource)]
+struct ProbeOptions {
     #[cfg(any(test, feature = "acceptance-test"))]
-    smoke_output: Option<std::path::PathBuf>,
+    smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    physics_smoke_output: Option<std::path::PathBuf>,
+    physics_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    stress_smoke_output: Option<std::path::PathBuf>,
+    stress_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    material_smoke_output: Option<std::path::PathBuf>,
+    material_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    contact_smoke_output: Option<std::path::PathBuf>,
+    contact_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    force_smoke_output: Option<std::path::PathBuf>,
+    force_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    landing_smoke_output: Option<std::path::PathBuf>,
+    landing_smoke_output: Option<PathBuf>,
     #[cfg(any(test, feature = "acceptance-test"))]
-    collapse_smoke_output: Option<std::path::PathBuf>,
-    no_vfx: bool,
-    no_stress: bool,
-    no_detail: bool,
-    no_soft_particles: bool,
+    collapse_smoke_output: Option<PathBuf>,
     #[cfg(feature = "acceptance-test")]
     capture_replay: bool,
     #[cfg(any(test, feature = "acceptance-test"))]
@@ -112,41 +138,7 @@ pub struct DemoOptions {
     profile: bool,
 }
 
-impl Default for DemoOptions {
-    fn default() -> Self {
-        Self {
-            asset: "buildings/rectangle.destruction.json".into(),
-            #[cfg(any(test, feature = "acceptance-test"))]
-            smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            physics_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            stress_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            material_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            contact_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            force_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            landing_smoke_output: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            collapse_smoke_output: None,
-            no_vfx: false,
-            no_stress: false,
-            no_detail: false,
-            no_soft_particles: false,
-            #[cfg(feature = "acceptance-test")]
-            capture_replay: false,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            smoke_target: None,
-            #[cfg(any(test, feature = "acceptance-test"))]
-            profile: false,
-        }
-    }
-}
-
-impl DemoOptions {
+impl ProbeOptions {
     pub fn scripted(&self) -> bool {
         #[cfg(any(test, feature = "acceptance-test"))]
         {
@@ -182,36 +174,6 @@ impl DemoOptions {
     }
 }
 
-pub fn parse_options(mut args: impl Iterator<Item = String>) -> Result<DemoOptions, String> {
-    let mut options = DemoOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--asset" => options.asset = args.next().ok_or("--asset requires an asset path")?,
-            "--scene" => {
-                let name = args.next().ok_or("--scene requires a scene name")?;
-                options.asset = catalog::SCENES
-                    .iter()
-                    .find(|scene| scene.0 == name)
-                    .ok_or_else(|| format!("Unknown scene: {name}"))?
-                    .1
-                    .into();
-            }
-            "--help" | "-h" => {
-                println!(
-                    "bevy-destruction [--scene rectangle|highrise_slab|highrise_l|bridge|courtyard|l_shape] [--asset path]\nOptions: --no-stress --no-vfx --no-detail --no-soft-particles\nWASD: fly | Mouse: look | Space/Ctrl: up/down | Tab: cursor\nLeft: break | Right: rigid ball | R: rigid cube | F1-F6: scenes | 0: edges | 9: load heat | Alt: inspect loads | Esc: exit"
-                );
-                std::process::exit(0);
-            }
-            "--no-vfx" => options.no_vfx = true,
-            "--no-stress" => options.no_stress = true,
-            "--no-detail" => options.no_detail = true,
-            "--no-soft-particles" => options.no_soft_particles = true,
-            _ => return Err(format!("Unknown option: {arg}")),
-        }
-    }
-    Ok(options)
-}
-
 fn asset_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -240,34 +202,42 @@ pub fn desktop_window() -> WindowPlugin {
 
 /// 按默认选项装配桌面应用，供架构导出器读取调度。
 pub fn build_app() -> App {
-    prepare_app(DemoOptions::default())
+    prepare_app(None)
 }
 
-/// 按指定选项运行桌面应用。
-pub fn run(options: DemoOptions) -> AppExit {
-    prepare_app(options).run()
+/// 从用户设置文件加载演示选项并运行桌面应用。
+pub fn run() -> AppExit {
+    prepare_app(Some(DESKTOP_SETTINGS_APP_NAME)).run()
 }
 
-fn prepare_app(options: DemoOptions) -> App {
+fn prepare_app(settings_app_name: Option<&str>) -> App {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(asset_plugin()).set(desktop_window()))
-        .insert_resource(options)
-        .add_plugins(DestructionPlugin);
+    app.add_plugins(DefaultPlugins.set(asset_plugin()).set(desktop_window()));
+    if let Some(app_name) = settings_app_name {
+        load_demo_settings(&mut app, app_name);
+    }
+    app.add_plugins(DestructionPlugin);
     app
+}
+
+fn load_demo_settings(app: &mut App, app_name: &str) {
+    app.register_type::<DemoOptions>()
+        .add_plugins(SettingsPlugin::new(app_name));
 }
 
 pub struct DestructionPlugin;
 
 impl Plugin for DestructionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DemoOptions>();
+        app.init_resource::<DemoOptions>()
+            .init_resource::<ProbeOptions>();
         let options = app.world().resource::<DemoOptions>();
         let vfx_settings = vfx::VfxSettings {
-            enabled: !options.no_vfx,
+            enabled: options.vfx,
             ..default()
         };
         let stress_settings = stress_runtime::StressSettings {
-            enabled: !options.no_stress,
+            enabled: options.stress,
             ..default()
         };
         app.insert_resource(vfx_settings)

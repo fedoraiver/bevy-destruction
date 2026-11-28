@@ -4,13 +4,15 @@
 
 2026-11-23 采用并实现。替代 [ADR 0019](0019-workspace-app-entrypoints.md) 中的独立架构分析包。
 
+2026-11-28 明确桌面文件设置与架构导出的装配入口。
+
 ## 背景
 
 架构分析和桌面入口先前分别装配 Bevy，并通过两个 Cargo 包编译同一份插件源码。分析结果应反映桌面入口实际安装的插件和调度。
 
 ## 决策与实现
 
-工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块，并为桌面运行和共享 bevy-cicd 启动器提供同一装配函数。导出使用默认演示选项，桌面入口使用解析后的参数。无窗验收继续从独立包选择窗口、输入和渲染配置。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs)
+工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块。桌面运行和共享 bevy-cicd 启动器共用游戏插件装配。`build_app()` 使用内置的 `DemoOptions` 默认值，使不同机器能按同一配置导出调度。桌面入口加载用户的 `settings.toml`，无窗验收从独立包选择窗口、输入和渲染配置。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs) · [桌面设置决策](0006-demo-scenes-and-controls.md)
 
 ## 备选方案与取舍
 

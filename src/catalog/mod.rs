@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     camera::FreeCamera,
     projectiles::{ResetProjectiles, RigidProjectile},
     scene::BuildingInstance,
@@ -32,13 +32,14 @@ fn switch_scene(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut options: ResMut<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     server: Res<AssetServer>,
     instances: Query<Entity, With<BuildingInstance>>,
     projectiles: Query<Entity, With<RigidProjectile>>,
     mut cameras: Query<&mut FreeCamera>,
     mut particles: Query<&mut crate::vfx::Particle>,
 ) {
-    if options.scripted() {
+    if probe_options.scripted() {
         return;
     }
     let Some(index) = [

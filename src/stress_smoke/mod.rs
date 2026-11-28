@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     asset::{
         AnchorRecord, BondPatchRecord, BondRecord, ChunkRecord, ColliderRecord, Coordinates,
         DestructibleAsset, Manifest, PhysicalMaterial,
@@ -317,14 +317,14 @@ pub(crate) fn remove_left_support(world: &mut World, root: Entity) {
 
 fn capture(
     commands: &mut Commands,
-    options: &DemoOptions,
+    probe_options: &ProbeOptions,
     directory: &std::path::Path,
     name: &str,
 ) {
     commands
         .spawn((
             Name::new("Stress smoke screenshot"),
-            options.smoke_screenshot(),
+            probe_options.smoke_screenshot(),
         ))
         .observe(save_to_disk(directory.join(name)));
 }
@@ -333,6 +333,7 @@ fn capture(
 fn drive(
     mut commands: Commands,
     options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     mut state: ResMut<StressSmokeState>,
     mut settings: ResMut<StressSettings>,
     buildings: Query<(&BuildingInstance, Option<&StressState>), Without<StressProbe>>,
@@ -356,7 +357,7 @@ fn drive(
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(directory) = &options.stress_smoke_output else {
+    let Some(directory) = &probe_options.stress_smoke_output else {
         return;
     };
     settings.damage_seconds = 2.0;
@@ -367,7 +368,7 @@ fn drive(
     };
     if let Some(error) = &building.error {
         state.errors.push(format!("Building load failed: {error}"));
-        finish(&state, &options, directory, &mut exit);
+        finish(&state, &options.asset, directory, &mut exit);
         return;
     }
     let Some(stress) = stress.filter(|stress| stress.solves > 0) else {
@@ -375,7 +376,7 @@ fn drive(
             state
                 .errors
                 .push("Initial selfweight solve did not complete".into());
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         return;
     };
@@ -390,7 +391,7 @@ fn drive(
         state
             .errors
             .push("Intact shipped building was unstable or its stress solve failed".into());
-        finish(&state, &options, directory, &mut exit);
+        finish(&state, &options.asset, directory, &mut exit);
         return;
     }
     let probe = state.probe.and_then(|root| probes.get(root).ok());
@@ -449,7 +450,7 @@ fn drive(
                 .collect();
             capture(
                 &mut commands,
-                &options,
+                &probe_options,
                 directory,
                 "01-intact-selfweight.png",
             );
@@ -474,7 +475,12 @@ fn drive(
             } else {
                 state.errors.push("Missing stress beam fixture".into());
             }
-            capture(&mut commands, &options, directory, "02-two-supports.png");
+            capture(
+                &mut commands,
+                &probe_options,
+                directory,
+                "02-two-supports.png",
+            );
         }
         100 => {
             if let Some(root) = state.probe {
@@ -507,7 +513,7 @@ fn drive(
             }
             capture(
                 &mut commands,
-                &options,
+                &probe_options,
                 directory,
                 "03-overloaded-connection.png",
             );
@@ -518,7 +524,12 @@ fn drive(
                     .errors
                     .push("Calculated overload did not fracture and release the beam".into());
             }
-            capture(&mut commands, &options, directory, "04-stress-release.png");
+            capture(
+                &mut commands,
+                &probe_options,
+                directory,
+                "04-stress-release.png",
+            );
         }
         760 => {
             if !state.fell || !state.slept {
@@ -526,7 +537,7 @@ fn drive(
                     .errors
                     .push("Stress-released beam did not fall and reach physical sleep".into());
             }
-            capture(&mut commands, &options, directory, "05-settled.png");
+            capture(&mut commands, &probe_options, directory, "05-settled.png");
         }
         800 | 900 => {
             let bounds = building.bounds.unwrap();
@@ -606,7 +617,7 @@ fn drive(
             }
             capture(
                 &mut commands,
-                &options,
+                &probe_options,
                 directory,
                 if state.frame == 810 {
                     "06-rigid-sphere-impact.png"
@@ -631,7 +642,7 @@ fn drive(
                         .push(format!("Missing stress screenshot {name}"));
                 }
             }
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         _ => {}
     }
@@ -639,12 +650,12 @@ fn drive(
 
 fn finish(
     state: &StressSmokeState,
-    options: &DemoOptions,
+    asset: &str,
     directory: &std::path::Path,
     exit: &mut MessageWriter<AppExit>,
 ) {
     let report = serde_json::json!({
-        "asset":options.asset,"asset_stress_reports":state.asset_reports,"baseline_utilization":state.baseline_utilization,
+        "asset":asset,"asset_stress_reports":state.asset_reports,"baseline_utilization":state.baseline_utilization,
         "asset_max_utilization":state.asset_max_utilization,"overload_load":state.overload_load,
         "sphere_survived_and_changed_velocity":state.sphere_survived,"cube_survived_and_changed_velocity":state.cube_survived,
         "sphere_contact_fracture":state.sphere_contact,"cube_contact_fracture":state.cube_contact,

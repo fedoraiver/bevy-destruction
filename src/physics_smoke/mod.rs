@@ -4,7 +4,7 @@ use avian3d::prelude::*;
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions,
+    DemoOptions, ProbeOptions,
     asset::{DestructibleAsset, Manifest},
     physics::{Cluster, NeedsClusterRebuild},
     scene::{BondInstance, BuildingInstance, ChunkInstance, DemoCamera, RefreshDamageDetails},
@@ -89,26 +89,26 @@ fn roof_pair(manifest: &Manifest) -> Option<Vec<String>> {
 
 fn capture(
     commands: &mut Commands,
-    options: &DemoOptions,
+    probe_options: &ProbeOptions,
     directory: &std::path::Path,
     name: &str,
 ) {
     commands
         .spawn((
             Name::new("Physics smoke screenshot"),
-            options.smoke_screenshot(),
+            probe_options.smoke_screenshot(),
         ))
         .observe(save_to_disk(directory.join(name)));
 }
 
 fn finish(
     state: &PhysicsSmokeState,
-    options: &DemoOptions,
+    asset: &str,
     directory: &std::path::Path,
     exit: &mut MessageWriter<AppExit>,
 ) {
     let report = serde_json::json!({
-        "asset": options.asset,
+        "asset": asset,
         "selected_chunks": state.selected,
         "clearance_chunks": state.cleared_chunks,
         "expected_mass": state.expected_mass,
@@ -193,6 +193,7 @@ fn verify_split(
 fn drive(
     mut commands: Commands,
     options: Res<DemoOptions>,
+    probe_options: Res<ProbeOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<PhysicsSmokeState>,
     instances: Query<(Entity, &BuildingInstance)>,
@@ -214,26 +215,26 @@ fn drive(
     mut cameras: Query<&mut Transform, With<DemoCamera>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(directory) = &options.physics_smoke_output else {
+    let Some(directory) = &probe_options.physics_smoke_output else {
         return;
     };
     state.waiting += 1;
     let Some((building, instance)) = instances.iter().next() else {
         if state.waiting == 1800 {
             state.errors.push("Building did not appear".into());
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         return;
     };
     if let Some(error) = &instance.error {
         state.errors.push(format!("Building load failed: {error}"));
-        finish(&state, &options, directory, &mut exit);
+        finish(&state, &options.asset, directory, &mut exit);
         return;
     }
     let Some(bounds) = instance.bounds else {
         if state.waiting == 1800 {
             state.errors.push("Building did not finish loading".into());
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         return;
     };
@@ -250,7 +251,7 @@ fn drive(
             state
                 .errors
                 .push("Building has no physical clusters".into());
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         return;
     }
@@ -292,14 +293,14 @@ fn drive(
     match state.frame {
         10 => {
             std::fs::create_dir_all(directory).expect("Create physics smoke output");
-            capture(&mut commands, &options, directory, "01-supported.png");
+            capture(&mut commands, &probe_options, directory, "01-supported.png");
         }
         20 => {
             let Some(selected) = roof_pair(&asset.manifest) else {
                 state
                     .errors
                     .push("Asset has no bonded nonanchored roof pair".into());
-                finish(&state, &options, directory, &mut exit);
+                finish(&state, &options.asset, directory, &mut exit);
                 return;
             };
             state.expected_mass = selected
@@ -405,7 +406,7 @@ fn drive(
                     .errors
                     .push("Unsupported cluster did not fall under gravity".into());
             }
-            capture(&mut commands, &options, directory, "02-falling.png");
+            capture(&mut commands, &probe_options, directory, "02-falling.png");
         }
         40 => {
             info!(
@@ -494,7 +495,7 @@ fn drive(
                         .push("Supported building moved while debris fell".into());
                 }
             }
-            capture(&mut commands, &options, directory, "03-settled.png");
+            capture(&mut commands, &probe_options, directory, "03-settled.png");
         }
         930 => {
             for name in ["01-supported.png", "02-falling.png", "03-settled.png"] {
@@ -504,7 +505,7 @@ fn drive(
                         .push(format!("Missing physics screenshot {name}"));
                 }
             }
-            finish(&state, &options, directory, &mut exit);
+            finish(&state, &options.asset, directory, &mut exit);
         }
         _ => {}
     }

@@ -10,11 +10,9 @@ Bevy Destruction 是基于 Bevy 0.20.1 和 Avian 0.8.0 的建筑破坏插件。�
 
 ```powershell
 cargo run --locked
-cargo run --locked -- --scene highrise_slab
-cargo run --locked -- --asset buildings/rectangle.destruction.json
 ```
 
-默认打开 `rectangle`。使用 `--scene` 指定内置场景，也可在运行中按场景快捷键。
+默认打开 `rectangle`。可通过[桌面设置](#桌面设置)指定启动场景，或在运行中使用场景快捷键。
 
 | 按键 | 场景 | 内容 |
 | --- | --- | --- |
@@ -24,6 +22,36 @@ cargo run --locked -- --asset buildings/rectangle.destruction.json
 | F4 | `bridge` | 双钢主梁、六桥墩 |
 | F5 | `courtyard` | 两层庭院楼 |
 | F6 | `l_shape` | 三层 L 形楼 |
+
+### 桌面设置
+
+在系统偏好目录下创建 `settings.toml`。桌面演示启动时读取此文件，场景快捷键只影响当前运行。
+
+| 平台 | 设置文件 |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\io.github.fedoraiver.bevy-destruction\settings.toml` |
+| Linux | `$XDG_CONFIG_HOME/io.github.fedoraiver.bevy-destruction/settings.toml`，默认 `~/.config/io.github.fedoraiver.bevy-destruction/settings.toml` |
+| macOS | `~/Library/Preferences/io.github.fedoraiver.bevy-destruction/settings.toml` |
+
+以下示例打开板式高楼，并关闭烟尘与场景交界处的深度淡出。
+
+```toml
+[demo_options]
+asset = "buildings/highrise_slab.destruction.json"
+stress = true
+vfx = true
+detail = true
+soft_particles = false
+```
+
+缺少文件或字段时使用默认值。`asset` 是相对 `assets/` 的清单路径，默认值为 `buildings/rectangle.destruction.json`。四个布尔开关默认均为 `true`，设为 `false` 可关闭对应功能。
+
+| 设置项 | 控制功能 |
+| --- | --- |
+| `stress` | 锚定结构的承载求解 |
+| `vfx` | 破坏特效 |
+| `detail` | 破口边带 |
+| `soft_particles` | 烟尘和场景交界处的深度淡出 |
 
 ### 操作
 
@@ -38,11 +66,11 @@ cargo run --locked -- --asset buildings/rectangle.destruction.json
 
 窗口失焦会释放鼠标。重新点击窗口时，首次点击用于恢复控制。
 
-桌面和无窗验收默认使用 1920×1080 的逻辑尺寸。`--no-stress` 关闭锚定结构的承载求解，点击与撞击破坏仍可使用。`--no-vfx` 关闭特效，`--no-detail` 关闭可选的破口边带，`--no-soft-particles` 关闭烟尘和场景交界处的深度淡出。
+桌面和无窗验收默认使用 1920×1080 的逻辑尺寸。
 
 ## 导入自己的建筑
 
-使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。用 `--asset buildings/文件名.destruction.json` 启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
+使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_options]` 中添加 `asset = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
 
 ## 开发文档
 
@@ -82,4 +110,4 @@ macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/profile.py --exe $acceptanceExe
 ```
 
-`run.py baseline` 单独运行固定帧矩阵。独立探针脚本和 `profile.py` 支持 `--scene`、`--asset` 和上述 `--no-*` 开关。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。
+`run.py baseline` 单独运行固定帧矩阵。独立探针脚本和 `profile.py` 支持 `--scene`、`--asset`，可用 `--no-stress`、`--no-vfx`、`--no-detail` 和 `--no-soft-particles` 关闭对应功能。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。
