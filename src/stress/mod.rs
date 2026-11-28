@@ -16,7 +16,7 @@ type M3 = [[f64; 3]; 3];
 type M6 = [[f64; 6]; 6];
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 pub struct SolverSettings {
     pub relative_tolerance: f64,
     pub max_iterations: usize,
@@ -32,7 +32,7 @@ impl Default for SolverSettings {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 pub struct NodeLoad {
     pub force: V3,
     pub moment: V3,

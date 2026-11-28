@@ -15,7 +15,6 @@ use bevy::{
 };
 
 use crate::{
-    DemoSettings,
     asset::{
         BondRecord, ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building,
     },
@@ -28,6 +27,7 @@ use crate::{
     },
     menu::PendingReload,
     physics::NeedsClusterRebuild,
+    settings::DemoSettings,
 };
 
 pub struct DemoScenePlugin;
@@ -57,8 +57,8 @@ impl Plugin for DemoScenePlugin {
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
-#[cfg_attr(feature = "acceptance-test", reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
+#[cfg_attr(feature = "brp", reflect(Component))]
 pub struct DemoCamera;
 
 #[derive(Component)]
@@ -80,7 +80,7 @@ impl BuildingBounds {
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct ChunkInstance {
     pub alive: bool,
     pub triangles: Vec<[Vec3; 3]>,
@@ -130,7 +130,7 @@ impl BuildingInstance {
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct BondInstance {
     pub id: String,
     pub endpoints: [Entity; 2],
@@ -232,14 +232,14 @@ pub(crate) fn spawn_patches(
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct ChunkIdentity {
     pub building: Entity,
     pub id: String,
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct RemovedChunk;
 
 #[derive(Component)]
@@ -339,10 +339,10 @@ struct DetailMeshCache {
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct DamageDetail {
     pub patch_ids: Vec<String>,
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     pub triangles: usize,
 }
 
@@ -353,7 +353,7 @@ pub(crate) struct RefreshDamageDetails;
 pub(crate) struct UpdateDamageDetails;
 
 #[derive(Resource, Default)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Resource))]
 pub struct DetailStats {
     pub patches: usize,
     pub active_meshes: usize,
@@ -936,7 +936,7 @@ fn update_details(
                 mesh
             });
             if let Some(mesh) = combined {
-                #[cfg(feature = "acceptance-test")]
+                #[cfg(feature = "brp")]
                 let triangles = mesh
                     .indices()
                     .map_or(mesh.count_vertices(), |indices| indices.len())
@@ -956,7 +956,7 @@ fn update_details(
                     Transform::IDENTITY,
                     DamageDetail {
                         patch_ids,
-                        #[cfg(feature = "acceptance-test")]
+                        #[cfg(feature = "brp")]
                         triangles,
                     },
                 ));

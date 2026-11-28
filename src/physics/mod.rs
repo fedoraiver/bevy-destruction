@@ -27,7 +27,7 @@ impl Plugin for DestructionPhysicsPlugin {
 }
 
 #[derive(Component, Clone)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct Cluster {
     pub chunks: Vec<String>,
     pub anchored: bool,
@@ -35,7 +35,7 @@ pub struct Cluster {
 
 #[derive(Component)]
 #[component(storage = "SparseSet", on_insert = mark_topology_changed)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub(crate) struct NeedsClusterRebuild;
 
 fn mark_topology_changed(mut world: DeferredWorld, context: HookContext) {

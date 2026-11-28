@@ -31,7 +31,7 @@ impl Plugin for FreeCameraPlugin {
 }
 
 #[derive(Component, Default)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct FreeCamera {
     initialized: bool,
     yaw: f32,
@@ -42,7 +42,7 @@ pub struct FreeCamera {
 pub struct Crosshair;
 
 #[derive(Resource)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Resource))]
 pub struct CameraControl {
     pub captured: bool,
     pub suppress_click: bool,

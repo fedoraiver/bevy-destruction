@@ -52,7 +52,6 @@ impl ContactPatch {
     }
 }
 
-#[cfg(any(test, feature = "acceptance-test"))]
 #[cfg(test)]
 pub(crate) fn contact_surface_mesh(patches: &[ContactPatch], chunk: &str) -> Option<Mesh> {
     let vertex_count = patches

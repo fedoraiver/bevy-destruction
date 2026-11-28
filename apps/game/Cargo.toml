@@ -7,7 +7,7 @@ edition = "2024"
 app-factory = "build_app"
 
 [features]
-acceptance-test = []
+brp = []
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_settings", "ui_picking"] }

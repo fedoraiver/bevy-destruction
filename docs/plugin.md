@@ -57,4 +57,6 @@ Avian 已在接触阶段施加冲量。破坏系统读取新的有效接触，�
 
 ## 源码入口
 
-游戏库的 `build_app()` 以默认演示设置直接安装 Avian、场景、暂停菜单、交互、诊断与特效插件，也是 ECS 架构导出的入口。桌面入口调用 `build_app()` 后，通过 Bevy 原生 `SettingsPlugin` 读取系统偏好目录的 `DemoSettings`，在运行前更新应力和特效资源。无窗入口独立读取同一份设置并安装各功能插件，同时配置 BRP 和离屏渲染。[桌面设置](../README.md#桌面设置) · [桌面入口](../apps/game/src/main.rs) · [无窗入口](../apps/acceptance/src/main.rs)
+游戏库的 `build_app()` 以默认演示设置直接安装 Avian、场景、暂停菜单、交互、诊断与特效插件，也是 ECS 架构导出的入口。桌面入口调用 `build_app()` 后，通过 Bevy 原生 `SettingsPlugin` 读取系统偏好目录的设置文件，在运行前更新应力和特效资源。无窗入口独立读取同一份文件并安装各功能插件，同时配置 BRP 和离屏渲染。两个入口共用 `src/settings.rs` 中的 `DemoSettings`。[桌面设置](../README.md#桌面设置) · [共享设置类型](../src/settings.rs) · [桌面入口](../apps/game/src/main.rs) · [无窗入口](../apps/acceptance/src/main.rs)
+
+游戏库公开各功能插件供入口装配。无窗验收包的 `acceptance-test` Cargo 功能启用游戏库的 `brp` 功能，提供读取游戏 ECS 所需的反射信息和观测统计。[游戏包功能](../apps/game/Cargo.toml) · [无窗验收包功能](../apps/acceptance/Cargo.toml)
