@@ -44,8 +44,6 @@ mod structure;
 #[path = "../../../src/vfx/mod.rs"]
 mod vfx;
 
-use std::path::{Path, PathBuf};
-
 use bevy::prelude::*;
 
 #[cfg(test)]
@@ -72,21 +70,16 @@ pub use {
 
 pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
-fn asset_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("Package must be two levels below the workspace root")
-        .join("assets")
-}
-
 /// 按默认设置装配桌面应用，供桌面入口和架构导出器使用。
 pub fn build_app() -> App {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
-                file_path: asset_root().to_string_lossy().into_owned(),
+                file_path: std::path::absolute("assets")
+                    .expect("Could not resolve the assets directory")
+                    .to_string_lossy()
+                    .into_owned(),
                 ..default()
             })
             .set(WindowPlugin {

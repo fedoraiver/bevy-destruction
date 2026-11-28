@@ -386,7 +386,7 @@ fn bundled_assets_keep_source_geometry_and_report_shared_buffer_costs() {
         asset::Manifest,
         fracture_detail::{SurfaceGeometry, build_patches},
     };
-    let directory = crate::asset_root().join("buildings");
+    let directory = crate::test_fixtures::asset_root().join("buildings");
     for name in [
         "rectangle",
         "l_shape",

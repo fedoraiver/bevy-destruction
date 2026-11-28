@@ -35,7 +35,10 @@ fn main() -> AppExit {
                 .build()
                 .disable::<WinitPlugin>()
                 .set(AssetPlugin {
-                    file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").into(),
+                    file_path: std::path::absolute("assets")
+                        .expect("Could not resolve the assets directory")
+                        .to_string_lossy()
+                        .into_owned(),
                     ..default()
                 })
                 .set(window),
