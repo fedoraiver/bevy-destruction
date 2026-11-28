@@ -14,7 +14,7 @@
 
 ## 决策与实现
 
-工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。游戏库的 `build_app()` 直接安装桌面窗口和 `src/` 中的功能插件，并使用内置的 `DemoSettings` 默认值，使不同机器能按同一配置导出调度。桌面入口在此基础上安装原生设置插件，从系统偏好目录读取用户设置，并在运行前应用开关。无窗入口独立读取用户设置并安装功能插件。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs) · [桌面启动](../../../apps/game/src/main.rs) · [无窗装配](0025-python-driven-acceptance.md)
+工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。游戏库的 `build_app()` 直接安装桌面窗口和 `src/` 中的功能插件，并使用内置的 `DemoSettings` 默认值，使不同机器能按同一配置导出调度。桌面入口在此基础上安装原生设置插件，从系统偏好目录读取用户设置，并在运行前应用开关。无窗入口独立读取用户设置并安装功能插件。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs) · [桌面启动](../../../apps/game/src/main.rs) · [无窗装配](0026-python-driven-acceptance.md)
 
 ## 备选方案与取舍
 

@@ -38,7 +38,7 @@
 | F5 | `courtyard` | 有庭院的两层楼 |
 | F6 | `l_shape` | L 形三层楼 |
 
-桌面和无窗入口通过 Bevy 原生 `SettingsPlugin` 从系统偏好目录读取 `settings.toml` 的 `[demo_settings]`，在运行前应用 `DemoSettings`。当前使用 `scene` 路径及暂停菜单重载场景。架构导出使用内置设置，Python 验收暂时替换默认设置文件。[场景与暂停菜单](0024-scene-settings-and-pause-menu.md) · [无窗验收](0025-python-driven-acceptance.md)
+桌面和无窗入口通过 Bevy 原生 `SettingsPlugin` 从系统偏好目录读取 `settings.toml` 的 `[demo_settings]`，在运行前应用 `DemoSettings`。当前使用 `scene` 路径及暂停菜单重载场景。架构导出使用内置设置，Python 验收暂时替换默认设置文件。[场景与暂停菜单](0025-scene-settings-and-pause-menu.md) · [无窗验收](0026-python-driven-acceptance.md)
 
 
 切换场景时，目录系统在销毁旧建筑和撞击物之后、生成新建筑之前，用 `Commands::trigger` 排入 `ResetProjectiles`。撞击物插件的 Observer 清空上一场景的发射请求、接触工况和计数。延迟命令在建筑实例化和相机更新前应用，同帧的新发射输入随后进入队列。
