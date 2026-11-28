@@ -57,4 +57,4 @@ Avian 已在接触阶段施加冲量。破坏系统读取新的有效接触，�
 
 ## 源码入口
 
-游戏包从 `apps/game/src/lib.rs` 引入 `src/` 下的功能模块，并通过 `DestructionPlugin` 安装 Avian、资产、场景、交互、诊断与特效插件。`asset_plugin()` 将资产目录解析到构建时工作区的 `assets/`。桌面启动时，Bevy 原生 `SettingsPlugin` 先从系统偏好目录加载 `DemoOptions`，随后 `DestructionPlugin` 根据其中的开关初始化特效和承载求解。ECS 架构导出通过 `build_app()` 以默认演示设置装配。无窗验收由脚本传入演示设置，独立的 `ProbeOptions` 资源承载输出路径、离屏目标、回放和性能采样参数。[桌面设置](../README.md#桌面设置) · [桌面装配](../apps/game/src/lib.rs) · [验收装配](../src/acceptance/mod.rs)
+游戏包从 `apps/game/src/lib.rs` 引入 `src/` 下的功能模块，并通过 `DestructionPlugin` 安装 Avian、资产、场景、交互、诊断与特效插件。`asset_plugin()` 将资产目录解析到构建时工作区的 `assets/`。桌面和无窗验收通过 Bevy 原生 `SettingsPlugin` 加载 `DemoSettings`，然后安装 `DestructionPlugin`，按设置初始化特效和承载求解。桌面从系统偏好目录读取，无窗验收从脚本为用例准备的输出目录读取。独立的 `ProbeOptions` 资源承载验收输出路径、离屏目标、回放和性能采样参数。ECS 架构导出通过 `build_app()` 以默认演示设置装配。[桌面设置](../README.md#桌面设置) · [桌面装配](../apps/game/src/lib.rs) · [验收装配](../src/acceptance/mod.rs)

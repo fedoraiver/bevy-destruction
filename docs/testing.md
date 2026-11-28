@@ -25,4 +25,4 @@
 | [material.py](../scripts/acceptance/material.py)、[contact.py](../scripts/acceptance/contact.py)、[force.py](../scripts/acceptance/force.py) | 材质随刚体运动、断面遮罩和深度遮挡，以及受力热力、详查和实际冲量。 |
 | [profile.py](../scripts/acceptance/profile.py) | 离屏墙钟帧耗时和热路径采样。 |
 
-各脚本使用同一个无窗可执行文件。固定帧脚本在启动时传入场景及探针配置，探针在 Bevy 内消费固定步及渲染结果。离屏用例按程序状态、数值或图像判据给出结果。每次运行按用例保存证据，可从 `summary.json` 跟踪到报告、日志和截图。[汇总入口](../scripts/acceptance/run.py)
+各脚本使用同一个无窗可执行文件。Python 为每个用例写入 `settings.toml`，用例启动时由 Bevy 原生设置插件读取资产和开关。探针类型、输出目录、回放和性能采样参数通过子进程环境传递。探针在 Bevy 内消费固定步及渲染结果，按程序状态、数值或图像判据给出结果。可从 `summary.json` 跟踪到各用例的设置文件、报告、日志和截图。[汇总入口](../scripts/acceptance/run.py)

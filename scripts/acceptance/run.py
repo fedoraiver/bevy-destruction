@@ -39,7 +39,6 @@ SCREENSHOT_COUNTS = {
 }
 SCREENSHOT_SIZES = {"material": (512, 256), "contact": (512, 512)}
 VIEWPORT = (1920, 1080)
-FEATURE_FLAGS = ("stress", "vfx", "detail", "soft_particles")
 SCENARIO_ENV = "BEVY_DESTRUCTION_ACCEPTANCE_SCENARIO"
 METRICS = "bevy_destruction::diagnostics::RunMetrics"
 MIN_PROFILE_SAMPLES = 30
@@ -68,23 +67,38 @@ class Scenario:
     suite: str
     scene: str | None = None
     asset: str | None = None
+    stress: bool = True
+    vfx: bool = True
+    detail: bool = True
+    soft_particles: bool = True
 
     @property
     def name(self):
         return self.scene if self.scene is not None else "custom-asset"
 
-    def launch_environment(self, options, output):
-        if self.suite in ("controls", "gameplay"):
-            return None
+    def write_settings(self, output):
+        settings = {
+            "asset": self.asset if self.asset is not None else f"buildings/{self.scene or 'rectangle'}.destruction.json",
+            "stress": self.stress,
+            "vfx": self.vfx,
+            "detail": self.detail,
+            "soft_particles": self.soft_particles,
+        }
+        lines = ["[demo_settings]"]
+        for key, value in settings.items():
+            # JSON strings and booleans also work in TOML when DEL is escaped.
+            literal = json.dumps(value, ensure_ascii=False).replace("\x7f", r"\u007f")
+            lines.append(f"{key} = {literal}")
+        (output / "settings.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    def launch_environment(self, options, output):
         profile = self.suite == "profile"
+        probe = "smoke" if profile else self.suite
         config = {
-            "asset": self.asset if self.asset is not None else f"buildings/{self.scene}.destruction.json",
-            "probe": "smoke" if profile else self.suite,
+            "probe": None if self.suite in ("controls", "gameplay") else probe,
             "output": str(output.resolve()),
             "capture_replay": options.capture_replay,
             "profile": profile,
-            **{flag: getattr(options, flag) for flag in FEATURE_FLAGS},
         }
         return {SCENARIO_ENV: json.dumps(config)}
 
@@ -97,10 +111,8 @@ def scenarios(options):
         if options.suite == "all":
             return [Scenario("controls", "rectangle"), Scenario("gameplay", "rectangle"), *probes]
         return probes
-    if options.asset is not None:
-        return [Scenario(options.suite, asset=options.asset)]
-    default_scene = PROBE_SCENES.get(options.suite, ("rectangle",))[0]
-    return [Scenario(options.suite, options.scene or default_scene)]
+    scene = PROBE_SCENES.get(options.suite, ("rectangle",))[0]
+    return [Scenario(options.suite, scene)]
 
 
 def read_profile(game, timeout):
@@ -218,7 +230,7 @@ def run_scenario(scenario, options, output):
     args = argparse.Namespace(exe=options.exe, output=output, timeout=options.timeout or NATIVE_TIMEOUT)
     game = AcceptanceGame(suite, args, report, cwd=ROOT, port=options.port,
                           env=scenario.launch_environment(options, output), camera_component=NATIVE_CAMERA)
-    run_suite(game, exercise)
+    run_suite(game, exercise, prepare=lambda: scenario.write_settings(game.output))
     if not native_input and report["checks"][suite]["status"] == "not_run" and not report["passed"]:
         evidence = report["checks"][suite]["evidence"]
         try:
@@ -241,9 +253,6 @@ def parse_args(suite=None, argv=None):
         )
     else:
         parser.set_defaults(suite=suite)
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument("--scene", choices=SCENES)
-    source.add_argument("--asset", help="Asset path relative to the Bevy assets directory")
     parser.add_argument("--exe", type=Path, default=ROOT / "target" / "debug" / BINARY)
     parser.add_argument("--output", type=Path, default=ROOT / "output" / "acceptance")
     parser.add_argument("--port", type=int, default=PORT)
@@ -252,8 +261,6 @@ def parse_args(suite=None, argv=None):
         help=f"Timeout per wait in seconds, defaults to {NATIVE_TIMEOUT} for startup/native input and {PROBE_TIMEOUT} for scripted probes",
     )
     parser.add_argument("--capture-replay", action="store_true")
-    for flag in FEATURE_FLAGS:
-        parser.add_argument("--no-" + flag.replace("_", "-"), dest=flag, action="store_false")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
@@ -261,13 +268,6 @@ def parse_args(suite=None, argv=None):
         parser.error("--timeout must be finite and positive")
     if args.capture_replay and args.suite != "smoke":
         parser.error("--capture-replay requires the smoke suite")
-    if args.suite not in (*PROBE_SCENES, "profile"):
-        if (
-            args.scene is not None
-            or args.asset is not None
-            or not all(getattr(args, flag) for flag in FEATURE_FLAGS)
-        ):
-            parser.error("scene, asset and --no-* overrides require a single Rust probe or profile")
     args.exe = args.exe.resolve()
     args.output = args.output.resolve()
     return args

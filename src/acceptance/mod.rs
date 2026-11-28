@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, time::Duration};
+use std::{env, path::Path, time::Duration};
 
 use avian3d::prelude::Collider;
 use bevy::prelude::*;
@@ -7,9 +7,9 @@ use serde::Deserialize;
 pub use crate::scene::DemoCamera;
 
 use crate::{
-    DemoOptions, DestructionPlugin, ProbeOptions,
+    DemoSettings, DestructionPlugin, ProbeOptions,
     camera::FreeCamera,
-    diagnostics,
+    diagnostics, load_demo_settings,
     physics::Cluster,
     projectiles::{ImpactStats, RigidProjectile},
     scene::{BondInstance, BuildingInstance, ChunkInstance},
@@ -32,30 +32,17 @@ enum Probe {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProbeRun {
-    asset: String,
-    probe: Probe,
-    output: PathBuf,
+struct ScenarioConfig {
+    probe: Option<Probe>,
+    output: String,
     #[serde(default)]
     capture_replay: bool,
     #[serde(default)]
     profile: bool,
-    #[serde(default = "enabled_by_default")]
-    stress: bool,
-    #[serde(default = "enabled_by_default")]
-    vfx: bool,
-    #[serde(default = "enabled_by_default")]
-    detail: bool,
-    #[serde(default = "enabled_by_default")]
-    soft_particles: bool,
-}
-
-const fn enabled_by_default() -> bool {
-    true
 }
 
 pub struct AcceptanceScenario {
-    options: DemoOptions,
+    settings_directory: Option<String>,
     probe_options: ProbeOptions,
     probe: Option<Probe>,
 }
@@ -66,50 +53,57 @@ impl AcceptanceScenario {
             Ok(value) => value,
             Err(env::VarError::NotPresent) => {
                 return Ok(Self {
-                    options: DemoOptions::default(),
+                    settings_directory: None,
                     probe_options: ProbeOptions::default(),
                     probe: None,
                 });
             }
             Err(error) => return Err(format!("{SCENARIO_ENV}: {error}")),
         };
-        let run: ProbeRun =
+        let run: ScenarioConfig =
             serde_json::from_str(&value).map_err(|error| format!("{SCENARIO_ENV}: {error}"))?;
-        if (run.capture_replay || run.profile) && run.probe != Probe::Smoke {
+        if (run.capture_replay || run.profile) && run.probe != Some(Probe::Smoke) {
             return Err("Replay capture and profiling require the smoke probe".into());
         }
         if run.capture_replay && run.profile {
             return Err("Replay capture and profiling are mutually exclusive".into());
         }
 
-        let options = DemoOptions {
-            asset: run.asset,
-            stress: run.stress,
-            vfx: run.vfx,
-            detail: run.detail,
-            soft_particles: run.soft_particles,
-        };
+        let output = Path::new(&run.output);
+        if !output.is_absolute() {
+            return Err(format!("{SCENARIO_ENV}: output directory must be absolute"));
+        }
+        let settings_file = output.join("settings.toml");
+        if !settings_file.is_file() {
+            return Err(format!(
+                "{SCENARIO_ENV}: settings file {} is missing",
+                settings_file.display()
+            ));
+        }
+
         let mut probe_options = ProbeOptions {
             capture_replay: run.capture_replay,
-            smoke_target: Some(smoke_target),
+            smoke_target: run.probe.map(|_| smoke_target),
             profile: run.profile,
             ..default()
         };
-        let output = Some(run.output);
-        match run.probe {
-            Probe::Smoke => probe_options.smoke_output = output,
-            Probe::Physics => probe_options.physics_smoke_output = output,
-            Probe::Stress => probe_options.stress_smoke_output = output,
-            Probe::Material => probe_options.material_smoke_output = output,
-            Probe::Contact => probe_options.contact_smoke_output = output,
-            Probe::Force => probe_options.force_smoke_output = output,
-            Probe::Landing => probe_options.landing_smoke_output = output,
-            Probe::Collapse => probe_options.collapse_smoke_output = output,
+        if let Some(probe) = run.probe {
+            let output = Some(output.to_path_buf());
+            match probe {
+                Probe::Smoke => probe_options.smoke_output = output,
+                Probe::Physics => probe_options.physics_smoke_output = output,
+                Probe::Stress => probe_options.stress_smoke_output = output,
+                Probe::Material => probe_options.material_smoke_output = output,
+                Probe::Contact => probe_options.contact_smoke_output = output,
+                Probe::Force => probe_options.force_smoke_output = output,
+                Probe::Landing => probe_options.landing_smoke_output = output,
+                Probe::Collapse => probe_options.collapse_smoke_output = output,
+            }
         }
         Ok(Self {
-            options,
+            settings_directory: Some(run.output),
             probe_options,
-            probe: Some(run.probe),
+            probe: run.probe,
         })
     }
 
@@ -123,8 +117,12 @@ impl AcceptanceScenario {
 
     pub fn install(self, app: &mut App) {
         let profile = self.profile();
-        app.insert_resource(self.options)
-            .insert_resource(self.probe_options)
+        if let Some(directory) = self.settings_directory {
+            // Bevy joins the app name to its preferences directory. An absolute
+            // path loads the settings directly from this run's output directory.
+            load_demo_settings(app, &directory);
+        }
+        app.insert_resource(self.probe_options)
             .add_plugins(DestructionPlugin);
         let Some(probe) = self.probe else {
             app.init_resource::<GameplayState>()
@@ -176,7 +174,7 @@ struct GameplayState {
 }
 
 fn observe_gameplay(
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     buildings: Query<(Entity, &BuildingInstance, Option<&Children>)>,
     graph: (
         Query<&ChunkInstance>,
@@ -190,7 +188,7 @@ fn observe_gameplay(
 ) {
     let (chunks, bonds, clusters) = graph;
     state.frame += 1;
-    state.asset.clone_from(&options.asset);
+    state.asset.clone_from(&settings.asset);
     let building = buildings.single().ok();
     state.building = building.map(|(entity, _, _)| entity);
     state.load_error = building.and_then(|(_, instance, _)| instance.error.clone());

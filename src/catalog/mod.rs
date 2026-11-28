@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     camera::FreeCamera,
     projectiles::{ResetProjectiles, RigidProjectile},
     scene::BuildingInstance,
@@ -31,7 +31,7 @@ impl Plugin for CatalogPlugin {
 fn switch_scene(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    mut options: ResMut<DemoOptions>,
+    mut settings: ResMut<DemoSettings>,
     probe_options: Res<ProbeOptions>,
     server: Res<AssetServer>,
     instances: Query<Entity, With<BuildingInstance>>,
@@ -64,11 +64,11 @@ fn switch_scene(
     for mut camera in &mut cameras {
         *camera = FreeCamera::default();
     }
-    options.asset = SCENES[index].1.into();
+    settings.asset = SCENES[index].1.into();
     commands.spawn((
         Name::new(SCENES[index].0),
         Transform::IDENTITY,
         Visibility::Visible,
-        BuildingInstance::pending(server.load(options.asset.clone())),
+        BuildingInstance::pending(server.load(settings.asset.clone())),
     ));
 }

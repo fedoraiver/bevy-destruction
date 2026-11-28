@@ -15,7 +15,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions,
+    DemoSettings,
     asset::{
         BondRecord, ChunkRecord, DestructibleAsset, SurfaceRole, mesh_triangles, resolve_building,
     },
@@ -354,7 +354,7 @@ pub struct DetailStats {
     pub cached_triangles: usize,
 }
 
-fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOptions>) {
+fn setup(mut commands: Commands, server: Res<AssetServer>, settings: Res<DemoSettings>) {
     let root = commands
         .spawn_scene(bsn! { Name::new("DemoRoot") Transform::IDENTITY Visibility::Visible })
         .id();
@@ -365,7 +365,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
         Transform::from_xyz(0.0, 3.0, 30.0)
         AmbientLight { brightness: 280.0 }
     }).insert((DemoCamera, FreeCamera::default(), Msaa::Off, ChildOf(root))).id();
-    if options.soft_particles {
+    if settings.soft_particles {
         commands.entity(camera).insert(DepthPrepass);
     }
     commands.spawn_scene(bsn! {
@@ -389,7 +389,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
     commands
         .spawn_scene(bsn! { Name::new("BuildingRoot") Transform::IDENTITY Visibility::Visible })
         .insert((
-            BuildingInstance::pending(server.load(options.asset.clone())),
+            BuildingInstance::pending(server.load(settings.asset.clone())),
             ChildOf(root),
         ));
     commands
@@ -405,12 +405,12 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, options: Res<DemoOpti
 
 fn warm_rim_pipeline(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
     mut rim_materials: ResMut<RimMaterials>,
 ) {
-    if !options.detail {
+    if !settings.detail {
         return;
     }
     // Match the real rim vertex layout, including attached surface coordinates and its prepass.
@@ -543,7 +543,7 @@ fn conditioned_convex_collider(points: &[Vec3]) -> Option<Collider> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_pending(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     server: Res<AssetServer>,
     assets: Res<Assets<DestructibleAsset>>,
     gltfs: Res<Assets<Gltf>>,
@@ -691,7 +691,7 @@ pub(crate) fn instantiate_pending(
         let mut primitive_count = 0;
         for (chunk, collider, density, mass_properties, edges) in prepared {
             let record = &asset.manifest.chunks[chunk.record_index];
-            if options.detail {
+            if settings.detail {
                 rim_materials.get_or_create(&record.material, &mut materials);
             }
             let transform = record.transform();
@@ -824,7 +824,7 @@ pub const DETAIL_TRIANGLE_LIMIT: usize = 180_000;
 #[allow(clippy::too_many_arguments)]
 fn update_details(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     instances: Query<(Entity, &BuildingInstance)>,
     dirty: Query<Entity, (With<BuildingInstance>, With<RefreshDamageDetails>)>,
     chunks: Query<(&ChunkInstance, Option<&Children>)>,
@@ -837,7 +837,7 @@ fn update_details(
     mut detail_cache: ResMut<DetailMeshCache>,
     mut stats: ResMut<DetailStats>,
 ) {
-    if !options.detail || dirty.is_empty() {
+    if !settings.detail || dirty.is_empty() {
         return;
     }
     for building in &dirty {

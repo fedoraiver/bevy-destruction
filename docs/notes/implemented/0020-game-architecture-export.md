@@ -12,7 +12,7 @@
 
 ## 决策与实现
 
-工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块。桌面运行和共享 bevy-cicd 启动器共用游戏插件装配。`build_app()` 使用内置的 `DemoOptions` 默认值，使不同机器能按同一配置导出调度。桌面入口加载用户的 `settings.toml`，无窗验收从独立包选择窗口、输入和渲染配置。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs) · [桌面设置决策](0006-demo-scenes-and-controls.md)
+工作区元数据选择 `apps/game` 的 `bevy-destruction` 包，包元数据指定 `build_app`。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块。桌面运行和共享 bevy-cicd 启动器共用游戏插件装配。`build_app()` 使用内置的 `DemoSettings` 默认值，使不同机器能按同一配置导出调度。桌面入口加载用户的 `settings.toml`。无窗验收从独立包选择窗口、输入和渲染配置，并加载用例目录的 `settings.toml`。[工作区元数据](../../../Cargo.toml) · [桌面包元数据](../../../apps/game/Cargo.toml) · [装配入口](../../../apps/game/src/lib.rs) · [桌面设置决策](0006-demo-scenes-and-controls.md)
 
 ## 备选方案与取舍
 

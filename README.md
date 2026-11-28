@@ -36,7 +36,7 @@ cargo run --locked
 以下示例打开板式高楼，并关闭烟尘与场景交界处的深度淡出。
 
 ```toml
-[demo_options]
+[demo_settings]
 asset = "buildings/highrise_slab.destruction.json"
 stress = true
 vfx = true
@@ -70,7 +70,7 @@ soft_particles = false
 
 ## 导入自己的建筑
 
-使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_options]` 中添加 `asset = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
+使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_settings]` 中添加 `asset = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
 
 ## 开发文档
 
@@ -101,13 +101,15 @@ $acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```
 
-macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。验收程序统一无参数启动，由 Python 脚本选择并准备测试场景。`run.py` 默认运行原生输入 `controls`、交互 `gameplay` 以及 17 个固定帧用例。各用例生成 JSON 报告，固定帧用例另存阶段截图。汇总、日志和截图位于 `output/acceptance/run-*/`，任一用例失败时命令返回非零退出码。
+macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。验收程序统一无参数启动。Python 脚本定义各用例的资产和功能开关，将其写入用例输出目录的 `settings.toml`，由 Bevy 原生设置插件读取。`run.py` 默认运行原生输入 `controls`、交互 `gameplay` 以及 17 个固定帧用例。`output/acceptance/run-*/` 保存汇总、用例设置、报告、日志和阶段截图。任一用例失败时命令返回非零退出码。
 
 ```powershell
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/gameplay.py --exe $acceptanceExe
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/landing.py --scene highrise_slab --exe $acceptanceExe
-.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/smoke.py --scene rectangle --capture-replay --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/landing.py --exe $acceptanceExe
+.\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/smoke.py --capture-replay --exe $acceptanceExe
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/profile.py --exe $acceptanceExe
 ```
 
-`run.py baseline` 单独运行固定帧矩阵。独立探针脚本和 `profile.py` 支持 `--scene`、`--asset`，可用 `--no-stress`、`--no-vfx`、`--no-detail` 和 `--no-soft-particles` 关闭对应功能。`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。
+`run.py baseline` 单独运行固定帧矩阵。单个套件使用脚本定义的场景配置，例如 `landing.py` 加载板式高楼，`smoke.py` 加载矩形楼。可在 `Scenario` 中设置单个用例的开关，例如 `Scenario("smoke", "rectangle", vfx=False)`。[用例定义](scripts/acceptance/run.py)
+
+`--output` 指定输出目录，`--port` 指定 BRP 的本地端口，并行运行时应分配不同端口。`--timeout` 以秒指定单次等待上限。各脚本的选项可通过 `--help` 查看。

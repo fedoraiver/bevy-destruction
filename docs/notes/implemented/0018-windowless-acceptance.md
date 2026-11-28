@@ -4,7 +4,7 @@
 
 2026-11-23 采用。替代旧桌面烟测入口，历史验证记录保留原命令与资产快照。根包和应用构造函数的布局由 [ADR 0019](0019-workspace-app-entrypoints.md) 更新。无窗验收的运行入口与用例继续沿用。
 
-场景选择与启动方式由 [ADR 0022](0022-script-driven-acceptance-scenarios.md) 更新。
+场景选择与启动方式由 [ADR 0022](0022-script-driven-acceptance-scenarios.md) 更新。桌面演示随后改用 Bevy 设置文件。[ADR 0006](0006-demo-scenes-and-controls.md)
 
 ## 背景
 
@@ -13,7 +13,7 @@
 ## 决策与实现
 
 - 初次迁移保留根包 `bevy-destruction` 和公开 `build_app()`，沿用 [ADR 0016](0016-shared-schedule-export.md) 的架构导出入口。新增 workspace 成员 `apps/acceptance`，由 `bevy-destruction-acceptance` 复用游戏插件并安装 `bevy-acceptance-test` 的回环 BRP、逻辑窗口与离屏运行器。桌面与离屏主画面尺寸均为 1920×1080。
-- 验收包通过显式启用 `acceptance-test` feature 构建二进制，并为游戏包开启同名 feature。游戏 feature 提供验收装配、现有固定帧探针和验收所需的 `Reflect` 类型。交互用例读取游戏状态快照，经 BRP 放置相机夹具，再通过 Bevy 原生键鼠消息运行。快照覆盖加载、相机、碎块、连接和撞击物。桌面二进制的命令行只解析演示选项。
+- 验收包通过显式启用 `acceptance-test` feature 构建二进制，并为游戏包开启同名 feature。游戏 feature 提供验收装配、现有固定帧探针和验收所需的 `Reflect` 类型。交互用例读取游戏状态快照，经 BRP 放置相机夹具，再通过 Bevy 原生键鼠消息运行。快照覆盖加载、相机、碎块、连接和撞击物。当时桌面二进制的命令行只解析演示选项。
 - 八类固定帧探针保留 60 Hz 模拟、原有数值和图像断言及阶段产物。固定帧截图同步编译渲染管线。主场景截图使用离屏主目标，材质和接触矩阵保留各自的 512×256 和 512×512 图像。交互用例异步编译管线，并在完整场景入镜后保存首张截图。`profile` 采用同一离屏场景和固定模拟步骤，连续更新并用墙钟帧间隔计算离屏帧率。
 - 通用烟测在最后一次破坏特效后等待至少三个模拟秒，再检查粒子清空。后续真实断裂可延长等待，探针仍在固定帧上限内给出结果。此调整覆盖 [ADR 0008](0008-destruction-effects-and-rims.md) 记录的 L 形楼固定帧回收检查。
 - Python 驱动和 Rust 依赖固定到同一上游提交。`all` 先运行两组真实输入验收，再运行 17 个固定帧组合。驱动保存验收报告、进程日志与汇总，检查探针的退出码、原始报告和产物。渲染验收作为本地命令运行，继续使用现有 CI 工作流。
@@ -24,7 +24,7 @@
 
 ## 验证要求
 
-- 检查 Cargo 锁定构建、workspace 格式和 Clippy，运行应用默认配置与 workspace 的 Rust 回归，确认在默认桌面入口仍可构建和解析演示参数。
+- 检查 Cargo 锁定构建、workspace 格式和 Clippy，运行应用默认配置与 workspace 的 Rust 回归，确认默认桌面入口的构建与启动。
 - 在支持离屏渲染的适配器上运行 `all`，检查 17 个固定帧组合的报告、PNG 尺寸和数量、倾倒 `damage.json`，以及 `controls` 和 `gameplay` 的原生输入与状态证据。
 - 独立运行 `profile` 并确认 BRP 样本、最终墙钟报告及正的离屏帧率。验证无效资源或缺失可执行文件时报告失败，并检查驱动收尾。
 

@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     asset::{BondPatchRecord, ColliderRecord, DestructibleAsset},
     force_debug::{ForceViewStats, ScriptedForceInspection},
     force_samples::{
@@ -1448,7 +1448,7 @@ fn finish(world: &mut World, state: &mut ForceSmokeState, directory: &std::path:
         }
     }
     let heat = heat_report(state);
-    let report = serde_json::json!({"asset":world.resource::<DemoOptions>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"overview_tinted_chunks":state.peak_tinted_chunks,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"actual_impulse_matches_physical_sample":state.saw_real_impulse_readout,"normal_overview_without_arrows":state.saw_normal_without_arrows,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"heat":heat,"errors":state.errors});
+    let report = serde_json::json!({"asset":world.resource::<DemoSettings>().asset,"asset_id":state.asset_id,"schema_version":state.schema_version,"chunk_count":state.chunk_count,"proxy_count":state.proxy_count,"static_bonds":state.peak_static_bonds,"overview_tinted_chunks":state.peak_tinted_chunks,"peak_force_n":state.peak_force_n,"peak_actual_impulse_ns":state.peak_impulse_ns,"actual_impulse_matches_physical_sample":state.saw_real_impulse_readout,"normal_overview_without_arrows":state.saw_normal_without_arrows,"broken_connection_hidden":state.saw_broken_hidden,"overlay_cleared":state.saw_cleared,"screenshots":state.captures.len(),"scene_surface_pixels":state.scene_pixels,"rejected_readbacks":state.rejected_readbacks,"heat":heat,"errors":state.errors});
     std::fs::write(
         directory.join("report.json"),
         serde_json::to_string_pretty(&report).unwrap(),

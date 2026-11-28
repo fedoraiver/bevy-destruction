@@ -2,7 +2,7 @@ use avian3d::prelude::Collider;
 use bevy::{ecs::system::SystemParam, prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     camera::{FlightInput, LOOK_SENSITIVITY, ScriptedFlight},
     debug::{DebugOverlay, FractureEdges},
     diagnostics::RunMetrics,
@@ -51,7 +51,7 @@ struct SmokeState {
 
 #[derive(SystemParam)]
 struct SmokeResources<'w, 's> {
-    options: Res<'w, DemoOptions>,
+    settings: Res<'w, DemoSettings>,
     probe_options: Res<'w, ProbeOptions>,
     chunks: Query<'w, 's, &'static ChunkInstance>,
     children: Query<'w, 's, &'static Children>,
@@ -112,7 +112,7 @@ fn drive(
     mut flight: ResMut<ScriptedFlight>,
 ) {
     let SmokeResources {
-        options,
+        settings,
         probe_options,
         chunks,
         children,
@@ -391,19 +391,19 @@ fn drive(
                 time.elapsed_secs(),
                 state.first_particles
             );
-            let expected = if options.vfx { 64 } else { 0 };
+            let expected = if settings.vfx { 64 } else { 0 };
             if state.first_particles != expected {
                 let count = state.first_particles;
                 state.errors.push(format!(
                     "Expected {expected} scheduled particles from one click, got {count}"
                 ));
             }
-            if options.vfx && (vfx.active[0] == 0 || vfx.scheduled[2] == 0) {
+            if settings.vfx && (vfx.active[0] == 0 || vfx.scheduled[2] == 0) {
                 state
                     .errors
                     .push("Impact and delayed smoke stages were not separated".into());
             }
-            if options.detail && details.is_empty() {
+            if settings.detail && details.is_empty() {
                 state
                     .errors
                     .push("Exposed break has no geometric rim detail".into());
@@ -646,12 +646,12 @@ fn drive(
                     .errors
                     .push("Rim geometry count disagrees with instance state".into());
             }
-            if options.vfx && vfx.feedback_bursts != vfx.received {
+            if settings.vfx && vfx.feedback_bursts != vfx.received {
                 state
                     .errors
                     .push("A new hit lost immediate feedback under saturation".into());
             }
-            let report = serde_json::json!({ "asset": options.asset, "chunks": instance.chunks.len(), "primitives": state.initial_primitives,
+            let report = serde_json::json!({ "asset": settings.asset, "chunks": instance.chunks.len(), "primitives": state.initial_primitives,
                 "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
                 "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time, "last_burst_frame": state.last_burst_frame, "settled_frame": state.settled_frame,
@@ -659,7 +659,7 @@ fn drive(
                 "vfx": {"spawned_by_layer":vfx.spawned,"dropped_by_layer":vfx.dropped,"retired":vfx.retired,"received":vfx.received,"feedback_bursts":vfx.feedback_bursts,"collision_queries":vfx.collision_queries,"collisions":vfx.collisions,"max_update_cpu_ms":vfx.max_update_cpu_ms,"max_emit_cpu_ms":vfx.max_emit_cpu_ms,"estimated_coverage":vfx.estimated_coverage,"peak_estimated_coverage":vfx.peak_estimated_coverage},
                 "detail":{"cached_patches":detail.patches,"cached_meshes":detail.cached_meshes,"cached_triangles":detail.cached_triangles,"active_meshes":detail.active_meshes,"triangles":detail.triangles,"cache_build_ms":detail.cache_build_ms,"max_update_ms":detail.max_update_ms},
                 "asset_counts":{"dust_materials":dust_materials.len(),"meshes":meshes.len()},
-                "metrics":metrics.json(),"replay_frames":state.replay_frames,"settings":{"vfx":options.vfx,"stress":options.stress,"detail":options.detail,"soft_particles":options.soft_particles},"profile":probe_options.profile,"errors": state.errors });
+                "metrics":metrics.json(),"replay_frames":state.replay_frames,"settings":{"vfx":settings.vfx,"stress":settings.stress,"detail":settings.detail,"soft_particles":settings.soft_particles},"profile":probe_options.profile,"errors": state.errors });
             std::fs::write(
                 directory.join("report.json"),
                 serde_json::to_string_pretty(&report).unwrap(),

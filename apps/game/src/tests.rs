@@ -27,7 +27,7 @@ fn demo_settings_load_from_toml() {
     let missing = load();
     fs::write(
         &settings_file,
-        r#"[demo_options]
+        r#"[demo_settings]
 vfx = false
 "#,
     )
@@ -35,7 +35,7 @@ vfx = false
     let partial = load();
     fs::write(
         &settings_file,
-        r#"[demo_options]
+        r#"[demo_settings]
 asset = "buildings/highrise_slab.destruction.json"
 stress = false
 vfx = false
@@ -50,17 +50,17 @@ profile = true
     fs::remove_file(settings_file).unwrap();
     fs::remove_dir(directory).unwrap();
 
-    let options = missing.world().resource::<DemoOptions>();
-    assert_eq!(options.asset, "buildings/rectangle.destruction.json");
-    assert!(options.stress && options.vfx && options.detail && options.soft_particles);
+    let settings = missing.world().resource::<DemoSettings>();
+    assert_eq!(settings.asset, "buildings/rectangle.destruction.json");
+    assert!(settings.stress && settings.vfx && settings.detail && settings.soft_particles);
 
-    let options = partial.world().resource::<DemoOptions>();
-    assert_eq!(options.asset, "buildings/rectangle.destruction.json");
-    assert!(options.stress && !options.vfx && options.detail && options.soft_particles);
+    let settings = partial.world().resource::<DemoSettings>();
+    assert_eq!(settings.asset, "buildings/rectangle.destruction.json");
+    assert!(settings.stress && !settings.vfx && settings.detail && settings.soft_particles);
 
-    let options = configured.world().resource::<DemoOptions>();
-    assert_eq!(options.asset, "buildings/highrise_slab.destruction.json");
-    assert!(!options.stress && !options.vfx && !options.detail && !options.soft_particles);
+    let settings = configured.world().resource::<DemoSettings>();
+    assert_eq!(settings.asset, "buildings/highrise_slab.destruction.json");
+    assert!(!settings.stress && !settings.vfx && !settings.detail && !settings.soft_particles);
     let probe = configured.world().resource::<ProbeOptions>();
     assert!(!probe.scripted() && !probe.profile);
 }
