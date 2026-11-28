@@ -6,6 +6,7 @@ use bevy::{
 
 use crate::{
     ProbeOptions,
+    menu::PauseMenu,
     scene::{BuildingBounds, BuildingInstance, DemoCamera},
 };
 
@@ -83,7 +84,7 @@ fn initial_position(bounds: BuildingBounds, aspect: f32) -> Vec3 {
     Vec3::new(center.x, center.y, bounds.max.z + distance.max(1.0))
 }
 
-fn initialize_camera(
+pub(crate) fn initialize_camera(
     instances: Query<&BuildingInstance>,
     windows: Query<&Window>,
     mut cameras: Query<(&mut Transform, &mut FreeCamera), With<DemoCamera>>,
@@ -130,6 +131,7 @@ fn apply_flight(transform: &mut Transform, camera: &mut FreeCamera, input: Fligh
 pub(crate) fn move_camera(
     time: Res<Time>,
     probe_options: Res<ProbeOptions>,
+    menu: Option<Res<PauseMenu>>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mouse: Res<AccumulatedMouseMotion>,
@@ -144,7 +146,10 @@ pub(crate) fn move_camera(
     };
     control.suppress_click = false;
     let smoke = probe_options.scripted();
-    if !smoke {
+    if menu.is_some_and(|menu| menu.open) {
+        control.captured = false;
+        control.suppress_click = true;
+    } else if !smoke {
         if !window.focused {
             control.captured = false;
         } else if keys.just_pressed(KeyCode::Tab) {

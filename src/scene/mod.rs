@@ -26,6 +26,7 @@ use crate::{
     material::{
         BuildingMaterial, SurfaceMeshCache, building_material, rim_material, surface_coordinates,
     },
+    menu::PendingReload,
     physics::NeedsClusterRebuild,
 };
 
@@ -62,6 +63,9 @@ pub struct DemoCamera;
 
 #[derive(Component)]
 struct Hint;
+
+#[derive(Component)]
+pub(crate) struct DemoRoot;
 
 #[derive(Clone, Copy, Debug)]
 pub struct BuildingBounds {
@@ -357,6 +361,7 @@ pub struct DetailStats {
 fn setup(mut commands: Commands, server: Res<AssetServer>, settings: Res<DemoSettings>) {
     let root = commands
         .spawn_scene(bsn! { Name::new("DemoRoot") Transform::IDENTITY Visibility::Visible })
+        .insert(DemoRoot)
         .id();
     let camera = commands.spawn_scene(bsn! {
         Name::new("Free flight camera")
@@ -386,12 +391,17 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, settings: Res<DemoSet
             Transform::from_xyz(-10.0, 14.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y)
         })
         .insert(ChildOf(root));
+    let building = match settings.scene_path() {
+        Ok(path) => BuildingInstance::pending(server.load(path.to_owned())),
+        Err(error) => {
+            let mut building = BuildingInstance::pending(Handle::default());
+            building.error = Some(error.into());
+            building
+        }
+    };
     commands
         .spawn_scene(bsn! { Name::new("BuildingRoot") Transform::IDENTITY Visibility::Visible })
-        .insert((
-            BuildingInstance::pending(server.load(settings.asset.clone())),
-            ChildOf(root),
-        ));
+        .insert((building, ChildOf(root)));
     commands
         .spawn_scene(bsn! {
             Name::new("Building status")
@@ -552,14 +562,15 @@ pub(crate) fn instantiate_pending(
     mut meshes: ResMut<Assets<Mesh>>,
     gltf_materials: Res<Assets<GltfMaterial>>,
     mut materials: ResMut<Assets<BuildingMaterial>>,
-    mut instances: Query<(Entity, &mut BuildingInstance)>,
+    mut instances: Query<(Entity, &mut BuildingInstance, Option<&PendingReload>)>,
     mut cache: ResMut<GeometryCache>,
     mut rim_materials: ResMut<RimMaterials>,
     mut stats: ResMut<DetailStats>,
     mut surface_meshes: ResMut<SurfaceMeshCache>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    for (root, mut instance) in &mut instances {
+    for (root, mut instance, reload) in &mut instances {
+        let settings = reload.map_or(&*settings, |reload| &reload.settings);
         if instance.bounds.is_some() || instance.error.is_some() {
             continue;
         }
@@ -769,10 +780,13 @@ pub(crate) fn instantiate_pending(
 }
 
 fn update_hint(
-    instances: Query<(
-        &BuildingInstance,
-        Option<&crate::stress_runtime::StressState>,
-    )>,
+    instances: Query<
+        (
+            &BuildingInstance,
+            Option<&crate::stress_runtime::StressState>,
+        ),
+        Without<PendingReload>,
+    >,
     chunks: Query<&ChunkInstance>,
     mut hints: Query<&mut Text, With<Hint>>,
 ) {

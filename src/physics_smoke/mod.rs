@@ -222,19 +222,19 @@ fn drive(
     let Some((building, instance)) = instances.iter().next() else {
         if state.waiting == 1800 {
             state.errors.push("Building did not appear".into());
-            finish(&state, &settings.asset, directory, &mut exit);
+            finish(&state, &settings.scene, directory, &mut exit);
         }
         return;
     };
     if let Some(error) = &instance.error {
         state.errors.push(format!("Building load failed: {error}"));
-        finish(&state, &settings.asset, directory, &mut exit);
+        finish(&state, &settings.scene, directory, &mut exit);
         return;
     }
     let Some(bounds) = instance.bounds else {
         if state.waiting == 1800 {
             state.errors.push("Building did not finish loading".into());
-            finish(&state, &settings.asset, directory, &mut exit);
+            finish(&state, &settings.scene, directory, &mut exit);
         }
         return;
     };
@@ -251,7 +251,7 @@ fn drive(
             state
                 .errors
                 .push("Building has no physical clusters".into());
-            finish(&state, &settings.asset, directory, &mut exit);
+            finish(&state, &settings.scene, directory, &mut exit);
         }
         return;
     }
@@ -300,7 +300,7 @@ fn drive(
                 state
                     .errors
                     .push("Asset has no bonded nonanchored roof pair".into());
-                finish(&state, &settings.asset, directory, &mut exit);
+                finish(&state, &settings.scene, directory, &mut exit);
                 return;
             };
             state.expected_mass = selected
@@ -505,7 +505,7 @@ fn drive(
                         .push(format!("Missing physics screenshot {name}"));
                 }
             }
-            finish(&state, &settings.asset, directory, &mut exit);
+            finish(&state, &settings.scene, directory, &mut exit);
         }
         _ => {}
     }

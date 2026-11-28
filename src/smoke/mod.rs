@@ -651,7 +651,7 @@ fn drive(
                     .errors
                     .push("A new hit lost immediate feedback under saturation".into());
             }
-            let report = serde_json::json!({ "asset": settings.asset, "chunks": instance.chunks.len(), "primitives": state.initial_primitives,
+            let report = serde_json::json!({ "asset": settings.scene, "chunks": instance.chunks.len(), "primitives": state.initial_primitives,
                 "renderer":{"adapter":adapter.name,"backend":format!("{:?}",adapter.backend),"physical_resolution":windows.single().ok().map(|(_,window)|[window.physical_width(),window.physical_height()])},
                 "first_click_removed": state.first_removed, "first_click_particles": state.first_particles, "peak_particles": state.peak_particles, "particle_limit": PARTICLE_LIMIT,
                 "remaining_particles": particles.iter().len(), "camera_flight_checks": state.camera_checks, "stress_to_end_seconds": time.elapsed_secs() - state.stress_time, "last_burst_frame": state.last_burst_frame, "settled_frame": state.settled_frame,

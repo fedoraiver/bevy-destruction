@@ -102,7 +102,7 @@ fn drive(
         std::fs::create_dir_all(directory).expect("Create landing output");
         std::fs::write(
             directory.join("report.json"),
-            serde_json::json!({"asset":settings.asset,"errors":[error]}).to_string(),
+            serde_json::json!({"asset":settings.scene,"errors":[error]}).to_string(),
         )
         .unwrap();
         exit.write(AppExit::error());
@@ -352,7 +352,7 @@ fn drive(
                 }
             }
             let impacts = state.final_impacts.as_ref().unwrap();
-            let report = serde_json::json!({"asset":settings.asset,"snapshot_frame":500,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
+            let report = serde_json::json!({"asset":settings.scene,"snapshot_frame":500,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
                 "cut_height":state.cut,"initial_upper_mass":state.initial_mass,"first_impact_frame":state.first_impact,
                 "largest_final_cluster":state.largest_final,"internal_bonds_broken":state.internal_broken,"finite_body_state":state.finite,
                 "final_cluster_sizes":state.final_cluster_sizes,"retained_internal_bonds":state.retained_internal_bonds,

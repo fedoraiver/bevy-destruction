@@ -188,7 +188,7 @@ fn observe_gameplay(
 ) {
     let (chunks, bonds, clusters) = graph;
     state.frame += 1;
-    state.asset.clone_from(&settings.asset);
+    state.asset.clone_from(&settings.scene);
     let building = buildings.single().ok();
     state.building = building.map(|(entity, _, _)| entity);
     state.load_error = building.and_then(|(_, instance, _)| instance.error.clone());
