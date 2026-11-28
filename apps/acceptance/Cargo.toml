@@ -14,4 +14,4 @@ acceptance-test = ["dep:bevy", "dep:bevy-destruction", "dep:bevy-acceptance-test
 [dependencies]
 bevy = { workspace = true, optional = true }
 bevy-destruction = { path = "../game", features = ["brp"], optional = true }
-bevy-acceptance-test = { git = "https://github.com/fedoraiver/bevy-acceptance-test.git", rev = "4a50239b27fd6c05e49ce7662832d718e094d95c", optional = true }
+bevy-acceptance-test = { git = "https://github.com/fedoraiver/bevy-acceptance-test.git", branch = "master", optional = true }
