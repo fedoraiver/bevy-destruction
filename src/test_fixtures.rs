@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
@@ -19,6 +21,11 @@ pub(crate) const RIGHT_SUPPORT: &str = "b-right-column";
 pub(crate) const BEAM: &str = "c-beam";
 pub(crate) const LEFT_BOND: &str = "left-beam";
 pub(crate) const RIGHT_BOND: &str = "right-beam";
+
+pub(crate) fn asset_root() -> &'static Path {
+    // Cargo runs the game library tests from apps/game.
+    Path::new("../../assets")
+}
 
 pub(crate) fn beam_manifest() -> Manifest {
     let mut manifest = Manifest {

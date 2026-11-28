@@ -625,7 +625,7 @@ fn fixture_geometry(manifest: &Manifest, bytes: &[u8]) -> BTreeMap<String, Surfa
 
 #[test]
 fn bundled_contact_caches_match_every_bond_and_cache_only_real_exterior_rims() {
-    let directory = crate::asset_root().join("buildings");
+    let directory = crate::test_fixtures::asset_root().join("buildings");
     for name in [
         "rectangle",
         "l_shape",

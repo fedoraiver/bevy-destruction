@@ -62,7 +62,7 @@ soft_particles = false
 
 ## 导入自己的建筑
 
-使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_settings]` 中添加 `scene = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从构建时工作区的 `assets/` 读取文件。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
+使用 Blender 工具把建筑导出为 v2 清单及配套 GLB，将两者放在 `assets/buildings/`。在 `settings.toml` 的 `[demo_settings]` 中添加 `scene = "buildings/文件名.destruction.json"` 后启动。GLB 必须与清单中的文件名和内容哈希匹配。运行时从启动工作目录的 `assets/` 读取文件。直接运行可执行文件时，从包含 `assets/` 的目录启动。[Blender 工具](tools/blender/README.md) · [v2 资产格式](tools/blender/ASSET_FORMAT.md)
 
 ## 开发文档
 
@@ -93,7 +93,7 @@ $acceptanceExe = 'target/release/bevy-destruction-acceptance.exe'
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/run.py --exe $acceptanceExe
 ```
 
-macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。Python 在每个用例启动前把资产和开关写入系统偏好目录的默认 `settings.toml`，退出验收游戏后恢复原文件。验收脚本通过 BRP 读取 ECS、发送输入、截图并保存结果。`run.py` 默认运行 `controls`、`gameplay` 和 17 个场景组合，汇总、报告、日志和截图位于 `output/acceptance/run-*/`。
+macOS 和 Linux 使用 `tmp/acceptance-venv/bin/python`，可执行文件省去 `.exe`。Python 在每个用例启动前把资产和开关写入系统偏好目录的默认 `settings.toml`，从仓库根目录启动无窗进程，并在进程退出后恢复原文件。验收脚本通过 BRP 读取 ECS、发送输入、截图并保存结果。`run.py` 默认运行 `controls`、`gameplay` 和 17 个场景组合，汇总、报告、日志和截图位于 `output/acceptance/run-*/`。
 
 ```powershell
 .\tmp\acceptance-venv\Scripts\python.exe scripts/acceptance/gameplay.py --exe $acceptanceExe
