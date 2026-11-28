@@ -4,7 +4,7 @@ use avian3d::{collision::contact_types::ContactGraph, prelude::*};
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     asset::{DestructibleAsset, Manifest},
     debug::FractureEdges,
     diagnostics::RunMetrics,
@@ -371,7 +371,7 @@ fn finish(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     probe_options: Res<ProbeOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<CollapseState>,
@@ -413,13 +413,13 @@ fn drive(
         std::fs::create_dir_all(directory).expect("Create collapse output");
         state.initialized = true;
         state.finite = true;
-        if options.asset != RECTANGLE {
+        if settings.asset != RECTANGLE {
             state
                 .errors
-                .push("Collapse validation requires --scene rectangle".into());
+                .push("Collapse validation requires the rectangle asset".into());
             finish(
                 &mut state,
-                &options.asset,
+                &settings.asset,
                 &probe_options,
                 &metrics,
                 &mut exit,
@@ -434,7 +434,7 @@ fn drive(
             .push("Rectangle or initial static solution did not finish loading".into());
         finish(
             &mut state,
-            &options.asset,
+            &settings.asset,
             &probe_options,
             &metrics,
             &mut exit,
@@ -449,7 +449,7 @@ fn drive(
         state.errors.push(format!("Rectangle load failed: {error}"));
         finish(
             &mut state,
-            &options.asset,
+            &settings.asset,
             &probe_options,
             &metrics,
             &mut exit,
@@ -613,7 +613,7 @@ fn drive(
                     state.errors.push(error);
                     finish(
                         &mut state,
-                        &options.asset,
+                        &settings.asset,
                         &probe_options,
                         &metrics,
                         &mut exit,
@@ -674,7 +674,7 @@ fn drive(
             }
             commands.entity(building).insert(NeedsClusterRebuild);
             let damage = serde_json::json!({
-                "asset":options.asset,"frame_after_warmup":state.frame,
+                "asset":settings.asset,"frame_after_warmup":state.frame,
                 "predicate":"foundation-adjacent interior start, minimum-mass multi-piece support path to the next floor",
                 "retained_support_path":state.support_path,"static_stub_candidate":state.static_stub,
                 "removed_ids":state.removed,"retained_chunks":instance.chunks.len()-state.removed.len(),
@@ -732,7 +732,7 @@ fn drive(
             }
             finish(
                 &mut state,
-                &options.asset,
+                &settings.asset,
                 &probe_options,
                 &metrics,
                 &mut exit,

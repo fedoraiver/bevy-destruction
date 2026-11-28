@@ -126,7 +126,7 @@ fn rejected_asset_writes_its_failure_report_without_waiting_for_geometry() {
         std::process::id()
     ));
     let mut world = World::new();
-    world.insert_resource(DemoOptions::default());
+    world.insert_resource(DemoSettings::default());
     world.init_resource::<Messages<AppExit>>();
     let mut instance = BuildingInstance::pending(Handle::default());
     instance.error = Some("fixture: missing required contact facets".into());

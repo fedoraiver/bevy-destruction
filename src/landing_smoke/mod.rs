@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     asset::DestructibleAsset,
     debug::FractureEdges,
     diagnostics::RunMetrics,
@@ -68,7 +68,7 @@ fn capture(commands: &mut Commands, probe_options: &ProbeOptions, name: &str) {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    settings: Res<DemoSettings>,
     probe_options: Res<ProbeOptions>,
     assets: Res<Assets<DestructibleAsset>>,
     mut state: ResMut<LandingState>,
@@ -102,7 +102,7 @@ fn drive(
         std::fs::create_dir_all(directory).expect("Create landing output");
         std::fs::write(
             directory.join("report.json"),
-            serde_json::json!({"asset":options.asset,"errors":[error]}).to_string(),
+            serde_json::json!({"asset":settings.asset,"errors":[error]}).to_string(),
         )
         .unwrap();
         exit.write(AppExit::error());
@@ -179,8 +179,7 @@ fn drive(
                 .collect();
             if bounds.max.y - bounds.min.y < 12.0 {
                 state.errors.push(
-                    "Landing validation requires a tall building (use --scene highrise_slab)"
-                        .into(),
+                    "Landing validation requires a tall building such as highrise_slab".into(),
                 );
             }
             state.initial_mass = state
@@ -353,7 +352,7 @@ fn drive(
                 }
             }
             let impacts = state.final_impacts.as_ref().unwrap();
-            let report = serde_json::json!({"asset":options.asset,"snapshot_frame":500,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
+            let report = serde_json::json!({"asset":settings.asset,"snapshot_frame":500,"initial_upper_chunks":state.upper.len(),"initial_upper_bonds":state.initial_bonds,
                 "cut_height":state.cut,"initial_upper_mass":state.initial_mass,"first_impact_frame":state.first_impact,
                 "largest_final_cluster":state.largest_final,"internal_bonds_broken":state.internal_broken,"finite_body_state":state.finite,
                 "final_cluster_sizes":state.final_cluster_sizes,"retained_internal_bonds":state.retained_internal_bonds,

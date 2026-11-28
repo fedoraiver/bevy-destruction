@@ -167,7 +167,7 @@ fn detail_app() -> App {
         .init_resource::<RimMaterials>()
         .init_resource::<DetailMeshCache>()
         .init_resource::<DetailStats>()
-        .insert_resource(DemoOptions::default())
+        .insert_resource(DemoSettings::default())
         .add_systems(Update, update_details);
     app
 }

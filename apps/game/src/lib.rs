@@ -91,8 +91,8 @@ pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
 
 #[derive(Reflect, Resource, SettingsGroup)]
 #[reflect(Resource, Default, SettingsGroup)]
-#[settings_group(group = "demo_options")]
-pub struct DemoOptions {
+#[settings_group(group = "demo_settings")]
+pub struct DemoSettings {
     asset: String,
     stress: bool,
     vfx: bool,
@@ -100,7 +100,7 @@ pub struct DemoOptions {
     soft_particles: bool,
 }
 
-impl Default for DemoOptions {
+impl Default for DemoSettings {
     fn default() -> Self {
         Self {
             asset: "buildings/rectangle.destruction.json".into(),
@@ -221,7 +221,7 @@ fn prepare_app(settings_app_name: Option<&str>) -> App {
 }
 
 fn load_demo_settings(app: &mut App, app_name: &str) {
-    app.register_type::<DemoOptions>()
+    app.register_type::<DemoSettings>()
         .add_plugins(SettingsPlugin::new(app_name));
 }
 
@@ -229,15 +229,15 @@ pub struct DestructionPlugin;
 
 impl Plugin for DestructionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DemoOptions>()
+        app.init_resource::<DemoSettings>()
             .init_resource::<ProbeOptions>();
-        let options = app.world().resource::<DemoOptions>();
+        let settings = app.world().resource::<DemoSettings>();
         let vfx_settings = vfx::VfxSettings {
-            enabled: options.vfx,
+            enabled: settings.vfx,
             ..default()
         };
         let stress_settings = stress_runtime::StressSettings {
-            enabled: options.stress,
+            enabled: settings.stress,
             ..default()
         };
         app.insert_resource(vfx_settings)

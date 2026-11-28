@@ -14,7 +14,7 @@
 
 2026-11-24 调试边线绘制由 Bevy 调度条件控制。
 
-2026-11-28 桌面启动设置迁移到 Bevy 原生 `SettingsPlugin`。
+2026-11-28 桌面和无窗验收的启动设置迁移到 Bevy 原生 `SettingsPlugin`。
 
 ## 背景
 
@@ -38,7 +38,7 @@
 | F5 | `courtyard` | 有庭院的两层楼 |
 | F6 | `l_shape` | L 形三层楼 |
 
-桌面启动时，Bevy 原生 `SettingsPlugin` 从系统偏好目录的 `io.github.fedoraiver.bevy-destruction/settings.toml` 读取 `[demo_options]`，在 `DestructionPlugin` 初始化前填充 `DemoOptions`。`asset` 指定相对资产目录的 v2 清单，默认加载矩形楼。`stress`、`vfx`、`detail` 和 `soft_particles` 均为默认启用的布尔开关。架构导出使用默认值。无窗入口根据脚本传入的场景配置初始化 `DemoOptions`，验收专用参数存放在独立的 `ProbeOptions` 资源中。[桌面设置](../../../README.md#桌面设置) · [架构导出](0020-game-architecture-export.md) · [无窗验收](0022-script-driven-acceptance-scenarios.md)
+Bevy 原生 `SettingsPlugin` 在 `DestructionPlugin` 初始化前读取 `settings.toml` 的 `[demo_settings]`，填充 `DemoSettings`。桌面入口使用系统偏好目录下的 `io.github.fedoraiver.bevy-destruction/`，无窗验收使用用例的输出目录。`asset` 指定相对资产目录的 v2 清单，默认加载矩形楼。`stress`、`vfx`、`detail` 和 `soft_particles` 均为默认启用的布尔开关。架构导出使用默认值，验收专用参数存放在独立的 `ProbeOptions` 资源中。[桌面设置](../../../README.md#桌面设置) · [架构导出](0020-game-architecture-export.md) · [无窗验收](0022-script-driven-acceptance-scenarios.md)
 
 交互场景切换只影响当前运行，会清除上一场景的实例、撞击物、待处理冲量、外加载荷和粒子状态，重置取景。制作参数及每个正式资产 ID 见 [ADR 0004](0004-blender-asset-pipeline.md)。
 
@@ -66,7 +66,8 @@
 - 场景重置回归通过，验证旧发射、接触和统计清零，并保留同一 `Update` 的新发射输入。矩形场景 `controls` 无窗验收覆盖真实 F 键切换场景，已通过。
 - 邻面距离回归通过，覆盖边中部、有限边端点、面内容差以及倾斜面的命中轴深度。矩形场景 `smoke` 无窗验收通过。
 - 最终正式矩形在引擎中通过点击、重复实例化及偏侧支撑倾倒。细长代理修复提交 `dfd8205` 的六场景 Collider 构造回归通过，正式 L 形通过关闭 VFX 的交互回放。该次默认 VFX 的 L 形回放通过加载及首击，粒子回收检查失败。
-- 设置回归通过，覆盖隔离 TOML 中的资产与四个开关、缺失文件、部分字段和探针参数隔离。无窗 `controls` 验收通过场景快捷键检查。矩形场景的 `smoke` 在四个开关关闭时通过，报告确认四项为 `false`，首击粒子数和边带三角形数均为零。
+- 初次迁移桌面设置时，矩形楼的旧版 `smoke` 验收在四个开关关闭时通过。报告确认四项均为 `false`，首击粒子数和边带三角形数均为零。
+- 设置回归通过，覆盖隔离 TOML 中的资产与四个开关、缺失文件、部分字段和探针参数隔离。无窗验收的设置加载与产物验证见 [ADR 0022](0022-script-driven-acceptance-scenarios.md#验证要求与结果)。
 - 当前相机为固定默认速度与灵敏度的无碰撞自由飞行。行走或相机碰撞需单独设计与验证。
 
 ## 来源

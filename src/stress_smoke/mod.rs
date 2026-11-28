@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 
 use crate::{
-    DemoOptions, ProbeOptions,
+    DemoSettings, ProbeOptions,
     asset::{
         AnchorRecord, BondPatchRecord, BondRecord, ChunkRecord, ColliderRecord, Coordinates,
         DestructibleAsset, Manifest, PhysicalMaterial,
@@ -332,7 +332,7 @@ fn capture(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive(
     mut commands: Commands,
-    options: Res<DemoOptions>,
+    demo_settings: Res<DemoSettings>,
     probe_options: Res<ProbeOptions>,
     mut state: ResMut<StressSmokeState>,
     mut settings: ResMut<StressSettings>,
@@ -368,7 +368,7 @@ fn drive(
     };
     if let Some(error) = &building.error {
         state.errors.push(format!("Building load failed: {error}"));
-        finish(&state, &options.asset, directory, &mut exit);
+        finish(&state, &demo_settings.asset, directory, &mut exit);
         return;
     }
     let Some(stress) = stress.filter(|stress| stress.solves > 0) else {
@@ -376,7 +376,7 @@ fn drive(
             state
                 .errors
                 .push("Initial selfweight solve did not complete".into());
-            finish(&state, &options.asset, directory, &mut exit);
+            finish(&state, &demo_settings.asset, directory, &mut exit);
         }
         return;
     };
@@ -391,7 +391,7 @@ fn drive(
         state
             .errors
             .push("Intact shipped building was unstable or its stress solve failed".into());
-        finish(&state, &options.asset, directory, &mut exit);
+        finish(&state, &demo_settings.asset, directory, &mut exit);
         return;
     }
     let probe = state.probe.and_then(|root| probes.get(root).ok());
@@ -642,7 +642,7 @@ fn drive(
                         .push(format!("Missing stress screenshot {name}"));
                 }
             }
-            finish(&state, &options.asset, directory, &mut exit);
+            finish(&state, &demo_settings.asset, directory, &mut exit);
         }
         _ => {}
     }
