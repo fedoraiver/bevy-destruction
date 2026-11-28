@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.vfs.extraIncludes": [
+        "${workspaceFolder}"
+    ],
+    "rust-analyzer.files.exclude": [
+        "tmp"
+    ]
+}
