@@ -21,7 +21,7 @@
 ## 场景装配与模块
 
 - 用 `bsn!` 和 `spawn_scene` 声明适合组合的场景、UI、初始组件及子实体。运行时交互和逐帧更新放在系统或 Observer 中，动态计算的实体可用 `Commands` 或在必要时用 `World` 创建。[演示场景](../src/scene/mod.rs) · [撞击物生成](../src/projectiles/mod.rs)
-- 按功能模块保持类型和系统的归属，需要初始化 ECS 数据或注册系统的功能通过 Plugin 封装装配。`apps/game/src/lib.rs` 引入仓库 `src/` 中的功能模块，由 `DestructionPlugin` 组合建筑破坏功能。桌面和无窗入口分别配置 Bevy 的运行器、窗口和验收选项。[桌面装配](../apps/game/src/lib.rs) · [无窗入口](../apps/acceptance/src/main.rs)
+- 按功能模块保持类型和系统的归属，需要初始化 ECS 数据或注册系统的功能通过 Plugin 封装装配。游戏库的 `build_app()` 直接安装各功能插件，供桌面入口和架构导出调用。无窗入口独立安装同一组功能插件，并配置运行器、逻辑窗口与离屏渲染。[桌面装配](../apps/game/src/lib.rs) · [无窗入口](../apps/acceptance/src/main.rs)
 - 有独立业务含义的常量保留在负责该语义的模块，名称或注释注明单位与容差。注释解释调度、数值条件及生命周期等不易从代码读出的约束。优化缓存或存储前先测量，使用变更检测或条件运行时保留对连续模拟的覆盖。[撞击参数](../src/projectiles/mod.rs) · [应力缓存](../src/stress_runtime/mod.rs)
 
 ## 检查与验证

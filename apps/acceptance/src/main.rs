@@ -6,7 +6,11 @@ use bevy::{
 };
 use bevy_acceptance_test::{AcceptanceCamera, AcceptancePlugin};
 use bevy_destruction::{
-    DEFAULT_VIEWPORT, DemoCamera, DemoSettings, DestructionPlugin, SETTINGS_APP_NAME,
+    BuildingMaterialPlugin, DEFAULT_VIEWPORT, DemoCamera, DemoScenePlugin, DemoSettings,
+    DestructibleAssetPlugin, DestructionPhysicsPlugin, DustMaterialPlugin, ForceDebugPlugin,
+    FractureDebugPlugin, FreeCameraPlugin, InteractionPlugin, PauseMenuPlugin, PhysicsPlugins,
+    ProjectilePlugin, SETTINGS_APP_NAME, StressRuntimePlugin, StressSettings, VfxPlugin,
+    VfxSettings,
 };
 
 fn main() -> AppExit {
@@ -40,6 +44,36 @@ fn main() -> AppExit {
         .register_required_components::<DemoCamera, IsDefaultUiCamera>()
         .register_type::<DemoSettings>()
         .add_plugins(SettingsPlugin::new(SETTINGS_APP_NAME))
-        .add_plugins(DestructionPlugin);
+        .init_resource::<DemoSettings>();
+
+    let settings = app.world().resource::<DemoSettings>();
+    let stress = StressSettings {
+        enabled: settings.stress,
+        ..default()
+    };
+    let vfx = VfxSettings {
+        enabled: settings.vfx,
+        ..default()
+    };
+    app.insert_resource(stress)
+        .insert_resource(vfx)
+        .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .add_plugins((
+            PhysicsPlugins::default(),
+            DestructibleAssetPlugin,
+            BuildingMaterialPlugin,
+            DustMaterialPlugin,
+            FractureDebugPlugin,
+            ForceDebugPlugin,
+            DemoScenePlugin,
+            DestructionPhysicsPlugin,
+            FreeCameraPlugin,
+            InteractionPlugin,
+            VfxPlugin,
+            StressRuntimePlugin,
+            ProjectilePlugin,
+            PauseMenuPlugin,
+        ));
     app.run()
 }

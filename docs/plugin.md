@@ -57,4 +57,4 @@ Avian 已在接触阶段施加冲量。破坏系统读取新的有效接触，�
 
 ## 源码入口
 
-游戏包从 `apps/game/src/lib.rs` 引入 `src/` 下的功能模块，并通过 `DestructionPlugin` 安装 Avian、场景、暂停菜单、交互、诊断与特效插件。桌面和无窗入口各自装配 Bevy，从系统偏好目录通过原生 `SettingsPlugin` 读取 `DemoSettings`，再安装游戏插件。无窗入口增加 BRP 和离屏渲染配置。ECS 架构导出使用 `build_app()` 以默认演示设置装配。[桌面设置](../README.md#桌面设置) · [桌面装配](../apps/game/src/lib.rs) · [无窗装配](../apps/acceptance/src/main.rs)
+游戏库的 `build_app()` 以默认演示设置直接安装 Avian、场景、暂停菜单、交互、诊断与特效插件，也是 ECS 架构导出的入口。桌面入口调用 `build_app()` 后，通过 Bevy 原生 `SettingsPlugin` 读取系统偏好目录的 `DemoSettings`，在运行前更新应力和特效资源。无窗入口独立读取同一份设置并安装各功能插件，同时配置 BRP 和离屏渲染。[桌面设置](../README.md#桌面设置) · [桌面入口](../apps/game/src/main.rs) · [无窗入口](../apps/acceptance/src/main.rs)
