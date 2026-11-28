@@ -28,7 +28,7 @@ impl Plugin for InteractionPlugin {
 }
 
 #[derive(Message)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Message))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Message))]
 pub(crate) struct DamageRequest {
     pub ray: Ray3d,
 }

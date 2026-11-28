@@ -33,6 +33,8 @@ mod projectiles;
 mod rim_profile;
 #[path = "../../../src/scene/mod.rs"]
 mod scene;
+#[path = "../../../src/settings.rs"]
+mod settings;
 #[path = "../../../src/stress/mod.rs"]
 mod stress;
 #[path = "../../../src/stress_runtime/mod.rs"]
@@ -44,16 +46,12 @@ mod vfx;
 
 use std::path::{Path, PathBuf};
 
-use bevy::{
-    prelude::*,
-    settings::{ReflectSettingsGroup, SettingsGroup},
-};
+use bevy::prelude::*;
 
 #[cfg(test)]
 #[path = "../../../src/test_fixtures.rs"]
 mod test_fixtures;
 
-#[cfg(feature = "acceptance-test")]
 pub use {
     asset::DestructibleAssetPlugin,
     avian3d::prelude::PhysicsPlugins,
@@ -67,53 +65,12 @@ pub use {
     physics::DestructionPhysicsPlugin,
     projectiles::ProjectilePlugin,
     scene::{DemoCamera, DemoScenePlugin},
-    stress_runtime::StressRuntimePlugin,
-    vfx::VfxPlugin,
+    settings::{DemoSettings, SETTINGS_APP_NAME},
+    stress_runtime::{StressRuntimePlugin, StressSettings},
+    vfx::{VfxPlugin, VfxSettings},
 };
-pub use {stress_runtime::StressSettings, vfx::VfxSettings};
-
-pub const SETTINGS_APP_NAME: &str = "io.github.fedoraiver.bevy-destruction";
 
 pub const DEFAULT_VIEWPORT: UVec2 = UVec2::new(1920, 1080);
-
-#[derive(Clone, Reflect, Resource, SettingsGroup)]
-#[reflect(Resource, Default, SettingsGroup)]
-#[settings_group(group = "demo_settings")]
-pub struct DemoSettings {
-    scene: String,
-    pub stress: bool,
-    pub vfx: bool,
-    detail: bool,
-    soft_particles: bool,
-}
-
-impl Default for DemoSettings {
-    fn default() -> Self {
-        Self {
-            scene: "buildings/rectangle.destruction.json".into(),
-            stress: true,
-            vfx: true,
-            detail: true,
-            soft_particles: true,
-        }
-    }
-}
-
-impl DemoSettings {
-    fn scene_path(&self) -> Result<&str, &'static str> {
-        use std::path::Component;
-
-        if !self.scene.ends_with(".destruction.json")
-            || self.scene.contains([':', '#'])
-            || !Path::new(&self.scene)
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return Err("Scene must be a .destruction.json path relative to assets/.");
-        }
-        Ok(&self.scene)
-    }
-}
 
 fn asset_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -145,20 +102,20 @@ pub fn build_app() -> App {
     .insert_resource(ClearColor(Color::srgb(0.075, 0.09, 0.12)))
     .insert_resource(Time::<Fixed>::from_hz(60.0))
     .add_plugins((
-        avian3d::prelude::PhysicsPlugins::default(),
-        asset::DestructibleAssetPlugin,
-        material::BuildingMaterialPlugin,
-        dust_material::DustMaterialPlugin,
-        debug::FractureDebugPlugin,
-        force_debug::ForceDebugPlugin,
-        scene::DemoScenePlugin,
-        physics::DestructionPhysicsPlugin,
-        camera::FreeCameraPlugin,
-        interaction::InteractionPlugin,
-        vfx::VfxPlugin,
-        stress_runtime::StressRuntimePlugin,
-        projectiles::ProjectilePlugin,
-        menu::PauseMenuPlugin,
+        PhysicsPlugins::default(),
+        DestructibleAssetPlugin,
+        BuildingMaterialPlugin,
+        DustMaterialPlugin,
+        FractureDebugPlugin,
+        ForceDebugPlugin,
+        DemoScenePlugin,
+        DestructionPhysicsPlugin,
+        FreeCameraPlugin,
+        InteractionPlugin,
+        VfxPlugin,
+        StressRuntimePlugin,
+        ProjectilePlugin,
+        PauseMenuPlugin,
     ));
     app
 }

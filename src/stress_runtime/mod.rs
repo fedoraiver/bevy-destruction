@@ -33,7 +33,7 @@ impl Plugin for StressRuntimePlugin {
 }
 
 #[derive(Resource)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Resource))]
 pub struct StressSettings {
     pub enabled: bool,
     pub damage_seconds: f64,
@@ -56,12 +56,12 @@ impl Default for StressSettings {
 
 /// Applied loads on this building, in building coordinates and about the authored structural nodes.
 #[derive(Component, Default)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct StructuralLoads {
     pub by_chunk: BTreeMap<String, NodeLoad>,
 }
 
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 pub struct BondLoadState {
     pub stress: BondStress,
     pub damage: f64,
@@ -69,8 +69,8 @@ pub struct BondLoadState {
 }
 
 #[derive(Clone)]
-#[cfg_attr(not(feature = "acceptance-test"), expect(dead_code))]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(not(feature = "brp"), expect(dead_code))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 pub struct StressComponentReport {
     pub chunks: usize,
     pub valid: bool,
@@ -83,7 +83,7 @@ pub struct StressComponentReport {
 }
 
 #[derive(Component, Default)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct StressState {
     pub bonds: BTreeMap<String, BondLoadState>,
     pub reports: Vec<StressComponentReport>,
@@ -100,7 +100,7 @@ pub struct StressState {
     static_components: BTreeMap<String, StaticComponentCache>,
 }
 
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 struct StaticComponentCache {
     key: u64,
     chunks: Vec<String>,
@@ -110,7 +110,7 @@ struct StaticComponentCache {
 }
 
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 struct StressCache {
     key: u64,
     source_tick: u32,

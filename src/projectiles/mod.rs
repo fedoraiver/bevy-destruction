@@ -52,7 +52,7 @@ const IMPACT_BREAK_LIMIT: usize = 8;
 const DYNAMIC_IMPACT_BREAK_LIMIT: usize = IMPACT_BREAK_LIMIT / 2;
 
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect))]
+#[cfg_attr(feature = "brp", derive(Reflect))]
 pub enum ProjectileShape {
     Sphere,
     Cube,
@@ -70,21 +70,21 @@ pub struct LaunchRequests {
 }
 
 #[derive(Component)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Component))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Component))]
 pub struct RigidProjectile {
     age: f32,
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     shape: ProjectileShape,
 }
 
 #[derive(Resource, Default, Clone)]
-#[cfg_attr(feature = "acceptance-test", derive(Reflect), reflect(Resource))]
+#[cfg_attr(feature = "brp", derive(Reflect), reflect(Resource))]
 pub struct ImpactStats {
     pub launched: u64,
     pub contacts: u64,
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     pub sphere_contacts: u64,
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     pub cube_contacts: u64,
     pub broken_bonds: u64,
     pub last_impulse: f32,
@@ -196,7 +196,7 @@ fn spawn_projectiles(
                 Name::new("Unbreakable rigid impactor"),
                 RigidProjectile {
                     age: 0.0,
-                    #[cfg(feature = "acceptance-test")]
+                    #[cfg(feature = "brp")]
                     shape: request.shape,
                 },
                 RigidBody::Dynamic,
@@ -278,7 +278,7 @@ fn impact_damage(
     patches: Query<&PatchInstance>,
     transforms: TransformHelper,
     mut bursts: MessageWriter<BreakBurst>,
-    #[cfg(feature = "acceptance-test")] projectiles: Query<&Collider, With<RigidProjectile>>,
+    #[cfg(feature = "brp")] projectiles: Query<&Collider, With<RigidProjectile>>,
 ) {
     let capture = capture.is_some_and(|capture| capture.enabled);
     let captured_at = time.elapsed_secs_f64();
@@ -287,7 +287,7 @@ fn impact_damage(
     let mut hits = BTreeMap::<(Entity, String), Vec3>::new();
     let mut shocks = BTreeMap::<(Entity, (Entity, Entity)), ClusterImpact>::new();
     let mut contact_count = 0;
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     let (mut sphere_contacts, mut cube_contacts) = (0, 0);
     let mut max_impulse = 0.0_f32;
     for pair in graph.iter_active_touching() {
@@ -385,7 +385,7 @@ fn impact_damage(
         if structural_contact {
             touching.insert(key);
             contact_count += 1;
-            #[cfg(feature = "acceptance-test")]
+            #[cfg(feature = "brp")]
             for entity in [pair.collider1, pair.collider2] {
                 if let Ok(collider) = projectiles.get(entity) {
                     let shape = collider.shape();
@@ -522,7 +522,7 @@ fn impact_damage(
         samples.record_force(sample);
     }
     stats.contacts += contact_count;
-    #[cfg(feature = "acceptance-test")]
+    #[cfg(feature = "brp")]
     {
         stats.sphere_contacts += sphere_contacts;
         stats.cube_contacts += cube_contacts;

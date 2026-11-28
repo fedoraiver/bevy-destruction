@@ -9,10 +9,10 @@ use bevy::{
 };
 
 use crate::{
-    DemoSettings, SETTINGS_APP_NAME,
     camera::{self, CameraControl, FreeCamera},
     projectiles::{ResetProjectiles, RigidProjectile},
     scene::{self, BuildingInstance, DemoCamera, DemoRoot},
+    settings::{DemoSettings, SETTINGS_APP_NAME},
     stress_runtime::StressSettings,
     vfx::{Particle, VfxSettings},
 };
