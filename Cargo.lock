@@ -451,7 +451,7 @@ dependencies = [
 [[package]]
 name = "bevy-acceptance-test"
 version = "0.1.0"
-source = "git+https://github.com/fedoraiver/bevy-acceptance-test.git?rev=4a50239b27fd6c05e49ce7662832d718e094d95c#4a50239b27fd6c05e49ce7662832d718e094d95c"
+source = "git+https://github.com/fedoraiver/bevy-acceptance-test.git?branch=master#317abe00fd93002cc098bb9c3c8d3b26f4204eb5"
 dependencies = [
  "bevy",
 ]
